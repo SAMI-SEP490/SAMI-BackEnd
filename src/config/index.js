@@ -18,7 +18,12 @@ module.exports = {
         password: process.env.EMAIL_PASSWORD,
         from: process.env.EMAIL_FROM
     },
-
+    redis: {
+        host: process.env.REDIS_HOST || 'localhost',
+        port: process.env.REDIS_PORT || 6379,
+        password: process.env.REDIS_PASSWORD || undefined,
+        db: process.env.REDIS_DB || 0
+    },
     frontend: {
         url: process.env.FRONTEND_URL || 'http://localhost:3001'
     },

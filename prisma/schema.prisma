@@ -289,6 +289,7 @@ model users {
   tenants                                                     tenants?
   vehicle_slot_registration                                   vehicle_slot_registration[]
   vehicles                                                    vehicles[]
+  is_verified                                                 Boolean?                    @default(false)
 }
 
 model vehicle_slot_registration {

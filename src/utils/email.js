@@ -1,4 +1,4 @@
-// Updated: 2024-12-10
+// Updated: 2024-13-10
 // by: DatNB
 
 const nodemailer = require('nodemailer');
@@ -66,10 +66,21 @@ const sendWelcomeEmail = async (email, firstName) => {
 
     return sendEmail(email, 'Welcome!', html);
 };
-
+async function sendOTPEmail(email, otp, fullName) {
+    const subject = 'Your OTP Code for Login';
+    const html = `
+        <h2>Hello ${fullName},</h2>
+        <p>Your OTP code for login is:</p>
+        <h1 style="color: #4CAF50; font-size: 32px; letter-spacing: 5px;">${otp}</h1>
+        <p>This code will expire in 10 minutes.</p>
+        <p>If you didn't request this code, please ignore this email.</p>
+    `;
+    return sendEmail(email, subject, html);
+}
 module.exports = {
     sendEmail,
     sendVerificationEmail,
     sendPasswordResetEmail,
-    sendWelcomeEmail
+    sendWelcomeEmail,
+    sendOTPEmail
 };
