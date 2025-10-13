@@ -1,4 +1,6 @@
-// src/utils/tokens.js
+// Updated: 2024-12-10
+// by: DatNB
+
 
 const crypto = require('crypto');
 

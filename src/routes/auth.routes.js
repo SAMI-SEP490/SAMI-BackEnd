@@ -1,4 +1,6 @@
-// src/routes/auth.routes.js
+// Updated: 2024-12-10
+// by: DatNB
+
 
 const express = require('express');
 const router = express.Router();

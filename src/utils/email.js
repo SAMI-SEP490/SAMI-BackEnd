@@ -1,4 +1,5 @@
-// src/utils/email.js
+// Updated: 2024-12-10
+// by: DatNB
 
 const nodemailer = require('nodemailer');
 const config = require('../config');

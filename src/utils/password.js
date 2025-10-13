@@ -1,4 +1,6 @@
-// src/utils/password.js
+// Updated: 2024-12-10
+// by: DatNB
+
 
 const bcrypt = require('bcryptjs');
 

@@ -1,4 +1,6 @@
-// src/utils/jwt.js
+// Updated: 2024-12-10
+// by: DatNB
+
 
 const jwt = require('jsonwebtoken');
 const config = require('../config');

@@ -1,4 +1,5 @@
-// src/controllers/auth.controller.js
+// Updated: 2024-12-10
+// by: DatNB
 
 const authService = require('../services/auth.service');
 

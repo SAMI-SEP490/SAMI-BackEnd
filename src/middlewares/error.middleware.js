@@ -1,4 +1,6 @@
-// src/middlewares/error.middleware.js
+// Updated: 2024-12-10
+// by: DatNB
+
 
 const errorHandler = (err, req, res, next) => {
     console.error('Error:', err);

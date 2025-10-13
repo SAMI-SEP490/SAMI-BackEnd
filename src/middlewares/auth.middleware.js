@@ -1,4 +1,5 @@
-// src/middlewares/auth.middleware.js
+// Updated: 2024-12-10
+// by: DatNB
 
 const { verifyAccessToken } = require('../utils/jwt');
 const prisma = require('../config/prisma');

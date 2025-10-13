@@ -1,4 +1,5 @@
-// src/services/auth.service.js
+// Updated: 2024-12-10
+// by: DatNB
 
 const prisma = require('../config/prisma');
 const { hashPassword, comparePassword } = require('../utils/password');
