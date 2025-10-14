@@ -1,11 +1,12 @@
-// Updated: 2024-12-10
+// Updated: 2024-14-10
 // by: DatNB
 
 const prisma = require('../config/prisma');
+const redisClient = require('../config/redis');
 const { hashPassword, comparePassword } = require('../utils/password');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const { generateRandomToken } = require('../utils/tokens');
-const { sendVerificationEmail, sendPasswordResetEmail, sendWelcomeEmail } = require('../utils/email');
+const { sendVerificationEmail, sendPasswordResetEmail, sendWelcomeEmail, sendOTPEmail } = require('../utils/email');
 const config = require('../config');
 
 class AuthService {
@@ -36,12 +37,10 @@ class AuthService {
                 full_name,
                 gender,
                 birthday: birthday ? new Date(birthday) : null,
-                status: 'Active'
+                status: 'Active',
+                is_verified: false // New field to track if user has completed first login OTP
             }
         });
-
-        // Note: Email verification would require adding email_verifications table to schema
-        // For now, we'll skip verification token creation
 
         return {
             id: user.user_id,
@@ -80,18 +79,107 @@ class AuthService {
             throw new Error('Invalid credentials');
         }
 
+        // Check if this is first login (user not verified yet)
+        if (!user.is_verified) {
+            // Generate OTP
+            const otp = this.generateOTP();
+
+            // Store OTP in Redis with 10 minutes expiry
+            const otpKey = `otp:${user.user_id}`;
+            await redisClient.setex(otpKey, 600, otp); // 600 seconds = 10 minutes
+
+            // Send OTP to email
+            await sendOTPEmail(user.email, otp, user.full_name);
+
+            return {
+                requiresOTP: true,
+                userId: user.user_id,
+                email: user.email,
+                message: 'OTP has been sent to your email'
+            };
+        }
+
+        // User is already verified, proceed with normal login
+        return this.generateLoginResponse(user);
+    }
+
+    async verifyOTP(userId, otp) {
+        // Get OTP from Redis
+        const otpKey = `otp:${userId}`;
+        const storedOTP = await redisClient.get(otpKey);
+
+        if (!storedOTP) {
+            throw new Error('OTP has expired or does not exist');
+        }
+
+        if (storedOTP !== otp) {
+            throw new Error('Invalid OTP');
+        }
+
+        // OTP is valid, delete it from Redis
+        await redisClient.del(otpKey);
+
+        // Mark user as verified
+        const user = await prisma.users.update({
+            where: { user_id: userId },
+            data: {
+                is_verified: true,
+                updated_at: new Date()
+            }
+        });
+
+        // Generate tokens and return login response
+        return this.generateLoginResponse(user);
+    }
+
+    async resendOTP(userId) {
+        const user = await prisma.users.findUnique({
+            where: { user_id: userId }
+        });
+
+        if (!user) {
+            throw new Error('User not found');
+        }
+
+        if (user.is_verified) {
+            throw new Error('User is already verified');
+        }
+
+        // Check if there's a cooldown (prevent spam)
+        const cooldownKey = `otp_cooldown:${userId}`;
+        const cooldown = await redisClient.get(cooldownKey);
+
+        if (cooldown) {
+            throw new Error('Please wait before requesting another OTP');
+        }
+
+        // Generate new OTP
+        const otp = this.generateOTP();
+
+        // Store OTP in Redis with 10 minutes expiry
+        const otpKey = `otp:${userId}`;
+        await redisClient.setex(otpKey, 600, otp);
+
+        // Set cooldown (60 seconds)
+        await redisClient.setex(cooldownKey, 60, '1');
+
+        // Send OTP to email
+        await sendOTPEmail(user.email, otp, user.full_name);
+
+        return {
+            message: 'OTP has been resent to your email'
+        };
+    }
+
+    generateOTP() {
+        // Generate 6-digit OTP
+        return Math.floor(100000 + Math.random() * 900000).toString();
+    }
+
+    generateLoginResponse(user) {
         // Generate tokens
         const accessToken = generateAccessToken(user.user_id);
         const refreshToken = generateRefreshToken(user.user_id);
-
-        // Note: Refresh token storage would require adding refresh_tokens table to schema
-        // For now, we'll just return the tokens
-
-        // Update user timestamps
-        await prisma.users.update({
-            where: { user_id: user.user_id },
-            data: { updated_at: new Date() }
-        });
 
         return {
             accessToken,
@@ -155,10 +243,6 @@ class AuthService {
         return true;
     }
 
-    async logoutAll(userId) {
-        // Note: Without refresh_tokens table, we can't invalidate all tokens
-        return true;
-    }
 
     async changePassword(userId, currentPassword, newPassword) {
         const user = await prisma.users.findUnique({
@@ -196,7 +280,6 @@ class AuthService {
             where: {
                 OR: [
                     { email },
-                    { phone: email }
                 ],
                 deleted_at: null
             }
@@ -207,16 +290,12 @@ class AuthService {
             return true;
         }
 
-        // Note: Password reset would require adding password_resets table to schema
-        // For now, we'll just return true
-
-        // TODO: Create reset token and send email when password_resets table is added
 
         return true;
     }
 
     async resetPassword(token, newPassword) {
-        // Note: This requires password_resets table in schema
+
         throw new Error('Password reset functionality requires database schema update');
     }
 
@@ -271,29 +350,6 @@ class AuthService {
         return user;
     }
 
-    async deactivateAccount(userId) {
-        await prisma.users.update({
-            where: { user_id: userId },
-            data: {
-                status: 'Inactive',
-                updated_at: new Date()
-            }
-        });
-
-        return true;
-    }
-
-    async deleteAccount(userId) {
-        await prisma.users.update({
-            where: { user_id: userId },
-            data: {
-                deleted_at: new Date(),
-                status: 'Deleted'
-            }
-        });
-
-        return true;
-    }
 }
 
 module.exports = new AuthService();

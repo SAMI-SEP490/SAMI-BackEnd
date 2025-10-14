@@ -1,5 +1,6 @@
-// Updated: 2024-12-10
+// Updated: 2024-14-10
 // by: DatNB
+
 
 const authService = require('../services/auth.service');
 
@@ -29,8 +30,39 @@ class AuthController {
 
             res.json({
                 success: true,
-                message: 'Login successful',
+                message: result.requiresOTP ? 'OTP sent to your email' : 'Login successful',
                 data: result
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    async verifyOTP(req, res, next) {
+        try {
+            const { userId, otp } = req.body;
+
+            const result = await authService.verifyOTP(userId, otp);
+
+            res.json({
+                success: true,
+                message: 'OTP verified successfully',
+                data: result
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    async resendOTP(req, res, next) {
+        try {
+            const { userId } = req.body;
+
+            const result = await authService.resendOTP(userId);
+
+            res.json({
+                success: true,
+                message: result.message
             });
         } catch (err) {
             next(err);
@@ -68,18 +100,7 @@ class AuthController {
         }
     }
 
-    async logoutAll(req, res, next) {
-        try {
-            await authService.logoutAll(req.user.user_id);
 
-            res.json({
-                success: true,
-                message: 'Logged out from all devices'
-            });
-        } catch (err) {
-            next(err);
-        }
-    }
 
     async forgotPassword(req, res, next) {
         try {
@@ -153,31 +174,7 @@ class AuthController {
         }
     }
 
-    async deactivateAccount(req, res, next) {
-        try {
-            await authService.deactivateAccount(req.user.user_id);
 
-            res.json({
-                success: true,
-                message: 'Account deactivated successfully'
-            });
-        } catch (err) {
-            next(err);
-        }
-    }
-
-    async deleteAccount(req, res, next) {
-        try {
-            await authService.deleteAccount(req.user.user_id);
-
-            res.json({
-                success: true,
-                message: 'Account deleted successfully'
-            });
-        } catch (err) {
-            next(err);
-        }
-    }
 }
 
 module.exports = new AuthController();
