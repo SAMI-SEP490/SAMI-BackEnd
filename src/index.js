@@ -1,4 +1,4 @@
-// Updated: 2024-12-10
+// Updated: 2024-14-10
 // by: DatNB
 
 
@@ -9,6 +9,7 @@ const morgan = require('morgan');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const config = require('./config');
+const redisClient = require('./config/redis');
 const authRoutes = require('./routes/auth.routes');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
 
@@ -51,12 +52,29 @@ const limiter = rateLimit({
 
 app.use('/api/', limiter);
 
+// Initialize Redis connection
+async function initializeRedis() {
+    try {
+        await redisClient.connect();
+        console.log('Redis initialized successfully');
+    } catch (error) {
+        console.error('Failed to initialize Redis:', error.message);
+        console.warn('⚠️  OTP functionality will not work without Redis');
+        // You can choose to continue without Redis or exit
+        // process.exit(1); // Uncomment to exit if Redis is critical
+    }
+}
+
 // Health check
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+    const redisStatus = await redisClient.ping();
     res.json({
         success: true,
         message: 'Server is running',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        services: {
+            redis: redisStatus ? 'connected' : 'disconnected'
+        }
     });
 });
 
@@ -69,11 +87,38 @@ app.use(notFound);
 // Error handler
 app.use(errorHandler);
 
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+    console.log('SIGTERM received, shutting down gracefully...');
+    await redisClient.disconnect();
+    process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+    console.log('SIGINT received, shutting down gracefully...');
+    await redisClient.disconnect();
+    process.exit(0);
+});
+
 // Start server
 const PORT = config.port;
-app.listen(PORT, () => {
-    console.log(`Server running in ${config.nodeEnv} mode on port ${PORT}`);
-});
+
+async function startServer() {
+    try {
+        // Initialize Redis first
+        await initializeRedis();
+
+        // Start Express server
+        app.listen(PORT, () => {
+            console.log(`Server running in ${config.nodeEnv} mode on port ${PORT}`);
+        });
+    } catch (error) {
+        console.error('Failed to start server:', error);
+        process.exit(1);
+    }
+}
+
+startServer();
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err) => {

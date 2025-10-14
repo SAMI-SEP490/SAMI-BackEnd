@@ -1,9 +1,8 @@
-// Updated: 2024-13-10
+// Updated: 2024-14-10
 // by: DatNB
 
-
 const prisma = require('../config/prisma');
-const redis = require('../config/redis');
+const redisClient = require('../config/redis');
 const { hashPassword, comparePassword } = require('../utils/password');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const { generateRandomToken } = require('../utils/tokens');
@@ -16,7 +15,8 @@ class AuthService {
         const existingUser = await prisma.users.findFirst({
             where: {
                 OR: [
-                    { email }
+                    { email },
+                    { phone }
                 ]
             }
         });
@@ -86,7 +86,7 @@ class AuthService {
 
             // Store OTP in Redis with 10 minutes expiry
             const otpKey = `otp:${user.user_id}`;
-            await redis.setex(otpKey, 600, otp); // 600 seconds = 10 minutes
+            await redisClient.setex(otpKey, 600, otp); // 600 seconds = 10 minutes
 
             // Send OTP to email
             await sendOTPEmail(user.email, otp, user.full_name);
@@ -106,7 +106,7 @@ class AuthService {
     async verifyOTP(userId, otp) {
         // Get OTP from Redis
         const otpKey = `otp:${userId}`;
-        const storedOTP = await redis.get(otpKey);
+        const storedOTP = await redisClient.get(otpKey);
 
         if (!storedOTP) {
             throw new Error('OTP has expired or does not exist');
@@ -117,7 +117,7 @@ class AuthService {
         }
 
         // OTP is valid, delete it from Redis
-        await redis.del(otpKey);
+        await redisClient.del(otpKey);
 
         // Mark user as verified
         const user = await prisma.users.update({
@@ -147,7 +147,7 @@ class AuthService {
 
         // Check if there's a cooldown (prevent spam)
         const cooldownKey = `otp_cooldown:${userId}`;
-        const cooldown = await redis.get(cooldownKey);
+        const cooldown = await redisClient.get(cooldownKey);
 
         if (cooldown) {
             throw new Error('Please wait before requesting another OTP');
@@ -158,10 +158,10 @@ class AuthService {
 
         // Store OTP in Redis with 10 minutes expiry
         const otpKey = `otp:${userId}`;
-        await redis.setex(otpKey, 600, otp);
+        await redisClient.setex(otpKey, 600, otp);
 
         // Set cooldown (60 seconds)
-        await redis.setex(cooldownKey, 60, '1');
+        await redisClient.setex(cooldownKey, 60, '1');
 
         // Send OTP to email
         await sendOTPEmail(user.email, otp, user.full_name);
@@ -280,7 +280,6 @@ class AuthService {
             where: {
                 OR: [
                     { email },
-                    { phone: email }
                 ],
                 deleted_at: null
             }
@@ -291,16 +290,12 @@ class AuthService {
             return true;
         }
 
-        // Note: Password reset would require adding password_resets table to schema
-        // For now, we'll just return true
-
-        // TODO: Create reset token and send email when password_resets table is added
 
         return true;
     }
 
     async resetPassword(token, newPassword) {
-        // Note: This requires password_resets table in schema
+
         throw new Error('Password reset functionality requires database schema update');
     }
 

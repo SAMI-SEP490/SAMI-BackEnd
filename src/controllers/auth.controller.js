@@ -1,4 +1,4 @@
-// Updated: 2024-13-10
+// Updated: 2024-14-10
 // by: DatNB
 
 
@@ -30,8 +30,39 @@ class AuthController {
 
             res.json({
                 success: true,
-                message: 'Login successful',
+                message: result.requiresOTP ? 'OTP sent to your email' : 'Login successful',
                 data: result
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    async verifyOTP(req, res, next) {
+        try {
+            const { userId, otp } = req.body;
+
+            const result = await authService.verifyOTP(userId, otp);
+
+            res.json({
+                success: true,
+                message: 'OTP verified successfully',
+                data: result
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    async resendOTP(req, res, next) {
+        try {
+            const { userId } = req.body;
+
+            const result = await authService.resendOTP(userId);
+
+            res.json({
+                success: true,
+                message: result.message
             });
         } catch (err) {
             next(err);

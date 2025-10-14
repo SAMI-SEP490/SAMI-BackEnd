@@ -1,86 +1,196 @@
-// Updated: 2024-13-10
+// Updated: 2024-10-15
 // by: DatNB
+// Email service using Nodemailer with Gmail
 
 const nodemailer = require('nodemailer');
 const config = require('../config');
 
+// Create reusable transporter object using Gmail SMTP
 const transporter = nodemailer.createTransport({
-    host: config.email.host,
-    port: config.email.port,
-    secure: config.email.port === 465,
+    service: 'gmail',
     auth: {
-        user: config.email.user,
-        pass: config.email.password
+        user: config.email.gmailUser || process.env.GMAIL_USER,     // your Gmail address
+        pass: config.email.gmailAppPassword || process.env.GMAIL_APP_PASSWORD  // Gmail App Password (not regular password)
     }
 });
 
-const sendEmail = async (to, subject, html) => {
+async function sendEmail(toEmail, subject, htmlContent) {
+    const mailOptions = {
+        from: {
+            name: config.email.fromName || process.env.EMAIL_FROM_NAME || 'SAMI Support',
+            address:  process.env.EMAIL_FROM || config.email.gmailUser
+        },
+        to: toEmail,
+        subject: subject,
+        html: htmlContent
+    };
+
     try {
-        await transporter.sendMail({
-            from: config.email.from,
-            to,
-            subject,
-            html
-        });
-        return true;
+        const info = await transporter.sendMail(mailOptions);
+        console.log('✅ Email sent successfully:', info.messageId);
+        console.log('Preview URL:', nodemailer.getTestMessageUrl(info));
+        return info;
     } catch (err) {
-        console.error('Email sending error:', err);
-        return false;
+        console.error('❌ Failed to send email:', err.message);
+        console.error('Error code:', err.code);
+        console.error('Error response:', err.response);
+        console.error('Full error object:', JSON.stringify(err, Object.getOwnPropertyNames(err)));
+        throw err;
     }
-};
+}
 
-const sendVerificationEmail = async (email, token) => {
-    const verificationUrl = `${config.frontend.url}/verify-email?token=${token}`;
-
-    const html = `
-    <h1>Verify Your Email</h1>
-    <p>Click the link below to verify your email address:</p>
-    <a href="${verificationUrl}">${verificationUrl}</a>
-    <p>This link will expire in ${config.tokens.emailVerificationExpires} hours.</p>
-    <p>If you didn't create an account, please ignore this email.</p>
-  `;
-
-    return sendEmail(email, 'Verify Your Email', html);
-};
-
-const sendPasswordResetEmail = async (email, token) => {
-    const resetUrl = `${config.frontend.url}/reset-password?token=${token}`;
-
-    const html = `
-    <h1>Reset Your Password</h1>
-    <p>Click the link below to reset your password:</p>
-    <a href="${resetUrl}">${resetUrl}</a>
-    <p>This link will expire in ${config.tokens.passwordResetExpires} hour(s).</p>
-    <p>If you didn't request a password reset, please ignore this email.</p>
-  `;
-
-    return sendEmail(email, 'Reset Your Password', html);
-};
-
-const sendWelcomeEmail = async (email, firstName) => {
-    const html = `
-    <h1>Welcome ${firstName}!</h1>
-    <p>Thank you for joining us. We're excited to have you on board!</p>
-    <p>Get started by exploring our features.</p>
-  `;
-
-    return sendEmail(email, 'Welcome!', html);
-};
 async function sendOTPEmail(email, otp, fullName) {
-    const subject = 'Your OTP Code for Login';
+    const subject = '🔐 Your OTP Code for Login';
     const html = `
-        <h2>Hello ${fullName},</h2>
-        <p>Your OTP code for login is:</p>
-        <h1 style="color: #4CAF50; font-size: 32px; letter-spacing: 5px;">${otp}</h1>
-        <p>This code will expire in 10 minutes.</p>
-        <p>If you didn't request this code, please ignore this email.</p>
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    margin: 0;
+                    padding: 0;
+                    background-color: #f4f4f4;
+                }
+                .container {
+                    max-width: 600px;
+                    margin: 0 auto;
+                    padding: 20px;
+                }
+                .content {
+                    background-color: white;
+                    padding: 40px;
+                    border-radius: 10px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                }
+                .header {
+                    text-align: center;
+                    margin-bottom: 30px;
+                }
+                .header h1 {
+                    color: #2c3e50;
+                    margin: 0;
+                    font-size: 24px;
+                }
+                .otp-box {
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    font-size: 36px;
+                    font-weight: bold;
+                    letter-spacing: 10px;
+                    text-align: center;
+                    padding: 25px;
+                    margin: 30px 0;
+                    border-radius: 8px;
+                    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+                }
+                .info {
+                    background-color: #f8f9fa;
+                    padding: 15px;
+                    border-radius: 5px;
+                    margin: 20px 0;
+                    border-left: 4px solid #667eea;
+                }
+                .warning {
+                    background-color: #fff3cd;
+                    color: #856404;
+                    padding: 15px;
+                    border-radius: 5px;
+                    margin: 20px 0;
+                    border-left: 4px solid #ffc107;
+                }
+                .footer {
+                    text-align: center;
+                    margin-top: 30px;
+                    padding-top: 20px;
+                    border-top: 1px solid #e0e0e0;
+                    color: #666;
+                    font-size: 14px;
+                }
+                @media only screen and (max-width: 600px) {
+                    .content {
+                        padding: 20px;
+                    }
+                    .otp-box {
+                        font-size: 28px;
+                        letter-spacing: 8px;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="content">
+                    <div class="header">
+                        <h1>🔐 Login Verification</h1>
+                    </div>
+                    
+                    <p>Hello <strong>${fullName || 'User'}</strong>,</p>
+                    
+                    <p>Thank you for logging in! To complete the login process and secure your account, please use the following One-Time Password (OTP):</p>
+                    
+                    <div class="otp-box">${otp}</div>
+                    
+                    <div class="info">
+                        <strong>⏱️ Important:</strong> This code will expire in <strong>10 minutes</strong>.
+                    </div>
+                    
+                    <p>Enter this code in the verification screen to continue to your account.</p>
+                    
+                    <div class="warning">
+                        <strong>⚠️ Security Notice</strong><br>
+                        If you didn't attempt to log in, please ignore this email and ensure your account password is secure. Never share this code with anyone.
+                    </div>
+                    
+                    <div class="footer">
+                        <p>This is an automated message, please do not reply to this email.</p>
+                        <p style="color: #999; font-size: 12px;">&copy; ${new Date().getFullYear()} Your Company. All rights reserved.</p>
+                    </div>
+                </div>
+            </div>
+        </body>
+        </html>
     `;
+
     return sendEmail(email, subject, html);
 }
+
+// Test email configuration
+async function testEmailConnection() {
+    try {
+        if (!config.email.gmailUser || !config.email.gmailAppPassword) {
+            throw new Error('Gmail credentials not configured. Please set GMAIL_USER and GMAIL_APP_PASSWORD');
+        }
+
+        // Verify transporter configuration
+        await transporter.verify();
+        console.log('✅ Gmail SMTP server is ready to send emails');
+        console.log('Configured sender:', config.email.gmailUser);
+        return true;
+    } catch (error) {
+        console.error('❌ Gmail email service error:');
+        console.error('Error message:', error.message);
+        console.error('Error code:', error.code);
+
+        if (error.code === 'EAUTH') {
+            console.error('Authentication failed. Make sure you are using a Gmail App Password, not your regular password.');
+            console.error('To create an App Password:');
+            console.error('1. Go to https://myaccount.google.com/security');
+            console.error('2. Enable 2-Step Verification if not already enabled');
+            console.error('3. Go to App Passwords and create a new one');
+        }
+
+        console.error('Full error:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+        return false;
+    }
+}
+
 module.exports = {
     sendEmail,
-    sendVerificationEmail,
-    sendPasswordResetEmail,
-    sendWelcomeEmail,
-    sendOTPEmail
+    sendOTPEmail,
+    testEmailConnection
 };

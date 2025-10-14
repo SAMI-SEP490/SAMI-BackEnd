@@ -10,13 +10,10 @@ module.exports = {
         accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
         refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d'
     },
-
     email: {
-        host: process.env.EMAIL_HOST,
-        port: parseInt(process.env.EMAIL_PORT),
-        user: process.env.EMAIL_USER,
-        password: process.env.EMAIL_PASSWORD,
-        from: process.env.EMAIL_FROM
+        gmailUser: process.env.GMAIL_USER,           // e.g., 'your-email@gmail.com'
+        gmailAppPassword: process.env.GMAIL_APP_PASSWORD, // Gmail App Password
+        fromName: process.env.EMAIL_FROM_NAME         // e.g., 'SAMI Support'
     },
     redis: {
         host: process.env.REDIS_HOST || 'localhost',

@@ -23,9 +23,9 @@ services:
     container_name: app_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${postgres:-postgres}
-      POSTGRES_PASSWORD: ${datvip01ht:-postgres}
-      POSTGRES_DB: ${SAMI:-myapp}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-myapp}
     ports:
       - "5432:5432"
     volumes:

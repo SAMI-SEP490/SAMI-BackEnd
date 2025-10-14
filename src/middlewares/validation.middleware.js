@@ -1,8 +1,9 @@
-// Updated: 2024-12-10
+// Updated: 2024-14-10
 // by: DatNB
 
 
-const { z } = require('zod');
+const { z, ZodError } = require('zod');
+
 
 const registerSchema = z.object({
     email: z.string().email('Invalid email format'),
@@ -43,20 +44,41 @@ const updateProfileSchema = z.object({
     avatar_url: z.string().url().optional()
 });
 
+// New OTP schemas (Zod)
+const verifyOTPSchema = z.object({
+    userId: z.preprocess((val) => {
+        // chuyển chuỗi sang số nếu cần
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive({ message: 'userId must be a positive integer' })),
+    otp: z
+        .string()
+        .length(6, { message: 'OTP must be 6 digits' })
+        .regex(/^[0-9]+$/, { message: 'OTP must contain only numbers' }),
+});
+
+const resendOTPSchema = z.object({
+    userId: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive({ message: 'userId must be a positive integer' })),
+});
+
 const validate = (schema) => {
     return (req, res, next) => {
         try {
-            schema.parse(req.body);
+            // parse và gán lại req.body đã "clean"
+            req.body = schema.parse(req.body);
             next();
         } catch (err) {
-            if (err instanceof z.ZodError) {
+            if (err instanceof ZodError) {
                 return res.status(400).json({
                     success: false,
                     message: 'Validation error',
-                    errors: err.errors.map(e => ({
+                    errors: err.errors.map((e) => ({
                         field: e.path.join('.'),
-                        message: e.message
-                    }))
+                        message: e.message,
+                    })),
                 });
             }
             next(err);
@@ -72,5 +94,7 @@ module.exports = {
     forgotPasswordSchema,
     resetPasswordSchema,
     changePasswordSchema,
-    updateProfileSchema
+    updateProfileSchema,
+    verifyOTPSchema,
+    resendOTPSchema
 };
