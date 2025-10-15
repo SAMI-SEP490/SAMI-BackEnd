@@ -1,4 +1,4 @@
-// Updated: 2024-14-10
+// Updated: 2025-15-10
 // by: DatNB
 
 
@@ -102,33 +102,81 @@ class AuthController {
 
 
 
-    async forgotPassword(req, res, next) {
+    async forgotPassword(req, res) {
         try {
             const { email } = req.body;
 
-            await authService.forgotPassword(email);
+            const result = await authService.forgotPassword(email);
 
-            res.json({
+            return res.status(200).json({
                 success: true,
-                message: 'If an account exists with this email or phone, a password reset link has been sent'
+                message: result.message,
+                email: result.email || email
             });
-        } catch (err) {
-            next(err);
+        } catch (error) {
+            console.error('Forgot password error:', error);
+            return res.status(400).json({
+                success: false,
+                message: error.message
+            });
         }
     }
 
-    async resetPassword(req, res, next) {
+    async verifyPasswordResetOTP(req, res) {
         try {
-            const { token, password } = req.body;
+            const { userId, otp } = req.body;
 
-            await authService.resetPassword(token, password);
+            const result = await authService.verifyPasswordResetOTP(userId, otp);
 
-            res.json({
+            return res.status(200).json({
                 success: true,
-                message: 'Password reset successfully'
+                message: result.message,
+                resetToken: result.resetToken,
+                userId: result.userId
             });
-        } catch (err) {
-            next(err);
+        } catch (error) {
+            console.error('Verify OTP error:', error);
+            return res.status(400).json({
+                success: false,
+                message: error.message
+            });
+        }
+    }
+
+    async resetPassword(req, res) {
+        try {
+            const { userId, resetToken, newPassword } = req.body;
+
+            const result = await authService.resetPassword(userId, resetToken, newPassword);
+
+            return res.status(200).json({
+                success: true,
+                message: result.message
+            });
+        } catch (error) {
+            console.error('Reset password error:', error);
+            return res.status(400).json({
+                success: false,
+                message: error.message
+            });
+        }
+    }
+    async resendPasswordResetOTP(req, res) {
+        try {
+            const { userId } = req.body;
+
+            const result = await authService.resendPasswordResetOTP(userId);
+
+            return res.status(200).json({
+                success: true,
+                message: result.message
+            });
+        } catch (error) {
+            console.error('Resend OTP error:', error);
+            return res.status(400).json({
+                success: false,
+                message: error.message
+            });
         }
     }
 

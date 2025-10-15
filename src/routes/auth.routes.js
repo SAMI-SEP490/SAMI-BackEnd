@@ -1,4 +1,4 @@
-// Updated: 2024-14-10
+// Updated: 2025-15-10
 // by: DatNB
 
 
@@ -25,6 +25,8 @@ router.post('/verify-otp', validate(verifyOTPSchema), authController.verifyOTP);
 router.post('/resend-otp', validate(resendOTPSchema), authController.resendOTP);
 router.post('/refresh-token', validate(refreshTokenSchema), authController.refreshToken);
 router.post('/forgot-password', validate(forgotPasswordSchema), authController.forgotPassword);
+router.post('/verify-otp-forgot', validate(verifyOTPSchema), authController.verifyPasswordResetOTP);
+router.post('/resend-otp-forgot', validate(resendOTPSchema), authController.resendPasswordResetOTP);
 router.post('/reset-password', validate(resetPasswordSchema), authController.resetPassword);
 
 // Protected routes (require authentication)
