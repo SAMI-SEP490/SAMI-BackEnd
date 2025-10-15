@@ -70,24 +70,63 @@ const authenticate = async (req, res, next) => {
         });
     }
 };
+const ROLE_MAP = {
+    owner: 'OWNER',
+    manager: 'MANAGER',
+    tenant: 'TENANT',
+    user: 'USER'
+};
+function normalizeRoleInput(input) {
+    if (!input) return [];
+    const arr = Array.isArray(input) ? input : [input];
+    return arr
+        .map(r => String(r).trim().toLowerCase())
+        .map(r => ROLE_MAP[r] || r.toUpperCase());
+}
 
 const requireRole = (roles) => {
+    const allowedRoles = normalizeRoleInput(roles);
+
     return async (req, res, next) => {
         try {
-            const userId = req.user.user_id;
-
-            // Check if user has any of the required roles
-            const hasRole = await checkUserRole(userId, roles);
-
-            if (!hasRole) {
-                return res.status(403).json({
+            const userId = req.user && req.user.user_id;
+            if (!userId) {
+                return res.status(401).json({
                     success: false,
-                    message: 'Insufficient permissions'
+                    message: 'Unauthenticated'
                 });
             }
 
-            next();
+            // Lấy role thực tế từ DB để tránh bị giả mạo từ client token
+            const user = await prisma.users.findUnique({
+                where: { user_id: userId },
+                select: { role: true }
+            });
+
+            if (!user) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'User not found'
+                });
+            }
+
+            const userRole = (user.role || 'USER').toString().toUpperCase();
+
+            // Nếu allowedRoles rỗng => không giới hạn, hoặc nếu có 'ANY' trong allowedRoles thì cho qua
+            if (allowedRoles.length === 0 || allowedRoles.includes('ANY')) {
+                return next();
+            }
+
+            if (allowedRoles.includes(userRole)) {
+                return next();
+            }
+
+            return res.status(403).json({
+                success: false,
+                message: 'Insufficient permissions'
+            });
         } catch (err) {
+            console.error('Authorization error:', err);
             return res.status(500).json({
                 success: false,
                 message: 'Authorization error'
@@ -95,38 +134,6 @@ const requireRole = (roles) => {
         }
     };
 };
-
-// Helper function to check user roles based on schema tables
-async function checkUserRole(userId, roles) {
-    for (const role of roles) {
-        switch (role) {
-            case 'owner':
-                const owner = await prisma.building_owner.findUnique({
-                    where: { user_id: userId }
-                });
-                if (owner) return true;
-                break;
-
-            case 'manager':
-                const manager = await prisma.building_managers.findFirst({
-                    where: { user_id: userId }
-                });
-                if (manager) return true;
-                break;
-
-            case 'tenant':
-                const tenant = await prisma.tenants.findUnique({
-                    where: { user_id: userId }
-                });
-                if (tenant) return true;
-                break;
-
-            default:
-                break;
-        }
-    }
-    return false;
-}
 
 module.exports = {
     authenticate,

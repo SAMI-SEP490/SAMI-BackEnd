@@ -272,6 +272,7 @@ model users {
   birthday                                                    DateTime?                   @db.Date
   avatar_url                                                  String?                     @db.VarChar(255)
   status                                                      String?                     @default("Active") @db.VarChar(20)
+  role                                                        Role?                       @default(USER)
   created_at                                                  DateTime?                   @default(now()) @db.Timestamp(6)
   updated_at                                                  DateTime?                   @db.Timestamp(6)
   deleted_at                                                  DateTime?                   @db.Timestamp(6)
@@ -445,6 +446,13 @@ enum regulation_status {
   published
   archived
   deleted
+}
+
+enum Role {
+  TENANT
+  MANAGER
+  OWNER
+  USER
 }
 
 enum vehicle_type {

@@ -461,6 +461,8 @@ class AuthService {
                 birthday: true,
                 avatar_url: true,
                 status: true,
+                role: true,
+                is_verified: true,
                 created_at: true,
                 updated_at: true
             }
@@ -470,7 +472,67 @@ class AuthService {
             throw new Error('User not found');
         }
 
-        return user;
+        // Fetch role-specific information based on user's role
+        let roleSpecificData = null;
+        switch (user.role) {
+            case 'TENANT':
+                roleSpecificData = await prisma.tenants.findUnique({
+                    where: { user_id: userId },
+                    select: {
+                        user_id: true,
+                        tenant_since: true,
+                        emergency_contact_phone: true,
+                        id_number: true,
+                        note: true,
+                    }
+                });
+                break;
+
+            case 'MANAGER':
+                roleSpecificData = await prisma.building_managers.findUnique({
+                    where: { user_id: userId },
+                    select: {
+                        user_id: true,
+                        building_id: true,
+                        assigned_from: true,
+                        assigned_to: true,
+                        note: true,
+                        buildings: {
+                            select: {
+                                building_id: true,
+                                name: true,
+                                address: true,
+                                is_active: true,
+                                created_at: true
+                            }
+                        }
+                    }
+                });
+                break;
+
+            case 'OWNER':
+                roleSpecificData = await prisma.building_owner.findUnique({
+                    where: { user_id: userId },
+                    select: {
+                        user_id: true,
+                        notes: true,
+                        created_at: true
+                    }
+                });
+                break;
+
+            case 'USER':
+            default:
+                // No additional role-specific data for USER role
+                roleSpecificData = null;
+                break;
+        }
+
+        // Return combined user profile with role-specific data
+        return {
+            ...user,
+            roleDetails: roleSpecificData
+        };
     }
 
     async updateProfile(userId, data) {

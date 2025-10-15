@@ -67,7 +67,46 @@ const resendOTPSchema = z.object({
         return val;
     }, z.number().int().positive({ message: 'userId must be a positive integer' })),
 });
+const changeToTenantSchema = z.object({
+    userId: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive({ message: 'userId must be a positive integer' })),
+    idNumber: z.string()
+        .min(9, 'ID number must be at least 9 characters')
+        .max(12, 'ID number must not exceed 12 characters')
+        .regex(/^[0-9]+$/, { message: 'ID number must contain only numbers' }),
+    emergencyContactPhone: z.string()
+        .min(10, 'Phone number must be at least 10 digits')
+        .max(11, 'Phone number must not exceed 11 digits')
+        .regex(/^[0-9]+$/, { message: 'Phone number must contain only numbers' }),
+    note: z.string().optional()
+});
 
+const changeToManagerSchema = z.object({
+    userId: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive({ message: 'userId must be a positive integer' })),
+    buildingId: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive({ message: 'buildingId must be a positive integer' })),
+    assignedFrom: z.string().or(z.date()).optional(),
+    assignedTo: z.string().or(z.date()).optional(),
+    note: z.string().optional()
+}).refine((data) => {
+    // Validate assignedTo is after assignedFrom if both exist
+    if (data.assignedFrom && data.assignedTo) {
+        const fromDate = new Date(data.assignedFrom);
+        const toDate = new Date(data.assignedTo);
+        return toDate > fromDate;
+    }
+    return true;
+}, {
+    message: 'assignedTo must be after assignedFrom',
+    path: ['assignedTo']
+});
 const validate = (schema) => {
     return (req, res, next) => {
         try {
@@ -100,5 +139,7 @@ module.exports = {
     changePasswordSchema,
     updateProfileSchema,
     verifyOTPSchema,
-    resendOTPSchema
+    resendOTPSchema,
+    changeToTenantSchema,
+    changeToManagerSchema
 };
