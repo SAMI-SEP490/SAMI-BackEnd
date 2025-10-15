@@ -11,6 +11,7 @@ const rateLimit = require('express-rate-limit');
 const config = require('./config');
 const redisClient = require('./config/redis');
 const authRoutes = require('./routes/auth.routes');
+const userRoutes = require('./routes/user.routes');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
 
 const app = express();
@@ -80,6 +81,7 @@ app.get('/health', async (req, res) => {
 
 // API routes
 app.use('/api/auth', authRoutes);
+app.use('/api/user', userRoutes);
 
 // 404 handler
 app.use(notFound);
