@@ -1,4 +1,4 @@
-// Updated: 2024-14-10
+// Updated: 2025-15-10
 // by: DatNB
 
 
@@ -28,8 +28,12 @@ const forgotPasswordSchema = z.object({
 });
 
 const resetPasswordSchema = z.object({
-    token: z.string().min(1, 'Token is required'),
-    password: z.string().min(8, 'Password must be at least 8 characters')
+    userId: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive({ message: 'userId must be a positive integer' })),
+    resetToken: z.string().min(1, 'Token is required'),
+    newPassword: z.string().min(8, 'Password must be at least 8 characters')
 });
 
 const changePasswordSchema = z.object({

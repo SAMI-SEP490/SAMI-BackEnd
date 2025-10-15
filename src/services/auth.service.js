@@ -1,4 +1,4 @@
-// Updated: 2024-14-10
+// Updated: 2025-15-10
 // by: DatNB
 
 const prisma = require('../config/prisma');
@@ -6,7 +6,7 @@ const redisClient = require('../config/redis');
 const { hashPassword, comparePassword } = require('../utils/password');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const { generateRandomToken } = require('../utils/tokens');
-const { sendVerificationEmail, sendPasswordResetEmail, sendWelcomeEmail, sendOTPEmail } = require('../utils/email');
+const { sendPasswordResetEmail, sendOTPEmail } = require('../utils/email');
 const config = require('../config');
 
 class AuthService {
@@ -275,28 +275,178 @@ class AuthService {
         return true;
     }
 
+
     async forgotPassword(email) {
         const user = await prisma.users.findFirst({
             where: {
-                OR: [
-                    { email },
-                ],
+                email,
                 deleted_at: null
             }
         });
 
         if (!user) {
-            // Don't reveal if user exists
-            return true;
+            // Don't reveal if user exists for security reasons
+            // But still return success
+            return {
+                success: true,
+                message: 'If an account exists with this email, an OTP has been sent'
+            };
         }
 
+        // Check if account is active
+        if (user.status !== 'Active') {
+            throw new Error('Account is deactivated');
+        }
 
-        return true;
+        // Check if there's a cooldown (prevent spam)
+        const cooldownKey = `password_reset_cooldown:${user.user_id}`;
+        const cooldown = await redisClient.get(cooldownKey);
+
+        if (cooldown) {
+            throw new Error('Please wait before requesting another password reset OTP');
+        }
+
+        // Generate OTP
+        const otp = this.generateOTP();
+
+        // Store OTP in Redis with 10 minutes expiry
+        const otpKey = `password_reset_otp:${user.user_id}`;
+        await redisClient.setex(otpKey, 600, otp); // 600 seconds = 10 minutes
+
+        // Set cooldown (60 seconds)
+        await redisClient.setex(cooldownKey, 60, '1');
+
+        // Send OTP to email
+        await sendPasswordResetEmail(user.email, otp, user.full_name);
+
+        return {
+            success: true,
+            userId: user.user_id,
+            email: user.email,
+            message: 'OTP has been sent to your email'
+        };
     }
 
-    async resetPassword(token, newPassword) {
 
-        throw new Error('Password reset functionality requires database schema update');
+    async verifyPasswordResetOTP(userId, otp) {
+        // Get OTP from Redis
+        const otpKey = `password_reset_otp:${userId}`;
+        const storedOTP = await redisClient.get(otpKey);
+
+        if (!storedOTP) {
+            throw new Error('OTP has expired or does not exist');
+        }
+
+        if (storedOTP !== otp) {
+            throw new Error('Invalid OTP');
+        }
+
+        // OTP is valid, generate a temporary token for password reset
+        const resetToken = generateRandomToken(32);
+
+        // Store reset token in Redis with 15 minutes expiry
+        const resetTokenKey = `password_reset_token:${userId}`;
+        await redisClient.setex(resetTokenKey, 900, resetToken); // 900 seconds = 15 minutes
+
+        // Delete the OTP as it's no longer needed
+        await redisClient.del(otpKey);
+
+        return {
+            success: true,
+            resetToken,
+            userId,
+            message: 'OTP verified successfully. You can now reset your password'
+        };
+    }
+
+
+    async resetPassword(userId, resetToken, newPassword) {
+        // Verify reset token from Redis
+        const resetTokenKey = `password_reset_token:${userId}`;
+        console.log('Key to check:', resetTokenKey);
+        const storedToken = await redisClient.get(resetTokenKey);
+        console.log('Stored token from Redis:', storedToken);
+
+        if (!storedToken) {
+            throw new Error('Password reset token has expired or does not exist');
+        }
+
+        if (storedToken !== resetToken) {
+            throw new Error('Invalid password reset token');
+        }
+
+        // Find user
+        const user = await prisma.users.findUnique({
+            where: { user_id: userId }
+        });
+
+        if (!user || user.deleted_at) {
+            throw new Error('User not found');
+        }
+
+        // Hash new password
+        const hashedPassword = await hashPassword(newPassword);
+
+        // Update password
+        await prisma.users.update({
+            where: { user_id: userId },
+            data: {
+                password_hash: hashedPassword,
+                updated_at: new Date()
+            }
+        });
+
+        // Delete the reset token as it's been used
+        await redisClient.del(resetTokenKey);
+
+        // Also delete any cooldown
+        const cooldownKey = `password_reset_cooldown:${userId}`;
+        await redisClient.del(cooldownKey);
+
+        return {
+            success: true,
+            message: 'Password has been reset successfully'
+        };
+    }
+
+
+    async resendPasswordResetOTP(userId) {
+        const user = await prisma.users.findUnique({
+            where: { user_id: userId }
+        });
+
+        if (!user || user.deleted_at) {
+            throw new Error('User not found');
+        }
+
+        if (user.status !== 'Active') {
+            throw new Error('Account is deactivated');
+        }
+
+        // Check if there's a cooldown (prevent spam)
+        const cooldownKey = `password_reset_cooldown:${userId}`;
+        const cooldown = await redisClient.get(cooldownKey);
+
+        if (cooldown) {
+            throw new Error('Please wait before requesting another OTP');
+        }
+
+        // Generate new OTP
+        const otp = this.generateOTP();
+
+        // Store OTP in Redis with 10 minutes expiry
+        const otpKey = `password_reset_otp:${userId}`;
+        await redisClient.setex(otpKey, 600, otp);
+
+        // Set cooldown (60 seconds)
+        await redisClient.setex(cooldownKey, 60, '1');
+
+        // Send OTP to email
+        await sendPasswordResetEmail(user.email, otp, user.full_name);
+
+        return {
+            message: 'OTP has been resent to your email'
+        };
     }
 
     async getUserProfile(userId) {
