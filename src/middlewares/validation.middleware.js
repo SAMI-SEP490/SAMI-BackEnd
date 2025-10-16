@@ -4,6 +4,17 @@
 
 const { z, ZodError } = require('zod');
 
+const isoDateString = () =>
+    z
+        .string({
+            invalid_type_error: 'phải là một ngày hợp lệ (ISO format)',
+            required_error: 'là bắt buộc'
+        })
+        .refine((v) => {
+            // Accept strings that Date.parse can parse (ISO-like). Date.parse allows many formats;
+            // nếu cần nghiêm ngặt hơn có thể dùng regex.
+            return !Number.isNaN(Date.parse(v));
+        }, { message: 'phải là một ngày hợp lệ (ISO format)' });
 
 const registerSchema = z.object({
     email: z.string().email('Invalid email format'),
@@ -107,6 +118,83 @@ const changeToManagerSchema = z.object({
     message: 'assignedTo must be after assignedFrom',
     path: ['assignedTo']
 });
+
+const createContractSchema = z
+    .object({
+        room_id: z.number({
+            invalid_type_error: 'room_id phải là một số',
+            required_error: 'room_id là bắt buộc'
+        }).int(),
+        tenant_user_id: z.number({
+            invalid_type_error: 'tenant_user_id phải là một số',
+            required_error: 'tenant_user_id là bắt buộc'
+        }).int(),
+        start_date: isoDateString().refine(val => {
+            // đảm bảo string parse được thành Date
+            return !Number.isNaN(Date.parse(val));
+        }, { message: 'start_date phải là một ngày hợp lệ (ISO format)' }),
+        end_date: isoDateString().refine(val => {
+            return !Number.isNaN(Date.parse(val));
+        }, { message: 'end_date phải là một ngày hợp lệ (ISO format)' }),
+        rent_amount: z.number({
+            invalid_type_error: 'rent_amount phải là một số'
+        }).positive({ message: 'rent_amount phải lớn hơn 0' }).optional(),
+        deposit_amount: z.number({
+            invalid_type_error: 'deposit_amount phải là một số'
+        }).positive({ message: 'deposit_amount phải lớn hơn 0' }).optional(),
+        status: z.enum(['pending', 'active', 'terminated', 'expired']).optional().or(z.string().optional()).refine(v => {
+            // nếu undefined -> ok; nếu là string thì phải thuộc các giá trị trên
+            if (v === undefined) return true;
+            return ['pending', 'active', 'terminated', 'expired'].includes(v);
+        }, { message: 'status phải là pending, active, terminated hoặc expired' }),
+        note: z.string().max(500, { message: 'note không được vượt quá 500 ký tự' }).optional()
+    })
+    .refine((data) => {
+        // start_date < end_date
+        const start = new Date(data.start_date);
+        const end = new Date(data.end_date);
+        return start < end;
+    }, {
+        message: 'start_date phải nhỏ hơn end_date',
+        path: ['start_date'] // đặt lỗi vào field start_date
+    });
+
+const updateContractSchema = z
+    .object({
+        start_date: z.string().optional().refine(v => {
+            if (v === undefined) return true;
+            return !Number.isNaN(Date.parse(v));
+        }, { message: 'start_date phải là một ngày hợp lệ (ISO format)' }),
+        end_date: z.string().optional().refine(v => {
+            if (v === undefined) return true;
+            return !Number.isNaN(Date.parse(v));
+        }, { message: 'end_date phải là một ngày hợp lệ (ISO format)' }),
+        rent_amount: z.number({
+            invalid_type_error: 'rent_amount phải là một số'
+        }).positive({ message: 'rent_amount phải lớn hơn 0' }).optional(),
+        deposit_amount: z.number({
+            invalid_type_error: 'deposit_amount phải là một số'
+        }).positive({ message: 'deposit_amount phải lớn hơn 0' }).optional(),
+        status: z.string().optional().refine(v => {
+            if (v === undefined) return true;
+            return ['pending', 'active', 'terminated', 'expired'].includes(v);
+        }, { message: 'status phải là pending, active, terminated hoặc expired' }),
+        note: z.string().max(500, { message: 'note không được vượt quá 500 ký tự' }).optional()
+    })
+    .superRefine((data, ctx) => {
+        if (data.start_date && data.end_date) {
+            const start = new Date(data.start_date);
+            const end = new Date(data.end_date);
+            if (!(start < end)) {
+                // chèn lỗi vào start_date (cũng có thể push vào end_date tuỳ muốn)
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: 'start_date phải nhỏ hơn end_date',
+                    path: ['start_date']
+                });
+            }
+        }
+    });
 const validate = (schema) => {
     return (req, res, next) => {
         try {
@@ -141,5 +229,7 @@ module.exports = {
     verifyOTPSchema,
     resendOTPSchema,
     changeToTenantSchema,
-    changeToManagerSchema
+    changeToManagerSchema,
+    createContractSchema,
+    updateContractSchema
 };
