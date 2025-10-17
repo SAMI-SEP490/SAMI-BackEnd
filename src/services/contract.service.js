@@ -1,11 +1,13 @@
 
-// Updated: 2025-16-10
-// By: DatNB
+// Updated: 2025-17-10
+// By: DatNB - Added S3 integration
+
 const prisma = require('../config/prisma');
+const s3Service = require('./s3.service');
 
 class ContractService {
-    // CREATE - Tạo hợp đồng mới
-    async createContract(data) {
+    // CREATE - Tạo hợp đồng mới với file PDF
+    async createContract(data, file = null) {
         const { room_id, tenant_user_id, start_date, end_date, rent_amount, deposit_amount, status, note } = data;
 
         // Validate required fields
@@ -53,6 +55,27 @@ class ContractService {
             throw new Error('Start date must be before end date');
         }
 
+        // Upload file to S3 if provided
+        let fileData = {};
+        if (file) {
+            try {
+                const uploadResult = await s3Service.uploadFile(
+                    file.buffer,
+                    file.originalname,
+                    'contracts'
+                );
+
+                fileData = {
+                    s3_key: uploadResult.s3_key,
+                    file_name: uploadResult.file_name,
+                    checksum: uploadResult.checksum,
+                    uploaded_at: uploadResult.uploaded_at
+                };
+            } catch (error) {
+                throw new Error(`Failed to upload contract file: ${error.message}`);
+            }
+        }
+
         // Create contract
         const contract = await prisma.contracts.create({
             data: {
@@ -64,6 +87,7 @@ class ContractService {
                 deposit_amount: deposit_amount ? parseFloat(deposit_amount) : null,
                 status: status || 'pending',
                 note,
+                ...fileData,
                 created_at: new Date(),
                 updated_at: new Date()
             },
@@ -95,7 +119,6 @@ class ContractService {
                         users: true
                     }
                 },
-                bill_payments: true,
                 contract_addendums: true
             }
         });
@@ -163,7 +186,7 @@ class ContractService {
     }
 
     // UPDATE - Cập nhật hợp đồng
-    async updateContract(contractId, data) {
+    async updateContract(contractId, data, file = null) {
         const { start_date, end_date, rent_amount, deposit_amount, status, note } = data;
 
         // Verify contract exists
@@ -197,6 +220,30 @@ class ContractService {
         if (status) updateData.status = status;
         if (note !== undefined) updateData.note = note;
 
+        // Upload new file to S3 if provided
+        if (file) {
+            try {
+                // Delete old file if exists
+                if (existingContract.s3_key) {
+                    await s3Service.deleteFile(existingContract.s3_key);
+                }
+
+                // Upload new file
+                const uploadResult = await s3Service.uploadFile(
+                    file.buffer,
+                    file.originalname,
+                    'contracts'
+                );
+
+                updateData.s3_key = uploadResult.s3_key;
+                updateData.file_name = uploadResult.file_name;
+                updateData.checksum = uploadResult.checksum;
+                updateData.uploaded_at = uploadResult.uploaded_at;
+            } catch (error) {
+                throw new Error(`Failed to upload contract file: ${error.message}`);
+            }
+        }
+
         const contract = await prisma.contracts.update({
             where: { contract_id: contractId },
             data: updateData,
@@ -210,7 +257,7 @@ class ContractService {
         return this.formatContractResponse(contract);
     }
 
-    // DELETE - Xóa mềm hợp đồng
+    // DELETE - Xóa mềm hợp đồng (không xóa file trên S3)
     async deleteContract(contractId) {
         const contract = await prisma.contracts.findUnique({
             where: { contract_id: contractId }
@@ -220,8 +267,8 @@ class ContractService {
             throw new Error('Contract not found');
         }
 
-        // Soft delete
-        const deletedContract = await prisma.contracts.update({
+        // Soft delete (không xóa file trên S3)
+        await prisma.contracts.update({
             where: { contract_id: contractId },
             data: {
                 deleted_at: new Date(),
@@ -230,6 +277,34 @@ class ContractService {
         });
 
         return { success: true, message: 'Contract deleted successfully' };
+    }
+
+    // HARD DELETE - Xóa vĩnh viễn hợp đồng và file trên S3
+    async hardDeleteContract(contractId) {
+        const contract = await prisma.contracts.findUnique({
+            where: { contract_id: contractId }
+        });
+
+        if (!contract) {
+            throw new Error('Contract not found');
+        }
+
+        // Delete file from S3 if exists
+        if (contract.s3_key) {
+            try {
+                await s3Service.deleteFile(contract.s3_key);
+            } catch (error) {
+                console.error('Failed to delete S3 file:', error);
+                // Continue with database deletion even if S3 deletion fails
+            }
+        }
+
+        // Delete from database
+        await prisma.contracts.delete({
+            where: { contract_id: contractId }
+        });
+
+        return { success: true, message: 'Contract permanently deleted' };
     }
 
     // RESTORE - Khôi phục hợp đồng đã xóa
@@ -258,8 +333,9 @@ class ContractService {
         return this.formatContractResponse(restored);
     }
 
-    // TERMINATE - Kết thúc hợp đồng
-    async terminateContract(contractId, reason = null) {
+
+    // DOWNLOAD - Tải xuống file hợp đồng
+    async downloadContract(contractId) {
         const contract = await prisma.contracts.findUnique({
             where: { contract_id: contractId }
         });
@@ -268,24 +344,62 @@ class ContractService {
             throw new Error('Contract not found');
         }
 
-        if (contract.status === 'terminated') {
-            throw new Error('Contract is already terminated');
+        if (!contract.s3_key) {
+            throw new Error('Contract file not found');
         }
 
-        const terminated = await prisma.contracts.update({
-            where: { contract_id: contractId },
-            data: {
-                status: 'terminated',
-                note: reason ? `${contract.note || ''}\nTermination reason: ${reason}` : contract.note,
-                updated_at: new Date()
-            },
-            include: {
-                rooms: true,
-                tenants: { include: { users: true } }
-            }
+        try {
+            // Generate presigned URL (expires in 1 hour)
+            const downloadUrl = await s3Service.getDownloadUrl(
+                contract.s3_key,
+                contract.file_name || 'contract.pdf',
+                3600
+            );
+
+            return {
+                contract_id: contractId,
+                file_name: contract.file_name,
+                download_url: downloadUrl,
+                expires_in: 3600
+            };
+        } catch (error) {
+            throw new Error(`Failed to generate download URL: ${error.message}`);
+        }
+    }
+
+    // DOWNLOAD DIRECT - Tải xuống file trực tiếp (trả về buffer)
+    async downloadContractDirect(contractId) {
+        const contract = await prisma.contracts.findUnique({
+            where: { contract_id: contractId }
         });
 
-        return this.formatContractResponse(terminated);
+        if (!contract || contract.deleted_at) {
+            throw new Error('Contract not found');
+        }
+
+        if (!contract.s3_key) {
+            throw new Error('Contract file not found');
+        }
+
+        try {
+            const fileBuffer = await s3Service.downloadFile(contract.s3_key);
+
+            // Verify checksum if available
+            if (contract.checksum) {
+                const isValid = s3Service.verifyChecksum(fileBuffer, contract.checksum);
+                if (!isValid) {
+                    throw new Error('File integrity check failed');
+                }
+            }
+
+            return {
+                buffer: fileBuffer,
+                file_name: contract.file_name || 'contract.pdf',
+                content_type: 'application/pdf'
+            };
+        } catch (error) {
+            throw new Error(`Failed to download contract file: ${error.message}`);
+        }
     }
 
     // Helper function - Format response
@@ -304,6 +418,9 @@ class ContractService {
             status: contract.status,
             s3_key: contract.s3_key,
             file_name: contract.file_name,
+            checksum: contract.checksum,
+            uploaded_at: contract.uploaded_at,
+            has_file: !!contract.s3_key,
             note: contract.note,
             created_at: contract.created_at,
             updated_at: contract.updated_at,

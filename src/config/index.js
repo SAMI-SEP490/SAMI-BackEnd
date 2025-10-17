@@ -21,6 +21,12 @@ module.exports = {
         password: process.env.REDIS_PASSWORD || undefined,
         db: process.env.REDIS_DB || 0
     },
+    s3: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+        region: process.env.AWS_REGION || 'ap-southeast-1',
+        bucketName: process.env.AWS_S3_BUCKET_NAME
+    },
     frontend: {
         url: process.env.FRONTEND_URL || 'http://localhost:3001'
     },
