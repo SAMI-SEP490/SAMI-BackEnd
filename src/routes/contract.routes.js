@@ -1,67 +1,73 @@
-
+// routes/contract.routes.js
 // Updated: 2025-17-10
-// by: DatNB
+// By: DatNB - Added S3 integration
 
 const express = require('express');
 const router = express.Router();
 const contractController = require('../controllers/contract.controller');
 const { authenticate, requireRole } = require('../middlewares/auth.middleware');
-const {
-    validate,
-    createContractSchema,
-    updateContractSchema
-} = require('../middlewares/validation.middleware');
+const { upload, handleUploadError } = require('../middlewares/upload.middleware');
 
-// All routes require authentication
+// Tất cả routes đều yêu cầu authentication
 router.use(authenticate);
 
-// CREATE - Tạo hợp đồng mới
-// Chỉ MANAGER và OWNER có thể tạo
-router.post(
-    '/',
-    requireRole(['manager', 'owner']),
-    validate(createContractSchema),
-    contractController.create
+// CREATE - Tạo hợp đồng mới (có thể kèm file PDF)
+router.post('/',
+    requireRole(['owner', 'manager']),
+    upload.single('contract_file'), // Field name: contract_file
+    handleUploadError,
+    contractController.createContract
 );
 
-// READ - Lấy tất cả hợp đồng
-// TENANT chỉ xem hợp đồng của mình
-router.get('/', requireRole(['manager', 'owner']), contractController.getAll);
+// READ - Lấy danh sách hợp đồng
+router.get('/',
+    requireRole(['owner', 'manager']),
+    contractController.getContracts
+);
 
 // READ - Lấy hợp đồng theo ID
-router.get('/:contractId', contractController.getById);
+router.get('/:id',
+    requireRole(['owner', 'manager', 'tenant']),
+    contractController.getContractById
+);
 
-// UPDATE - Cập nhật hợp đồng
-// Chỉ MANAGER và OWNER có thể cập nhật
-router.put(
-    '/:contractId',
-    requireRole(['manager', 'owner']),
-    validate(updateContractSchema),
-    contractController.update
+// UPDATE - Cập nhật hợp đồng (có thể thay đổi file PDF)
+router.put('/:id',
+    requireRole(['owner', 'manager']),
+    upload.single('contract_file'),
+    handleUploadError,
+    contractController.updateContract
 );
 
 // DELETE - Xóa mềm hợp đồng
-// Chỉ OWNER có thể xóa
-router.delete(
-    '/:contractId',
+router.delete('/:id',
+    requireRole(['owner', 'manager']),
+    contractController.deleteContract
+);
+
+// HARD DELETE - Xóa vĩnh viễn hợp đồng (bao gồm file trên S3)
+router.delete('/:id/permanent',
     requireRole(['owner']),
-    contractController.delete
+    contractController.hardDeleteContract
 );
 
 // RESTORE - Khôi phục hợp đồng đã xóa
-// Chỉ OWNER có thể khôi phục
-router.post(
-    '/:contractId/restore',
-    requireRole(['owner']),
-    contractController.restore
+router.post('/:id/restore',
+    requireRole(['owner', 'manager']),
+    contractController.restoreContract
 );
 
-// TERMINATE - Kết thúc hợp đồng
-// Chỉ MANAGER và OWNER có thể kết thúc
-router.post(
-    '/:contractId/terminate',
-    requireRole(['manager', 'owner']),
-    contractController.terminate
+
+// DOWNLOAD - Tải xuống file PDF (presigned URL)
+router.get('/:id/download',
+    requireRole(['owner', 'manager', 'tenant']),
+    contractController.downloadContract
+);
+
+// DOWNLOAD DIRECT - Tải xuống file PDF trực tiếp (stream)
+router.get('/:id/download/direct',
+    requireRole(['owner', 'manager', 'tenant']),
+    contractController.downloadContractDirect
 );
 
 module.exports = router;
