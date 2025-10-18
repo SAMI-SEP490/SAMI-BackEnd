@@ -36,9 +36,23 @@ router.get(
 
 // Soft-delete a user by ID (Owner and Manager)
 router.delete(
-    '/:id',
+    '/delete/:id',
     requireRole(['owner', 'manager']),
     userController.softDeleteUser
+);
+
+// Restore a user by ID (Owner only)
+router.post(
+    '/restore/:id',
+    requireRole(['owner']),
+    userController.restoreUser
+);
+
+// Get all deleted users (Owner only)
+router.get(
+    '/get-deleted',
+    requireRole(['owner']),
+    userController.getDeletedUsers
 );
 
 // Admin and Manager can change user roles

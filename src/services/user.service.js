@@ -270,6 +270,107 @@ class UserService {
         return deletedUser;
     }
 
+    async restoreUser(userId) {
+        // First, check if the user exists
+        const user = await prisma.users.findUnique({
+            where: { user_id: userId },
+            select: { deleted_at: true }
+        });
+
+        if (!user) {
+            const error = new Error('User not found');
+            error.statusCode = 404;
+            throw error;
+        }
+
+        // Check if user is actually deleted
+        if (user.deleted_at === null) {
+            const error = new Error('User is not deleted');
+            error.statusCode = 400; // 400 Bad Request
+            throw error;
+        }
+
+        // Perform the restore (which is an update)
+        const restoredUser = await prisma.users.update({
+            where: {
+                user_id: userId,
+            },
+            data: {
+                deleted_at: null,
+                status: 'Active', // Set status back to Active
+            },
+            select: {
+                user_id: true,
+                deleted_at: true,
+                status: true
+            }
+        });
+
+        return restoredUser;
+    }
+
+    async getDeletedUsers() {
+        const users = await prisma.users.findMany({
+            where: {
+                deleted_at: {
+                    not: null, // The key filter
+                },
+            },
+            select: {
+                user_id: true,
+                phone: true,
+                email: true,
+                full_name: true,
+                gender: true,
+                birthday: true,
+                status: true,
+                created_at: true,
+                updated_at: true,
+                deleted_at: true,
+                // Include related models to determine role and note
+                building_owner: { select: { notes: true } },
+                building_managers: { select: { note: true } },
+                tenants: { select: { note: true } },
+            },
+            orderBy: {
+                deleted_at: 'desc', // Show the most recently deleted first
+            },
+        });
+
+        // Map the results to format the output
+        return users.map(user => {
+            let role = 'USER';
+            let note = null;
+
+            if (user.building_owner) {
+                role = 'OWNER';
+                note = user.building_owner.notes;
+            } else if (user.building_managers) {
+                role = 'MANAGER';
+                note = user.building_managers.note;
+            } else if (user.tenants) {
+                role = 'TENANT';
+                note = user.tenants.note;
+            }
+
+            // Return the clean object
+            return {
+                user_id: user.user_id,
+                phone: user.phone,
+                email: user.email,
+                full_name: user.full_name,
+                gender: user.gender,
+                birthday: user.birthday,
+                status: user.status,
+                role,
+                created_at: user.created_at,
+                updated_at: user.updated_at,
+                deleted_at: user.deleted_at,
+                note,
+            };
+        });
+    }
+
     /**
      * Change user to TENANT role
      */

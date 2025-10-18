@@ -84,6 +84,42 @@ class UserController {
         }
     }
 
+    async restoreUser(req, res, next) {
+        try {
+            const userId = parseInt(req.params.id, 10);
+
+            if (isNaN(userId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid User ID provided',
+                });
+            }
+
+            const result = await UserService.restoreUser(userId);
+
+            res.status(200).json({
+                success: true,
+                message: 'User restored successfully',
+                data: result,
+            });
+        } catch (err) {
+            next(err); // Pass errors (404, 400) to the error handler
+        }
+    }
+
+    async getDeletedUsers(req, res, next) {
+        try {
+            const users = await UserService.getDeletedUsers();
+            res.status(200).json({
+                success: true,
+                message: 'Deleted users retrieved successfully',
+                data: users,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
     async changeToTenant(req, res, next) {
         try {
             const result = await UserService.changeToTenant(req.body);
