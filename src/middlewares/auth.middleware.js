@@ -36,6 +36,7 @@ const authenticate = async (req, res, next) => {
                 birthday: true,
                 avatar_url: true,
                 status: true,
+                role: true,
                 deleted_at: true
             }
         });

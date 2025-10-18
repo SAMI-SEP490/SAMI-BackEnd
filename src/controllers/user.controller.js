@@ -1,7 +1,7 @@
 // Updated: 2025-16-10
 // by: DatNB
 
-const UserService = require('../services/user.service.service');
+const UserService = require('../services/user.service');
 
 class UserController {
     async changeToTenant(req, res, next) {
