@@ -1,5 +1,5 @@
-// Updated: 2025-16-10
-// by: DatNB
+// Updated: 2025-17-10
+// by: DatNB & MinhBH
 
 const express = require('express');
 const router = express.Router();
@@ -13,6 +13,19 @@ const {
 
 // Protected routes - require authentication
 router.use(authenticate);
+
+// Get all users (only for Owner and Manager)
+router.get(
+    '/list-users', 
+    requireRole(['owner', 'manager']), 
+    userController.getAllUsers);
+
+// Get a single user by ID (Owner and Manager)
+router.get(
+    '/get-user/:id',
+    requireRole(['owner', 'manager']),
+    userController.getUserById
+);
 
 // Admin and Manager can change user roles
 router.post(
