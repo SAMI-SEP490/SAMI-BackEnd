@@ -1,6 +1,6 @@
+// services/contract.service.js
+// Updated: 2025-18-10
 
-// Updated: 2025-17-10
-// By: DatNB - Added S3 integration
 
 const prisma = require('../config/prisma');
 const s3Service = require('./s3.service');
@@ -15,9 +15,17 @@ class ContractService {
             throw new Error('Missing required fields: room_id, tenant_user_id, start_date, end_date');
         }
 
+        // Parse IDs to integers
+        const roomId = parseInt(room_id);
+        const tenantUserId = parseInt(tenant_user_id);
+
+        if (isNaN(roomId) || isNaN(tenantUserId)) {
+            throw new Error('room_id and tenant_user_id must be valid numbers');
+        }
+
         // Check if room exists and is active
         const room = await prisma.rooms.findUnique({
-            where: { room_id }
+            where: { room_id: roomId }
         });
 
         if (!room || !room.is_active) {
@@ -26,7 +34,7 @@ class ContractService {
 
         // Check if tenant exists
         const tenant = await prisma.tenants.findUnique({
-            where: { user_id: tenant_user_id }
+            where: { user_id: tenantUserId }
         });
 
         if (!tenant) {
@@ -36,8 +44,8 @@ class ContractService {
         // Check if tenant already has active contract in this room
         const existingContract = await prisma.contracts.findFirst({
             where: {
-                room_id,
-                tenant_user_id,
+                room_id: roomId,
+                tenant_user_id: tenantUserId,
                 status: { in: ['active', 'pending'] },
                 deleted_at: null
             }
@@ -79,8 +87,8 @@ class ContractService {
         // Create contract
         const contract = await prisma.contracts.create({
             data: {
-                room_id,
-                tenant_user_id,
+                room_id: roomId,
+                tenant_user_id: tenantUserId,
                 start_date: startDate,
                 end_date: endDate,
                 rent_amount: rent_amount ? parseFloat(rent_amount) : null,
@@ -104,8 +112,7 @@ class ContractService {
         return this.formatContractResponse(contract);
     }
 
-    // READ - Lấy hợp đồng theo ID
-    async getContractById(contractId) {
+    async getContractById(contractId, currentUser) {
         const contract = await prisma.contracts.findUnique({
             where: { contract_id: contractId },
             include: {
@@ -127,11 +134,16 @@ class ContractService {
             throw new Error('Contract not found');
         }
 
+        // Check permission: Tenant chỉ xem được hợp đồng của mình
+        if (currentUser.role === 'TENANT' && contract.tenant_user_id !== currentUser.user_id) {
+            throw new Error('You do not have permission to view this contract');
+        }
+
         return this.formatContractResponse(contract);
     }
 
     // READ - Lấy danh sách hợp đồng (có phân trang và filter)
-    async getContracts(filters = {}) {
+    async getContracts(filters = {}, currentUser) {
         const {
             room_id,
             tenant_user_id,
@@ -141,12 +153,23 @@ class ContractService {
             start_date,
             end_date
         } = filters;
-
+        console.log('=== DEBUG: Current User Info ===');
+        console.log('User ID:', currentUser.user_id);
+        console.log('Role:', currentUser.role);
+        console.log('Filters:', filters);
+        console.log('===============================');
         const skip = (page - 1) * limit;
         const where = { deleted_at: null };
 
+        // Nếu là tenant, chỉ lấy hợp đồng của mình
+        if (currentUser.role === 'TENANT') {
+            where.tenant_user_id = currentUser.user_id;
+        } else {
+            // Owner/Manager có thể filter theo tenant_user_id
+            if (tenant_user_id) where.tenant_user_id = parseInt(tenant_user_id);
+        }
+
         if (room_id) where.room_id = parseInt(room_id);
-        if (tenant_user_id) where.tenant_user_id = parseInt(tenant_user_id);
         if (status) where.status = status;
 
         // Filter by date range if provided
@@ -333,9 +356,8 @@ class ContractService {
         return this.formatContractResponse(restored);
     }
 
-
-    // DOWNLOAD - Tải xuống file hợp đồng
-    async downloadContract(contractId) {
+    // TERMINATE - Kết thúc hợp đồng
+    async terminateContract(contractId, reason = null) {
         const contract = await prisma.contracts.findUnique({
             where: { contract_id: contractId }
         });
@@ -344,12 +366,46 @@ class ContractService {
             throw new Error('Contract not found');
         }
 
+        if (contract.status === 'terminated') {
+            throw new Error('Contract is already terminated');
+        }
+
+        const terminated = await prisma.contracts.update({
+            where: { contract_id: contractId },
+            data: {
+                status: 'terminated',
+                note: reason ? `${contract.note || ''}\nTermination reason: ${reason}` : contract.note,
+                updated_at: new Date()
+            },
+            include: {
+                rooms: true,
+                tenants: { include: { users: true } }
+            }
+        });
+
+        return this.formatContractResponse(terminated);
+    }
+
+    // DOWNLOAD - Tải xuống file hợp đồng
+    async downloadContract(contractId, currentUser) {
+        const contract = await prisma.contracts.findUnique({
+            where: { contract_id: contractId }
+        });
+
+        if (!contract || contract.deleted_at) {
+            throw new Error('Contract not found');
+        }
+
+        // ✅ THÊM: Kiểm tra quyền tenant
+        if (currentUser.role === 'TENANT' && contract.tenant_user_id !== currentUser.user_id) {
+            throw new Error('You do not have permission to download this contract');
+        }
+
         if (!contract.s3_key) {
             throw new Error('Contract file not found');
         }
 
         try {
-            // Generate presigned URL (expires in 1 hour)
             const downloadUrl = await s3Service.getDownloadUrl(
                 contract.s3_key,
                 contract.file_name || 'contract.pdf',
@@ -367,14 +423,18 @@ class ContractService {
         }
     }
 
-    // DOWNLOAD DIRECT - Tải xuống file trực tiếp (trả về buffer)
-    async downloadContractDirect(contractId) {
+    async downloadContractDirect(contractId, currentUser) {
         const contract = await prisma.contracts.findUnique({
             where: { contract_id: contractId }
         });
 
         if (!contract || contract.deleted_at) {
             throw new Error('Contract not found');
+        }
+
+        // ✅ THÊM: Kiểm tra quyền tenant
+        if (currentUser.role === 'TENANT' && contract.tenant_user_id !== currentUser.user_id) {
+            throw new Error('You do not have permission to download this contract');
         }
 
         if (!contract.s3_key) {
@@ -384,7 +444,6 @@ class ContractService {
         try {
             const fileBuffer = await s3Service.downloadFile(contract.s3_key);
 
-            // Verify checksum if available
             if (contract.checksum) {
                 const isValid = s3Service.verifyChecksum(fileBuffer, contract.checksum);
                 if (!isValid) {

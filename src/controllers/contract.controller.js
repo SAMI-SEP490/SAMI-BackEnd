@@ -25,7 +25,10 @@ class ContractController {
     async getContractById(req, res, next) {
         try {
             const { id } = req.params;
-            const contract = await contractService.getContractById(parseInt(id));
+            const contract = await contractService.getContractById(
+                parseInt(id),
+                req.user  // Truyền thông tin user hiện tại
+            );
 
             res.json({
                 success: true,
@@ -39,7 +42,12 @@ class ContractController {
     // Lấy danh sách hợp đồng
     async getContracts(req, res, next) {
         try {
-            const contracts = await contractService.getContracts(req.query);
+
+            const contracts = await contractService.getContracts(
+                req.query,
+                req.user  // Truyền thông tin user hiện tại
+            );
+
 
             res.json({
                 success: true,
@@ -116,12 +124,13 @@ class ContractController {
 
 
 
-    // Tải xuống hợp đồng (presigned URL)
     async downloadContract(req, res, next) {
         try {
             const { id } = req.params;
-            const result = await contractService.downloadContract(parseInt(id));
-
+            const result = await contractService.downloadContract(
+                parseInt(id),
+                req.user  //
+            );
             res.json({
                 success: true,
                 message: 'Download URL generated successfully',
@@ -132,12 +141,13 @@ class ContractController {
         }
     }
 
-    // Tải xuống hợp đồng trực tiếp (stream file)
     async downloadContractDirect(req, res, next) {
         try {
             const { id } = req.params;
-            const result = await contractService.downloadContractDirect(parseInt(id));
-
+            const result = await contractService.downloadContractDirect(
+                parseInt(id),
+                req.user  //
+            );
             res.setHeader('Content-Type', result.content_type);
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(result.file_name)}"`);
             res.send(result.buffer);
