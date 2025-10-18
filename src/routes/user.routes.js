@@ -34,6 +34,13 @@ router.get(
     userController.searchUsersByName
 );
 
+// Soft-delete a user by ID (Owner and Manager)
+router.delete(
+    '/:id',
+    requireRole(['owner', 'manager']),
+    userController.softDeleteUser
+);
+
 // Admin and Manager can change user roles
 router.post(
     '/change-to-tenant',

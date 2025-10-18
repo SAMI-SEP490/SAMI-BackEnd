@@ -61,6 +61,29 @@ class UserController {
         }
     }
 
+    async softDeleteUser(req, res, next) {
+        try {
+            const userId = parseInt(req.params.id, 10);
+
+            if (isNaN(userId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid User ID provided',
+                });
+            }
+
+            const result = await UserService.softDeleteUser(userId);
+
+            res.status(200).json({
+                success: true,
+                message: 'User soft-deleted successfully',
+                data: result,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
     async changeToTenant(req, res, next) {
         try {
             const result = await UserService.changeToTenant(req.body);

@@ -231,6 +231,45 @@ class UserService {
         });
     }
 
+    async softDeleteUser(userId) {
+        // First, check if the user exists
+        const user = await prisma.users.findUnique({
+            where: { user_id: userId },
+            select: { deleted_at: true } // Only need to check this field
+        });
+
+        if (!user) {
+            const error = new Error('User not found');
+            error.statusCode = 404;
+            throw error;
+        }
+
+        // Check if user is already soft-deleted
+        if (user.deleted_at) {
+            const error = new Error('User is already deleted');
+            error.statusCode = 400;
+            throw error;
+        }
+
+        // Perform the soft delete (which is an update)
+        const deletedUser = await prisma.users.update({
+            where: {
+                user_id: userId,
+            },
+            data: {
+                deleted_at: new Date(),
+                status: 'Deleted', // It's good practice to update status as well
+            },
+            select: {
+                user_id: true,
+                deleted_at: true,
+                status: true
+            }
+        });
+
+        return deletedUser;
+    }
+
     /**
      * Change user to TENANT role
      */
