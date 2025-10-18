@@ -20,7 +20,6 @@ class TenantService {
                 },
             },
             include: {
-                // Include the user data we want to return
                 users: {
                     select: {
                         user_id: true,
@@ -30,6 +29,7 @@ class TenantService {
                         gender: true,
                         birthday: true,
                         status: true,
+                        is_verified: true,
                         created_at: true,
                         updated_at: true,
                         deleted_at: true,
@@ -53,10 +53,13 @@ class TenantService {
             birthday: tenant.users.birthday,
             status: tenant.users.status,
             role: 'TENANT', // Role is known to be TENANT
+            is_verified: tenant.users.is_verified,
             created_at: tenant.users.created_at,
             updated_at: tenant.users.updated_at,
             deleted_at: tenant.users.deleted_at,
-            note: tenant.note, // Get the note directly from the tenant record
+            note: tenant.note,
+            tenant_since: tenant.tenant_since,
+            id_number: tenant.id_number,
         }));
     }
 }
