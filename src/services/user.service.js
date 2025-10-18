@@ -7,12 +7,33 @@ const { Role } = require('@prisma/client');
 
 class UserService {
     /**
-     * Retrieves a list of all users and formats their data.
-     * The role is determined dynamically by checking related tables.
+     * SYNCHRONOUS helper to get the correct note from a user object
+     */
+    _determineNoteFromUserObject(user) {
+        if (!user) return null;
+        if (user.building_owner) return user.building_owner.notes;
+        if (user.building_managers) return user.building_managers.note;
+        if (user.tenants) return user.tenants.note;
+        return null;
+    }
+
+    /**
+     * ASYNC helper to get a user's role string by ID.
+     */
+    async _getUserRole(userId) {
+        const user = await prisma.users.findUnique({
+            where: { user_id: userId },
+            select: { role: true },
+        });
+        if (!user) return null;
+        return user.role;
+    }
+
+    /**
+     * Retrieves a list of all users.
      */
     async getAllUsers() {
         const users = await prisma.users.findMany({
-            // Select all the user fields you need, plus the related role tables
             select: {
                 user_id: true,
                 phone: true,
@@ -21,23 +42,26 @@ class UserService {
                 gender: true,
                 birthday: true,
                 status: true,
+                role: true,
+                is_verified: true,
                 created_at: true,
                 updated_at: true,
                 deleted_at: true,
-                // Include related models to determine the role and find the note
-                building_owner: {
-                    select: {
-                        notes: true,
-                    },
-                },
+                // Relations still needed for the note
+                building_owner: { select: { notes: true } },
                 building_managers: {
                     select: {
                         note: true,
+                        building_id: true,
+                        assigned_from: true,
+                        assigned_to: true,
                     },
                 },
                 tenants: {
                     select: {
                         note: true,
+                        tenant_since: true,
+                        id_number: true,
                     },
                 },
             },
@@ -46,27 +70,8 @@ class UserService {
             },
         });
 
-        // Map the results to create a clean, flat list with the dynamic role
-        const formattedUsers = users.map(user => {
-            let role = 'USER'; // Default role
-            let note = null;
-
-            // Dynamically determine role and note based on which related table has an entry.
-            // The order here matters if a user can have multiple roles (e.g., an owner who is also a manager).
-            // We prioritize Owner > Manager > Tenant.
-            if (user.building_owner) {
-                role = 'OWNER';
-                note = user.building_owner.notes;
-            } else if (user.building_managers) {
-                role = 'MANAGER';
-                note = user.building_managers.note;
-            } else if (user.tenants) {
-                role = 'TENANT';
-                note = user.tenants.note;
-            }
-
-            // Return a clean object with the determined role and note
-            return {
+        return users.map(user => {
+            const userObject = {
                 user_id: user.user_id,
                 phone: user.phone,
                 email: user.email,
@@ -74,27 +79,39 @@ class UserService {
                 gender: user.gender,
                 birthday: user.birthday,
                 status: user.status,
-                role, // The dynamically determined role
+                role: user.role,
+                is_verified: user.is_verified,
                 created_at: user.created_at,
                 updated_at: user.updated_at,
                 deleted_at: user.deleted_at,
-                note, // The note from the corresponding role table
+                note: this._determineNoteFromUserObject(user),
+                tenant_since: null,
+                id_number: null,
+                building_id: null,
+                assigned_from: null,
+                assigned_to: null,
             };
-        });
 
-        return formattedUsers;
+            // Add role-specific info
+            if (user.role === 'TENANT' && user.tenants) {
+                userObject.tenant_since = user.tenants.tenant_since;
+                userObject.id_number = user.tenants.id_number;
+            } else if (user.role === 'MANAGER' && user.building_managers) {
+                userObject.building_id = user.building_managers.building_id;
+                userObject.assigned_from = user.building_managers.assigned_from;
+                userObject.assigned_to = user.building_managers.assigned_to;
+            }
+
+            return userObject;
+        });
     }
 
     /**
      * Retrieves the details for a single user by their ID.
-     * Determines role dynamically and includes tenant-specific details.
      */
     async getUserById(userId) {
-        // Find the user and include all relevant role-specific data
         const user = await prisma.users.findUnique({
-            where: {
-                user_id: userId,
-            },
+            where: { user_id: userId },
             select: {
                 user_id: true,
                 phone: true,
@@ -103,55 +120,37 @@ class UserService {
                 gender: true,
                 birthday: true,
                 status: true,
+                role: true,
+                is_verified: true,
                 created_at: true,
                 updated_at: true,
                 deleted_at: true,
-                // Select from all potential role tables
-                building_owner: {
-                    select: {
-                        notes: true,
-                    },
-                },
+                // Relations still needed for note/emergency contact
+                building_owner: { select: { notes: true } },
                 building_managers: {
                     select: {
                         note: true,
+                        building_id: true,
+                        assigned_from: true,
+                        assigned_to: true,
                     },
                 },
                 tenants: {
                     select: {
                         note: true,
-                        emergency_contact_phone: true, // Specific field for tenant
+                        emergency_contact_phone: true,
+                        tenant_since: true,
+                        id_number: true,
                     },
                 },
             },
         });
 
-        // If no user is found, throw an error
         if (!user) {
-            const error = new Error('User not found');
-            error.statusCode = 404;
-            throw error;
+            throw new Error('User not found');
         }
 
-        // Determine role, note, and other role-specific fields
-        let role = 'USER';
-        let note = null;
-        let emergency_contact_phone = null;
-
-        if (user.building_owner) {
-            role = 'OWNER';
-            note = user.building_owner.notes;
-        } else if (user.building_managers) {
-            role = 'MANAGER';
-            note = user.building_managers.note;
-        } else if (user.tenants) {
-            role = 'TENANT';
-            note = user.tenants.note;
-            emergency_contact_phone = user.tenants.emergency_contact_phone;
-        }
-
-        // Return the final, formatted object
-        return {
+        const userObject = {
             user_id: user.user_id,
             phone: user.phone,
             email: user.email,
@@ -159,21 +158,43 @@ class UserService {
             gender: user.gender,
             birthday: user.birthday,
             status: user.status,
-            role,
+            role: user.role,
+            is_verified: user.is_verified,
             created_at: user.created_at,
             updated_at: user.updated_at,
             deleted_at: user.deleted_at,
-            note,
-            emergency_contact_phone, // This will be null for non-tenants
+            note: this._determineNoteFromUserObject(user),
+            emergency_contact_phone: null,
+            tenant_since: null,
+            id_number: null,
+            building_id: null,
+            assigned_from: null,
+            assigned_to: null,
         };
+
+        // Add role-specific info
+        if (user.role === 'TENANT' && user.tenants) {
+            userObject.emergency_contact_phone = user.tenants.emergency_contact_phone;
+            userObject.tenant_since = user.tenants.tenant_since;
+            userObject.id_number = user.tenants.id_number;
+        } else if (user.role === 'MANAGER' && user.building_managers) {
+            userObject.building_id = user.building_managers.building_id;
+            userObject.assigned_from = user.building_managers.assigned_from;
+            userObject.assigned_to = user.building_managers.assigned_to;
+        }
+
+        return userObject;
     }
 
+    /**
+     * Searches all users by full_name.
+     */
     async searchUsersByName(nameQuery) {
         const users = await prisma.users.findMany({
             where: {
                 full_name: {
                     contains: nameQuery,
-                    mode: 'insensitive', // Case-insensitive search
+                    mode: 'insensitive',
                 },
             },
             select: {
@@ -184,37 +205,36 @@ class UserService {
                 gender: true,
                 birthday: true,
                 status: true,
+                role: true,
+                is_verified: true,
                 created_at: true,
                 updated_at: true,
                 deleted_at: true,
-                // Include related models to determine role and note
+                // Relations still needed for the note
                 building_owner: { select: { notes: true } },
-                building_managers: { select: { note: true } },
-                tenants: { select: { note: true } },
+                building_managers: {
+                    select: {
+                        note: true,
+                        building_id: true,
+                        assigned_from: true,
+                        assigned_to: true,
+                    },
+                },
+                tenants: {
+                    select: {
+                        note: true,
+                        tenant_since: true,
+                        id_number: true,
+                    },
+                },
             },
             orderBy: {
                 full_name: 'asc',
             },
         });
 
-        // Map the results to format the output
         return users.map(user => {
-            let role = 'USER';
-            let note = null;
-
-            if (user.building_owner) {
-                role = 'OWNER';
-                note = user.building_owner.notes;
-            } else if (user.building_managers) {
-                role = 'MANAGER';
-                note = user.building_managers.note;
-            } else if (user.tenants) {
-                role = 'TENANT';
-                note = user.tenants.note;
-            }
-
-            // Return the clean object
-            return {
+            const userObject = {
                 user_id: user.user_id,
                 phone: user.phone,
                 email: user.email,
@@ -222,100 +242,133 @@ class UserService {
                 gender: user.gender,
                 birthday: user.birthday,
                 status: user.status,
-                role,
+                role: user.role,
+                is_verified: user.is_verified,
                 created_at: user.created_at,
                 updated_at: user.updated_at,
                 deleted_at: user.deleted_at,
-                note,
+                note: this._determineNoteFromUserObject(user),
+                tenant_since: null,
+                id_number: null,
+                building_id: null,
+                assigned_from: null,
+                assigned_to: null,
             };
+
+            // Add role-specific info
+            if (user.role === 'TENANT' && user.tenants) {
+                userObject.tenant_since = user.tenants.tenant_since;
+                userObject.id_number = user.tenants.id_number;
+            } else if (user.role === 'MANAGER' && user.building_managers) {
+                userObject.building_id = user.building_managers.building_id;
+                userObject.assigned_from = user.building_managers.assigned_from;
+                userObject.assigned_to = user.building_managers.assigned_to;
+            }
+
+            return userObject;
         });
     }
 
-    async softDeleteUser(userId) {
-        // First, check if the user exists
-        const user = await prisma.users.findUnique({
-            where: { user_id: userId },
-            select: { deleted_at: true } // Only need to check this field
-        });
 
-        if (!user) {
-            const error = new Error('User not found');
-            error.statusCode = 404;
+    /**
+     * Soft-deletes a user, with permissions.
+     */
+    async softDeleteUser(targetUserId, requestingUserId) {
+        const requestingUserRole = await this._getUserRole(requestingUserId);
+        const targetUserRole = await this._getUserRole(targetUserId);
+
+        if (!targetUserRole) {
+            throw new Error('User not found');
+        }
+
+        // Only handle tenant if user is MANAGER
+        if (requestingUserRole === 'MANAGER' && targetUserRole !== 'TENANT') {
+            const error = new Error('Managers can only delete tenant accounts');
+            error.statusCode = 403;
             throw error;
         }
 
-        // Check if user is already soft-deleted
-        if (user.deleted_at) {
+        const targetUser = await prisma.users.findUnique({
+            where: { user_id: targetUserId },
+            select: { deleted_at: true },
+        });
+
+        if (targetUser.deleted_at) {
             const error = new Error('User is already deleted');
             error.statusCode = 400;
             throw error;
         }
 
-        // Perform the soft delete (which is an update)
         const deletedUser = await prisma.users.update({
-            where: {
-                user_id: userId,
-            },
+            where: { user_id: targetUserId },
             data: {
                 deleted_at: new Date(),
-                status: 'Deleted', // It's good practice to update status as well
+                status: 'Deleted',
             },
-            select: {
-                user_id: true,
-                deleted_at: true,
-                status: true
-            }
+            select: { user_id: true, deleted_at: true, status: true },
         });
 
         return deletedUser;
     }
 
-    async restoreUser(userId) {
-        // First, check if the user exists
-        const user = await prisma.users.findUnique({
-            where: { user_id: userId },
-            select: { deleted_at: true }
+    /**
+     * Restores a soft-deleted user, with permissions.
+     */
+    async restoreUser(targetUserId, requestingUserId) {
+        const requestingUserRole = await this._getUserRole(requestingUserId);
+        const targetUserRole = await this._getUserRole(targetUserId);
+
+        if (!targetUserRole) {
+            throw new Error('User not found');
+        }
+
+        // Only handle tenant if user is MANAGER
+        if (requestingUserRole === 'MANAGER' && targetUserRole !== 'TENANT') {
+            const error = new Error('Managers can only restore tenant accounts');
+            error.statusCode = 403;
+            throw error;
+        }
+
+        const targetUser = await prisma.users.findUnique({
+            where: { user_id: targetUserId },
+            select: { deleted_at: true },
         });
 
-        if (!user) {
-            const error = new Error('User not found');
-            error.statusCode = 404;
-            throw error;
-        }
-
-        // Check if user is actually deleted
-        if (user.deleted_at === null) {
+        if (targetUser.deleted_at === null) {
             const error = new Error('User is not deleted');
-            error.statusCode = 400; // 400 Bad Request
+            error.statusCode = 400;
             throw error;
         }
 
-        // Perform the restore (which is an update)
         const restoredUser = await prisma.users.update({
-            where: {
-                user_id: userId,
-            },
+            where: { user_id: targetUserId },
             data: {
                 deleted_at: null,
-                status: 'Active', // Set status back to Active
+                status: 'Active',
             },
-            select: {
-                user_id: true,
-                deleted_at: true,
-                status: true
-            }
+            select: { user_id: true, deleted_at: true, status: true },
         });
 
         return restoredUser;
     }
 
-    async getDeletedUsers() {
+    /**
+     * Retrieves a list of all soft-deleted users, with permissions.
+     */
+    async getDeletedUsers(requestingUserId) {
+        const requestingUserRole = await this._getUserRole(requestingUserId);
+
+        let whereClause = {
+            deleted_at: { not: null },
+        };
+
+        // Only handle tenant if user is MANAGER
+        if (requestingUserRole === 'MANAGER') {
+            whereClause.role = 'TENANT';
+        }
+
         const users = await prisma.users.findMany({
-            where: {
-                deleted_at: {
-                    not: null, // The key filter
-                },
-            },
+            where: whereClause,
             select: {
                 user_id: true,
                 phone: true,
@@ -324,37 +377,36 @@ class UserService {
                 gender: true,
                 birthday: true,
                 status: true,
+                role: true,
+                is_verified: true,
                 created_at: true,
                 updated_at: true,
                 deleted_at: true,
-                // Include related models to determine role and note
+                // Relations still needed for the note
                 building_owner: { select: { notes: true } },
-                building_managers: { select: { note: true } },
-                tenants: { select: { note: true } },
+                building_managers: {
+                    select: {
+                        note: true,
+                        building_id: true,
+                        assigned_from: true,
+                        assigned_to: true,
+                    },
+                },
+                tenants: {
+                    select: {
+                        note: true,
+                        tenant_since: true,
+                        id_number: true,
+                    },
+                },
             },
             orderBy: {
-                deleted_at: 'desc', // Show the most recently deleted first
+                deleted_at: 'desc',
             },
         });
 
-        // Map the results to format the output
         return users.map(user => {
-            let role = 'USER';
-            let note = null;
-
-            if (user.building_owner) {
-                role = 'OWNER';
-                note = user.building_owner.notes;
-            } else if (user.building_managers) {
-                role = 'MANAGER';
-                note = user.building_managers.note;
-            } else if (user.tenants) {
-                role = 'TENANT';
-                note = user.tenants.note;
-            }
-
-            // Return the clean object
-            return {
+            const userObject = {
                 user_id: user.user_id,
                 phone: user.phone,
                 email: user.email,
@@ -362,12 +414,30 @@ class UserService {
                 gender: user.gender,
                 birthday: user.birthday,
                 status: user.status,
-                role,
+                role: user.role,
+                is_verified: user.is_verified,
                 created_at: user.created_at,
                 updated_at: user.updated_at,
                 deleted_at: user.deleted_at,
-                note,
+                note: this._determineNoteFromUserObject(user),
+                tenant_since: null,
+                id_number: null,
+                building_id: null,
+                assigned_from: null,
+                assigned_to: null,
             };
+
+            // Add role-specific info
+            if (user.role === 'TENANT' && user.tenants) {
+                userObject.tenant_since = user.tenants.tenant_since;
+                userObject.id_number = user.tenants.id_number;
+            } else if (user.role === 'MANAGER' && user.building_managers) {
+                userObject.building_id = user.building_managers.building_id;
+                userObject.assigned_from = user.building_managers.assigned_from;
+                userObject.assigned_to = user.building_managers.assigned_to;
+            }
+
+            return userObject;
         });
     }
 

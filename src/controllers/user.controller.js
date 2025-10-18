@@ -63,16 +63,14 @@ class UserController {
 
     async softDeleteUser(req, res, next) {
         try {
-            const userId = parseInt(req.params.id, 10);
+            const targetUserId = parseInt(req.params.id, 10);
+            const requestingUserId = req.user.user_id;
 
-            if (isNaN(userId)) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Invalid User ID provided',
-                });
+            if (isNaN(targetUserId)) {
+                return res.status(400).json({ /* ... */ });
             }
 
-            const result = await UserService.softDeleteUser(userId);
+            const result = await UserService.softDeleteUser(targetUserId, requestingUserId);
 
             res.status(200).json({
                 success: true,
@@ -86,16 +84,14 @@ class UserController {
 
     async restoreUser(req, res, next) {
         try {
-            const userId = parseInt(req.params.id, 10);
+            const targetUserId = parseInt(req.params.id, 10);
+            const requestingUserId = req.user.user_id;
 
-            if (isNaN(userId)) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Invalid User ID provided',
-                });
+            if (isNaN(targetUserId)) {
+                return res.status(400).json({ /* ... */ });
             }
 
-            const result = await UserService.restoreUser(userId);
+            const result = await UserService.restoreUser(targetUserId, requestingUserId);
 
             res.status(200).json({
                 success: true,
@@ -103,13 +99,15 @@ class UserController {
                 data: result,
             });
         } catch (err) {
-            next(err); // Pass errors (404, 400) to the error handler
+            next(err);
         }
     }
 
     async getDeletedUsers(req, res, next) {
         try {
-            const users = await UserService.getDeletedUsers();
+            const requestingUserId = req.user.user_id;
+            const users = await UserService.getDeletedUsers(requestingUserId);
+            
             res.status(200).json({
                 success: true,
                 message: 'Deleted users retrieved successfully',

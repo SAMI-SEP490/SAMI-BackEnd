@@ -41,17 +41,17 @@ router.delete(
     userController.softDeleteUser
 );
 
-// Restore a user by ID (Owner only)
+// Restore a user by ID (Owner and Manager)
 router.post(
     '/restore/:id',
-    requireRole(['owner']),
+    requireRole(['owner', 'manager']),
     userController.restoreUser
 );
 
-// Get all deleted users (Owner only)
+// Get all deleted users (Owner and Manager)
 router.get(
     '/get-deleted',
-    requireRole(['owner']),
+    requireRole(['owner', 'manager']),
     userController.getDeletedUsers
 );
 
