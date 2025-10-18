@@ -1,9 +1,123 @@
-// Updated: 2025-16-10
-// by: DatNB
+// Updated: 2025-17-10
+// by: DatNB & MinhBH
 
 const UserService = require('../services/user.service');
 
 class UserController {
+    async getAllUsers(req, res, next) {
+        try {
+            const users = await UserService.getAllUsers();
+            res.status(200).json({
+                success: true,
+                message: 'Users retrieved successfully',
+                data: users,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    async getUserById(req, res, next) {
+        try {
+            const userId = parseInt(req.params.id, 10);
+
+            // Basic validation for the ID
+            if (isNaN(userId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid User ID provided',
+                });
+            }
+
+            const user = await UserService.getUserById(userId);
+
+            res.status(200).json({
+                success: true,
+                message: 'User details retrieved successfully',
+                data: user,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    async searchUsersByName(req, res, next) {
+        try {
+            const { name } = req.query;
+            if (!name) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'A name is required',
+                });
+            }
+            const users = await UserService.searchUsersByName(name);
+            res.status(200).json({
+                success: true,
+                message: 'Users retrieved successfully',
+                data: users,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    async softDeleteUser(req, res, next) {
+        try {
+            const targetUserId = parseInt(req.params.id, 10);
+            const requestingUserId = req.user.user_id;
+
+            if (isNaN(targetUserId)) {
+                return res.status(400).json({ /* ... */ });
+            }
+
+            const result = await UserService.softDeleteUser(targetUserId, requestingUserId);
+
+            res.status(200).json({
+                success: true,
+                message: 'User soft-deleted successfully',
+                data: result,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    async restoreUser(req, res, next) {
+        try {
+            const targetUserId = parseInt(req.params.id, 10);
+            const requestingUserId = req.user.user_id;
+
+            if (isNaN(targetUserId)) {
+                return res.status(400).json({ /* ... */ });
+            }
+
+            const result = await UserService.restoreUser(targetUserId, requestingUserId);
+
+            res.status(200).json({
+                success: true,
+                message: 'User restored successfully',
+                data: result,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    async getDeletedUsers(req, res, next) {
+        try {
+            const requestingUserId = req.user.user_id;
+            const users = await UserService.getDeletedUsers(requestingUserId);
+            
+            res.status(200).json({
+                success: true,
+                message: 'Deleted users retrieved successfully',
+                data: users,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
     async changeToTenant(req, res, next) {
         try {
             const result = await UserService.changeToTenant(req.body);
