@@ -168,6 +168,69 @@ class UserService {
         };
     }
 
+    async searchUsersByName(nameQuery) {
+        const users = await prisma.users.findMany({
+            where: {
+                full_name: {
+                    contains: nameQuery,
+                    mode: 'insensitive', // Case-insensitive search
+                },
+            },
+            select: {
+                user_id: true,
+                phone: true,
+                email: true,
+                full_name: true,
+                gender: true,
+                birthday: true,
+                status: true,
+                created_at: true,
+                updated_at: true,
+                deleted_at: true,
+                // Include related models to determine role and note
+                building_owner: { select: { notes: true } },
+                building_managers: { select: { note: true } },
+                tenants: { select: { note: true } },
+            },
+            orderBy: {
+                full_name: 'asc',
+            },
+        });
+
+        // Map the results to format the output
+        return users.map(user => {
+            let role = 'USER';
+            let note = null;
+
+            if (user.building_owner) {
+                role = 'OWNER';
+                note = user.building_owner.notes;
+            } else if (user.building_managers) {
+                role = 'MANAGER';
+                note = user.building_managers.note;
+            } else if (user.tenants) {
+                role = 'TENANT';
+                note = user.tenants.note;
+            }
+
+            // Return the clean object
+            return {
+                user_id: user.user_id,
+                phone: user.phone,
+                email: user.email,
+                full_name: user.full_name,
+                gender: user.gender,
+                birthday: user.birthday,
+                status: user.status,
+                role,
+                created_at: user.created_at,
+                updated_at: user.updated_at,
+                deleted_at: user.deleted_at,
+                note,
+            };
+        });
+    }
+
     /**
      * Change user to TENANT role
      */

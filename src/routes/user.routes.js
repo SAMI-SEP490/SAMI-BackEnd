@@ -27,6 +27,13 @@ router.get(
     userController.getUserById
 );
 
+// Search all users (Owner and Manager)
+router.get(
+    '/search',
+    requireRole(['owner', 'manager']),
+    userController.searchUsersByName
+);
+
 // Admin and Manager can change user roles
 router.post(
     '/change-to-tenant',

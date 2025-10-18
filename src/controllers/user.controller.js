@@ -41,6 +41,26 @@ class UserController {
         }
     }
 
+    async searchUsersByName(req, res, next) {
+        try {
+            const { name } = req.query;
+            if (!name) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'A name is required',
+                });
+            }
+            const users = await UserService.searchUsersByName(name);
+            res.status(200).json({
+                success: true,
+                message: 'Users retrieved successfully',
+                data: users,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
     async changeToTenant(req, res, next) {
         try {
             const result = await UserService.changeToTenant(req.body);
