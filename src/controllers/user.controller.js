@@ -1,4 +1,4 @@
-// Updated: 2025-17-10
+// Updated: 2025-18-10
 // by: DatNB & MinhBH
 
 const UserService = require('../services/user.service');
@@ -146,7 +146,32 @@ class UserController {
         }
     }
 
+    /**
+     * Controller to update user details by ID.
+     */
+    async updateUser(req, res, next) {
+        try {
+            const targetUserId = parseInt(req.params.id, 10);
+            const requestingUserId = req.user.user_id;
 
+            if (isNaN(targetUserId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid User ID provided',
+                });
+            }
+
+            const result = await UserService.updateUser(targetUserId, requestingUserId, req.body);
+
+            res.status(200).json({
+                success: true,
+                message: 'User updated successfully',
+                data: result,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
 
 }
 

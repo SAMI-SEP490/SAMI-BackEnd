@@ -1,4 +1,4 @@
-// Updated: 2025-17-10
+// Updated: 2025-18-10
 // by: DatNB & MinhBH
 
 const express = require('express');
@@ -8,7 +8,8 @@ const { authenticate, requireRole } = require('../middlewares/auth.middleware');
 const {
     validate,
     changeToTenantSchema,
-    changeToManagerSchema
+    changeToManagerSchema,
+    updateUserSchema
 } = require('../middlewares/validation.middleware');
 
 // Protected routes - require authentication
@@ -70,6 +71,12 @@ router.post(
     userController.changeToManager
 );
 
-
+// Update a user by ID
+router.put(
+    '/update/:id',
+    requireRole(['owner', 'manager']),
+    validate(updateUserSchema),
+    userController.updateUser
+);
 
 module.exports = router;
