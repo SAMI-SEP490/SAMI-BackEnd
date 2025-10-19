@@ -1,5 +1,6 @@
-// services/contract.service.js
+
 // Updated: 2025-18-10
+// by: DatNB
 
 
 const prisma = require('../config/prisma');
@@ -153,11 +154,7 @@ class ContractService {
             start_date,
             end_date
         } = filters;
-        console.log('=== DEBUG: Current User Info ===');
-        console.log('User ID:', currentUser.user_id);
-        console.log('Role:', currentUser.role);
-        console.log('Filters:', filters);
-        console.log('===============================');
+
         const skip = (page - 1) * limit;
         const where = { deleted_at: null };
 
