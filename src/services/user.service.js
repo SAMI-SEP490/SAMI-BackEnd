@@ -1,5 +1,5 @@
-// Updated: 2025-17-10
-// by: MinhBH
+// Updated: 2025-18-10
+// by: DatNB & MinhBH
 
 const prisma = require('../config/prisma');
 const { Role } = require('@prisma/client');
@@ -281,7 +281,7 @@ class UserService {
             throw new Error('User not found');
         }
 
-        // Only handle tenant if user is MANAGER
+        // MANAGER can only handle TENANT
         if (requestingUserRole === 'MANAGER' && targetUserRole !== 'TENANT') {
             const error = new Error('Managers can only delete tenant accounts');
             error.statusCode = 403;
@@ -322,7 +322,7 @@ class UserService {
             throw new Error('User not found');
         }
 
-        // Only handle tenant if user is MANAGER
+        // MANAGER can only handle TENANT
         if (requestingUserRole === 'MANAGER' && targetUserRole !== 'TENANT') {
             const error = new Error('Managers can only restore tenant accounts');
             error.statusCode = 403;
@@ -362,7 +362,7 @@ class UserService {
             deleted_at: { not: null },
         };
 
-        // Only handle tenant if user is MANAGER
+        // MANAGER can only handle TENANT
         if (requestingUserRole === 'MANAGER') {
             whereClause.role = 'TENANT';
         }
@@ -569,6 +569,93 @@ class UserService {
         };
     }
 
+    /**
+     * Updates an user's information.
+     */
+    async updateUser(targetUserId, requestingUserId, data) {
+        const requestingUserRole = await this._getUserRole(requestingUserId);
+        const targetUserRole = await this._getUserRole(targetUserId);
+
+        if (!targetUserRole) {
+            throw new Error('User not found');
+        }
+
+        // MANAGER can only handle TENANT
+        if (requestingUserRole === 'MANAGER' && targetUserRole !== 'TENANT') {
+            const error = new Error('Managers can only edit tenant accounts');
+            error.statusCode = 403;
+            throw error;
+        }
+
+        return prisma.$transaction(async (tx) => {
+            let userDataToUpdate = {};
+            let roleDataUpdated = false;
+
+            // 1. Prepare User table data
+            if (data.full_name) userDataToUpdate.full_name = data.full_name;
+            if (data.gender) userDataToUpdate.gender = data.gender;
+            if (data.birthday) userDataToUpdate.birthday = new Date(data.birthday);
+            if (data.status) userDataToUpdate.status = data.status;
+
+            // 2. Prepare and execute role-specific table update
+            if (targetUserRole === 'TENANT') {
+                let tenantData = {};
+                if (data.note) tenantData.note = data.note;
+                if (data.tenant_since) tenantData.tenant_since = new Date(data.tenant_since);
+                if (data.emergency_contact_phone) tenantData.emergency_contact_phone = data.emergency_contact_phone;
+                if (data.id_number) tenantData.id_number = data.id_number;
+
+                if (Object.keys(tenantData).length > 0) {
+                    await tx.tenants.update({
+                        where: { user_id: targetUserId },
+                        data: tenantData,
+                    });
+                    roleDataUpdated = true;
+                }
+            } else if (targetUserRole === 'MANAGER') {
+                let managerData = {};
+                if (data.note) managerData.note = data.note;
+                if (data.building_id) managerData.building_id = data.building_id;
+                if (data.assigned_from) managerData.assigned_from = new Date(data.assigned_from);
+                if (data.assigned_to) managerData.assigned_to = new Date(data.assigned_to);
+
+                if (Object.keys(managerData).length > 0) {
+                    await tx.building_managers.update({
+                        where: { user_id: targetUserId },
+                        data: managerData,
+                    });
+                    roleDataUpdated = true;
+                }
+            } else if (targetUserRole === 'OWNER') {
+                let ownerData = {};
+                // Note: schema uses 'notes' (plural) for owner
+                if (data.notes) ownerData.notes = data.notes; 
+                
+                if (Object.keys(ownerData).length > 0) {
+                    await tx.building_owner.update({
+                        where: { user_id: targetUserId },
+                        data: ownerData,
+                    });
+                    roleDataUpdated = true;
+                }
+            }
+
+            // 3. Update User table (if data or role data changed)
+            if (Object.keys(userDataToUpdate).length > 0 || roleDataUpdated) {
+                // Set the updated_at timestamp
+                userDataToUpdate.updated_at = new Date();
+
+                const updatedUser = await tx.users.update({
+                    where: { user_id: targetUserId },
+                    data: userDataToUpdate,
+                    select: { user_id: true, updated_at: true, full_name: true, status: true }
+                });
+                return updatedUser;
+            }
+
+            return { message: "No data was provided to update." };
+        });
+    }
 }
 
 module.exports = new UserService();
