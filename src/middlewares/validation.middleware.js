@@ -1,5 +1,5 @@
 // Updated: 2025-18-10
-// by: DatNB
+// by: DatNB & MinhBH
 
 
 const { z, ZodError } = require('zod');
@@ -119,8 +119,54 @@ const changeToManagerSchema = z.object({
     path: ['assignedTo']
 });
 
+const updateUserSchema = z.object({
+    // User fields
+    full_name: z.string().min(1, 'Full name is required').optional(),
+    gender: z.enum(['Male', 'Female', 'Other']).optional(),
+    birthday: z.string().or(z.date()).optional(),
+    status: z.string().min(1, 'Status cannot be empty').optional(),
 
+    // Role-specific fields (all optional)
+    
+    // For Tenants, Managers, Owners
+    note: z.string().optional(),
+    
+    // For Owners (uses 'notes' plural)
+    notes: z.string().optional(),
 
+    // For Tenants
+    tenant_since: z.string().or(z.date()).optional(),
+    emergency_contact_phone: z.string()
+        .min(10, 'Phone number must be at least 10 digits')
+        .max(11, 'Phone number must not exceed 11 digits')
+        .regex(/^[0-9]+$/, { message: 'Phone number must contain only numbers' })
+        .optional(),
+    id_number: z.string()
+        .min(9, 'ID number must be at least 9 characters')
+        .max(12, 'ID number must not exceed 12 characters')
+        .regex(/^[0-9]+$/, { message: 'ID number must contain only numbers' })
+        .optional(),
+    
+    // For Managers
+    building_id: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive({ message: 'buildingId must be a positive integer' })).optional(),
+    assigned_from: z.string().or(z.date()).optional(),
+    assigned_to: z.string().or(z.date()).optional(),
+})
+.refine((data) => {
+    // Validate assignedTo is after assignedFrom if both exist
+    if (data.assigned_from && data.assigned_to) {
+        const fromDate = new Date(data.assigned_from);
+        const toDate = new Date(data.assigned_to);
+        return toDate > fromDate;
+    }
+    return true;
+}, {
+    message: 'assigned_to must be after assigned_from',
+    path: ['assigned_to']
+});
 
 const validate = (schema) => {
     return (req, res, next) => {
@@ -157,4 +203,5 @@ module.exports = {
     resendOTPSchema,
     changeToTenantSchema,
     changeToManagerSchema,
+    updateUserSchema
 };
