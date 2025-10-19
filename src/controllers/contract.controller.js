@@ -1,6 +1,6 @@
 
 // Updated: 2025-17-10
-// By: DatNB - Added S3 integration
+// By: DatNB
 
 const contractService = require('../services/contract.service');
 
