@@ -1,5 +1,5 @@
-// Updated: 2025-16-10
-// by: DatNB
+// Updated: 2025-17-10
+// by: DatNB & MinhBH
 
 const express = require('express');
 const router = express.Router();
@@ -13,6 +13,47 @@ const {
 
 // Protected routes - require authentication
 router.use(authenticate);
+
+// Get all users (only for Owner and Manager)
+router.get(
+    '/list-users', 
+    requireRole(['owner', 'manager']), 
+    userController.getAllUsers);
+
+// Get a single user by ID (Owner and Manager)
+router.get(
+    '/get-user/:id',
+    requireRole(['owner', 'manager']),
+    userController.getUserById
+);
+
+// Search all users (Owner and Manager)
+router.get(
+    '/search',
+    requireRole(['owner', 'manager']),
+    userController.searchUsersByName
+);
+
+// Soft-delete a user by ID (Owner and Manager)
+router.delete(
+    '/delete/:id',
+    requireRole(['owner', 'manager']),
+    userController.softDeleteUser
+);
+
+// Restore a user by ID (Owner and Manager)
+router.post(
+    '/restore/:id',
+    requireRole(['owner', 'manager']),
+    userController.restoreUser
+);
+
+// Get all deleted users (Owner and Manager)
+router.get(
+    '/get-deleted',
+    requireRole(['owner', 'manager']),
+    userController.getDeletedUsers
+);
 
 // Admin and Manager can change user roles
 router.post(
