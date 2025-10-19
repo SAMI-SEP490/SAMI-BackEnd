@@ -1,4 +1,4 @@
-// Updated: 2025-17-10
+// Updated: 2025-18-10
 // by: MinhBH
 
 const express = require('express');
@@ -14,6 +14,30 @@ router.get(
     '/search',
     requireRole(['owner', 'manager']),
     tenantController.searchTenantsByName
+);
+
+router.get(
+    '/analytics/occupancy',
+    requireRole(['owner', 'manager']),
+    tenantController.getOccupancyAnalytics
+);
+
+router.get(
+    '/analytics/gender',
+    requireRole(['owner', 'manager']),
+    tenantController.getTenantGenderDistribution
+);
+
+router.get(
+    '/analytics/age',
+    requireRole(['owner', 'manager']),
+    tenantController.getTenantAgeDistribution
+);
+
+router.get(
+    '/analytics/expiring',
+    requireRole(['owner', 'manager']),
+    tenantController.getExpiringContracts
 );
 
 module.exports = router;
