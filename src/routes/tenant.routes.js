@@ -40,4 +40,16 @@ router.get(
     tenantController.getExpiringContracts
 );
 
+router.get(
+    '/bills',
+    requireRole(['tenant']),
+    tenantController.getAllTenantBills
+);
+
+router.get(
+    '/bills-unpaid',
+    requireRole(['tenant']),
+    tenantController.getAllUnpaidTenantBills
+);
+
 module.exports = router;
