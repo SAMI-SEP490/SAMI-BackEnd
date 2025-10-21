@@ -1,0 +1,14 @@
+node_modules
+npm-debug.log
+.git
+.env
+.env.*
+*.md
+.DS_Store
+.vscode
+coverage
+dist
+build
+Dockerfile
+docker-compose.yml
+gcloud-service-key.json

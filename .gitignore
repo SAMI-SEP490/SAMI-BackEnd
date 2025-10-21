@@ -8,3 +8,4 @@ bun.lock
 
 #.env
 .env
+gcloud-service-key.json

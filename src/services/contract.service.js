@@ -393,7 +393,7 @@ class ContractService {
             throw new Error('Contract not found');
         }
 
-        // ✅ THÊM: Kiểm tra quyền tenant
+
         if (currentUser.role === 'TENANT' && contract.tenant_user_id !== currentUser.user_id) {
             throw new Error('You do not have permission to download this contract');
         }
@@ -429,7 +429,7 @@ class ContractService {
             throw new Error('Contract not found');
         }
 
-        // ✅ THÊM: Kiểm tra quyền tenant
+
         if (currentUser.role === 'TENANT' && contract.tenant_user_id !== currentUser.user_id) {
             throw new Error('You do not have permission to download this contract');
         }
