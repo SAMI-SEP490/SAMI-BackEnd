@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "windows", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -144,32 +145,46 @@ model floor_plans {
 }
 
 model guest_registrations {
-  registration_id                               Int           @id @default(autoincrement())
+  registration_id                               Int             @id @default(autoincrement())
   host_user_id                                  Int
-  guest_name                                    String        @db.VarChar(200)
-  id_number                                     String?       @db.VarChar(100)
-  contact                                       String?       @db.VarChar(100)
-  guest_count                                   Int?          @default(1)
+  guest_count                                   Int?            @default(1)
   room_id                                       Int?
-  arrival_date                                  DateTime?     @db.Date
-  departure_date                                DateTime?     @db.Date
-  status                                        guest_status? @default(pending)
+  arrival_date                                  DateTime?       @db.Date
+  departure_date                                DateTime?       @db.Date
+  status                                        guest_status?   @default(pending)
   note                                          String?
-  created_at                                    DateTime?     @default(now()) @db.Timestamp(6)
-  submitted_at                                  DateTime?     @db.Timestamp(6)
+  created_at                                    DateTime?       @default(now()) @db.Timestamp(6)
+  submitted_at                                  DateTime?       @db.Timestamp(6)
   approved_by                                   Int?
-  approved_at                                   DateTime?     @db.Timestamp(6)
-  cancelled_at                                  DateTime?     @db.Timestamp(6)
+  approved_at                                   DateTime?       @db.Timestamp(6)
+  cancelled_at                                  DateTime?       @db.Timestamp(6)
   cancelled_by                                  Int?
-  cancellation_reason                           String?       @db.VarChar(500)
-  users_guest_registrations_approved_byTousers  users?        @relation("guest_registrations_approved_byTousers", fields: [approved_by], references: [user_id], map: "fk_guest_approved_by")
-  users_guest_registrations_cancelled_byTousers users?        @relation("guest_registrations_cancelled_byTousers", fields: [cancelled_by], references: [user_id], map: "fk_guest_cancelled_by")
-  tenants                                       tenants       @relation(fields: [host_user_id], references: [user_id], onDelete: Cascade, map: "fk_guest_host")
-  rooms                                         rooms?        @relation(fields: [room_id], references: [room_id], map: "fk_guest_room")
+  cancellation_reason                           String?         @db.VarChar(500)
+  users_guest_registrations_approved_byTousers  users?          @relation("guest_registrations_approved_byTousers", fields: [approved_by], references: [user_id], map: "fk_guest_approved_by")
+  users_guest_registrations_cancelled_byTousers users?          @relation("guest_registrations_cancelled_byTousers", fields: [cancelled_by], references: [user_id], map: "fk_guest_cancelled_by")
+  tenants                                       tenants         @relation(fields: [host_user_id], references: [user_id], onDelete: Cascade, map: "fk_guest_host")
+  rooms                                         rooms?          @relation(fields: [room_id], references: [room_id], map: "fk_guest_room")
+  guest_details                                 guest_details[]
 
   @@index([host_user_id], map: "idx_guest_registrations_host_user_id")
   @@index([room_id], map: "idx_guest_registrations_room_id")
   @@index([status], map: "idx_guest_registrations_status")
+}
+
+model guest_details {
+  detail_id           Int                 @id @default(autoincrement())
+  registration_id     Int
+  full_name           String              @db.VarChar(200)
+  id_type             id_type?            @default(national_id)
+  id_number           String?             @db.VarChar(100)
+  date_of_birth       DateTime?           @db.Date
+  nationality         String?             @db.VarChar(100)
+  gender              String?             @db.VarChar(10)
+  relationship        guest_relationship?
+  note                String?             @db.VarChar(255)
+  guest_registrations guest_registrations @relation(fields: [registration_id], references: [registration_id], onDelete: Cascade, map: "fk_guest_details_registration")
+
+  @@index([registration_id], map: "idx_guest_details_registration_id")
 }
 
 model maintenance_requests {
@@ -466,5 +481,16 @@ enum vehicle_type {
   motorcycle
   truck
   van
+  other
+}
+
+enum guest_relationship {
+  host
+  spouse
+  child
+  parent
+  sibling
+  friend
+  colleague
   other
 }

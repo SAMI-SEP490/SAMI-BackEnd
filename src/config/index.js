@@ -27,6 +27,16 @@ module.exports = {
         region: process.env.AWS_REGION || 'ap-southeast-1',
         bucketName: process.env.AWS_S3_BUCKET_NAME
     },
+    googleCloud: {
+        projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
+        // Thêm keyFilename nếu bạn không dùng biến môi trường GOOGLE_APPLICATION_CREDENTIALS
+        // keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS_PATH
+    },
+    documentai: {
+        location: process.env.DOCUMENTAI_LOCATION || 'us',
+        processorId: process.env.DOCUMENTAI_PROCESSOR_ID,
+        apiEndpoint: `${process.env.DOCUMENTAI_LOCATION || 'us'}-documentai.googleapis.com`
+    },
     frontend: {
         url: process.env.FRONTEND_URL || 'http://localhost:3001'
     },
