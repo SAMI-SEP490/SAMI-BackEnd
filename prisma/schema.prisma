@@ -95,6 +95,7 @@ model contract_addendums {
   contracts      contracts      @relation(fields: [contract_id], references: [contract_id], onDelete: Cascade, map: "fk_addendum_contract")
   users          users          @relation(fields: [created_by], references: [user_id], onDelete: SetNull, map: "fk_addendum_created_by_user")
 
+  @@unique([contract_id, version], map: "uniq_contract_addendum_version")
   @@index([contract_id], map: "idx_contract_addendums_contract_id")
   @@index([created_by], map: "idx_contract_addendums_created_by")
 }
@@ -262,6 +263,7 @@ model rooms {
   contracts            contracts[]
   guest_registrations  guest_registrations[]
   maintenance_requests maintenance_requests[]
+  tenants              tenants[] // thêm mối quan hệ ngược lại
   buildings            buildings              @relation(fields: [building_id], references: [building_id], map: "fk_rooms_building")
 
   @@unique([building_id, room_number], map: "rooms_building_room_unique")
@@ -270,6 +272,7 @@ model rooms {
 
 model tenants {
   user_id                   Int                         @id
+  room_id                   Int?
   tenant_since              DateTime?                   @db.Date
   emergency_contact_phone   String?                     @db.VarChar(20)
   id_number                 String                      @unique @db.VarChar(50)
@@ -281,6 +284,9 @@ model tenants {
   users                     users                       @relation(fields: [user_id], references: [user_id], onDelete: Cascade, map: "fk_tenants_user")
   vehicle_slot_registration vehicle_slot_registration[]
   vehicles                  vehicles[]                  @relation("TenantVehiclesRelation")
+  rooms                     rooms?                      @relation(fields: [room_id], references: [room_id], map: "fk_tenants_room")
+
+  @@index([room_id], map: "idx_tenants_room_id")
 }
 
 model users {

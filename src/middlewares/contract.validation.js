@@ -1,4 +1,4 @@
-// Updated: 2025-18-10
+// Updated: 2025-24-10
 // by: DatNB
 
 const validateCreateContract = (req, res, next) => {
@@ -197,9 +197,215 @@ const validateContractId = (req, res, next) => {
 
     next();
 };
+const validateCreateAddendum = (req, res, next) => {
+    try {
+        const { contract_id, type, summary, changes, effective_date, note } = req.body;
+
+        // Required fields
+        if (!contract_id || !type || !summary || !effective_date) {
+            return res.status(400).json({
+                success: false,
+                message: 'Missing required fields: contract_id, type, summary, effective_date'
+            });
+        }
+
+        // Parse and validate contract_id
+        const parsedContractId = parseInt(contract_id);
+        if (isNaN(parsedContractId) || parsedContractId <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'contract_id must be a valid positive number'
+            });
+        }
+
+        // Validate type
+        const validTypes = ['extension', 'rent_change', 'early_termination', 'general', 'other'];
+        if (!validTypes.includes(type)) {
+            return res.status(400).json({
+                success: false,
+                message: `type must be one of: ${validTypes.join(', ')}`
+            });
+        }
+
+        // Validate summary
+        if (typeof summary !== 'string' || summary.trim().length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'summary must be a non-empty string'
+            });
+        }
+
+        if (summary.length > 500) {
+            return res.status(400).json({
+                success: false,
+                message: 'summary must not exceed 500 characters'
+            });
+        }
+
+        // Validate changes if provided
+        if (changes !== undefined && changes !== null) {
+            try {
+                if (typeof changes === 'string') {
+                    JSON.parse(changes);
+                } else if (typeof changes !== 'object') {
+                    throw new Error('Invalid changes type');
+                }
+            } catch (error) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'changes must be valid JSON'
+                });
+            }
+        }
+
+        // Validate effective_date
+        const effectiveDate = new Date(effective_date);
+        if (isNaN(effectiveDate.getTime())) {
+            return res.status(400).json({
+                success: false,
+                message: 'effective_date is not a valid date'
+            });
+        }
+
+        // Validate note if provided
+        if (note !== undefined && note !== null) {
+            if (typeof note !== 'string') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'note must be a string'
+                });
+            }
+
+            if (note.length > 1000) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'note must not exceed 1000 characters'
+                });
+            }
+        }
+
+        next();
+    } catch (error) {
+        return res.status(400).json({
+            success: false,
+            message: 'Validation error: ' + error.message
+        });
+    }
+};
+
+const validateUpdateAddendum = (req, res, next) => {
+    try {
+        const { type, summary, changes, effective_date, note } = req.body;
+
+        // Check if at least one field is provided
+        if (!type && !summary && changes === undefined && !effective_date && note === undefined) {
+            return res.status(400).json({
+                success: false,
+                message: 'At least one field must be provided for update'
+            });
+        }
+
+        // Validate type if provided
+        if (type) {
+            const validTypes = ['extension', 'rent_change', 'early_termination', 'general', 'other'];
+            if (!validTypes.includes(type)) {
+                return res.status(400).json({
+                    success: false,
+                    message: `type must be one of: ${validTypes.join(', ')}`
+                });
+            }
+        }
+
+        // Validate summary if provided
+        if (summary !== undefined) {
+            if (typeof summary !== 'string' || summary.trim().length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'summary must be a non-empty string'
+                });
+            }
+
+            if (summary.length > 500) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'summary must not exceed 500 characters'
+                });
+            }
+        }
+
+        // Validate changes if provided
+        if (changes !== undefined && changes !== null) {
+            try {
+                if (typeof changes === 'string') {
+                    JSON.parse(changes);
+                } else if (typeof changes !== 'object') {
+                    throw new Error('Invalid changes type');
+                }
+            } catch (error) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'changes must be valid JSON'
+                });
+            }
+        }
+
+        // Validate effective_date if provided
+        if (effective_date) {
+            const effectiveDate = new Date(effective_date);
+            if (isNaN(effectiveDate.getTime())) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'effective_date is not a valid date'
+                });
+            }
+        }
+
+        // Validate note if provided
+        if (note !== undefined && note !== null) {
+            if (typeof note !== 'string') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'note must be a string'
+                });
+            }
+
+            if (note.length > 1000) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'note must not exceed 1000 characters'
+                });
+            }
+        }
+
+        next();
+    } catch (error) {
+        return res.status(400).json({
+            success: false,
+            message: 'Validation error: ' + error.message
+        });
+    }
+};
+
+const validateAddendumId = (req, res, next) => {
+    const { id } = req.params;
+    const addendumId = parseInt(id);
+
+    if (isNaN(addendumId) || addendumId <= 0) {
+        return res.status(400).json({
+            success: false,
+            message: 'Invalid addendum ID'
+        });
+    }
+
+    next();
+};
+
 
 module.exports = {
     validateCreateContract,
     validateUpdateContract,
-    validateContractId
+    validateContractId,
+    validateCreateAddendum,
+    validateUpdateAddendum,
+    validateAddendumId
 };
