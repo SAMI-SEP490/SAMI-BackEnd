@@ -172,6 +172,16 @@ const updateUserSchema = z.object({
     path: ['assigned_to']
 });
 
+const createPaymentSchema = z.object({
+    billIds: z.array(
+        z.preprocess((val) => {
+            // Convert string to number if needed
+            if (typeof val === 'string' && val.trim() !== '') return Number(val);
+            return val;
+        }, z.number().int().positive({ message: 'bill_id must be a positive integer' }))
+    ).min(1, { message: 'billIds must be a non-empty array' })
+});
+
 const validate = (schema) => {
     return (req, res, next) => {
         try {
@@ -207,5 +217,6 @@ module.exports = {
     resendOTPSchema,
     changeToTenantSchema,
     changeToManagerSchema,
-    updateUserSchema
+    updateUserSchema,
+    createPaymentSchema
 };
