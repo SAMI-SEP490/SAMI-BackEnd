@@ -27,6 +27,8 @@
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
+    "crypto": "^1.0.1",
+    "dateformat": "^5.0.3",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
@@ -38,9 +40,11 @@
     "multer": "^2.0.2",
     "multer-s3": "^3.0.1",
     "nodemailer": "^6.10.1",
+    "qs": "^6.14.0",
     "redis": "^5.8.3",
     "resend": "^6.1.2",
     "sib-api-v3-sdk": "^8.5.0",
+    "sortobject": "^5.6.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {
