@@ -445,7 +445,7 @@ class UserService {
      * Change user to TENANT role
      */
     async changeToTenant(data) {
-        const { userId, idNumber, emergencyContactPhone, note } = data;
+        const { userId, roomId, idNumber, emergencyContactPhone, note } = data;
 
         // Check if user exists
         const user = await prisma.users.findUnique({
@@ -480,6 +480,7 @@ class UserService {
             const tenant = await tx.tenants.create({
                 data: {
                     user_id: userId,
+                    room_id: roomId,
                     id_number: idNumber,
                     emergency_contact_phone: emergencyContactPhone,
                     tenant_since: new Date(),
