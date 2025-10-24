@@ -83,6 +83,10 @@ const changeToTenantSchema = z.object({
         if (typeof val === 'string' && val.trim() !== '') return Number(val);
         return val;
     }, z.number().int().positive({ message: 'userId must be a positive integer' })),
+    roomId: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive({ message: 'roomId must be a positive integer' })),
     idNumber: z.string()
         .min(9, 'ID number must be at least 9 characters')
         .max(12, 'ID number must not exceed 12 characters')

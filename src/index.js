@@ -1,4 +1,4 @@
-// Updated: 2024-18-10
+// Updated: 2024-24-10
 // by: DatNB
 
 
@@ -15,6 +15,7 @@ const userRoutes = require('./routes/user.routes');
 const contractRoutes = require('./routes/contract.routes');
 const tenantRoutes = require('./routes/tenant.routes');
 const guestRoutes = require('./routes/guest.routes');
+const addendumRoutes = require('./routes/addendum.routes');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
 
 const app = express();
@@ -88,6 +89,7 @@ app.use('/api/user', userRoutes);
 app.use('/api/contract', contractRoutes);
 app.use('/api/tenant', tenantRoutes);
 app.use('/api/guest', guestRoutes);
+app.use('/api/addendum', addendumRoutes);
 
 // 404 handler
 app.use(notFound);
