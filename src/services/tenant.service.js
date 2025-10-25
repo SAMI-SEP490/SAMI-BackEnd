@@ -225,6 +225,60 @@ class TenantService {
             },
         }));
     }
+
+    /**
+     * Gets all non-draft/cancelled bills for a specific tenant.
+     */
+    async getAllTenantBills(tenantUserId) {
+        return prisma.bills.findMany({
+            where: {
+                tenant_user_id: tenantUserId,
+                status: { notIn: ['draft', 'cancelled'] }, // Show history (issued, paid, overdue)
+                deleted_at: null,
+            },
+            orderBy: {
+                billing_period_start: 'desc', // Show the most recent bills first
+            },
+            select: {
+                bill_id: true,
+                bill_number: true,
+                billing_period_start: true,
+                billing_period_end: true,
+                due_date: true,
+                total_amount: true,
+                paid_amount: true,
+                status: true,
+                description: true,
+            }
+        });
+    }
+
+    /**
+     * Gets all unpaid bills for a specific tenant.
+     */
+    async getAllUnpaidTenantBills(tenantUserId) { 
+        return prisma.bills.findMany({
+            where: {
+                tenant_user_id: tenantUserId,
+                status: { in: ['issued', 'overdue'] },
+                deleted_at: null,
+            },
+            orderBy: {
+                due_date: 'asc', // Show most urgent bills first
+            },
+            select: {
+                bill_id: true,
+                bill_number: true,
+                billing_period_start: true,
+                billing_period_end: true,
+                due_date: true,
+                total_amount: true,
+                paid_amount: true,
+                status: true,
+                description: true,
+            }
+        });
+    }
 }
 
 module.exports = new TenantService();

@@ -83,6 +83,10 @@ const changeToTenantSchema = z.object({
         if (typeof val === 'string' && val.trim() !== '') return Number(val);
         return val;
     }, z.number().int().positive({ message: 'userId must be a positive integer' })),
+    roomId: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive({ message: 'roomId must be a positive integer' })),
     idNumber: z.string()
         .min(9, 'ID number must be at least 9 characters')
         .max(12, 'ID number must not exceed 12 characters')
@@ -168,6 +172,16 @@ const updateUserSchema = z.object({
     path: ['assigned_to']
 });
 
+const createPaymentSchema = z.object({
+    billIds: z.array(
+        z.preprocess((val) => {
+            // Convert string to number if needed
+            if (typeof val === 'string' && val.trim() !== '') return Number(val);
+            return val;
+        }, z.number().int().positive({ message: 'bill_id must be a positive integer' }))
+    ).min(1, { message: 'billIds must be a non-empty array' })
+});
+
 const validate = (schema) => {
     return (req, res, next) => {
         try {
@@ -203,5 +217,6 @@ module.exports = {
     resendOTPSchema,
     changeToTenantSchema,
     changeToManagerSchema,
-    updateUserSchema
+    updateUserSchema,
+    createPaymentSchema
 };
