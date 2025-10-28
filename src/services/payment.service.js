@@ -1,6 +1,52 @@
-// /services/payment.service.js
+// Updated: 2025-28-10
+// by: MinhBH
+
 const prisma = require('../config/prisma');
 const { generateVnpayUrl, verifyVnpaySignature } = require('../utils/vnpay');
+
+// Helper function to mark VNPay payment as completed
+async function _markVnpayPaymentAsCompleted(paymentId, amount, transactionId) {
+    return prisma.$transaction(async (tx) => {
+        await tx.bill_payments.update({
+            where: { payment_id: paymentId },
+            data: {
+                status: 'completed',
+                payment_date: new Date(),
+                transaction_id: transactionId, // <-- Use renamed field
+                online_type: 'VNPAY',      // <-- Add payment type
+            },
+        });
+
+        // Update associated bills (no change needed here)
+        await tx.bills.updateMany({
+            where: { payment_id: paymentId },
+            data: {
+                status: 'paid',
+                paid_amount: amount, 
+            },
+        });
+    });
+}
+
+// Helper function to mark any payment as failed
+async function _markPaymentAsFailed(paymentId) {
+    return prisma.$transaction(async (tx) => {
+        // Update payment
+        await tx.bill_payments.update({
+            where: { payment_id: paymentId },
+            data: { status: 'failed' },
+        });
+        
+        // Reset associated bills
+        await tx.bills.updateMany({
+            where: { payment_id: paymentId },
+            data: {
+                status: 'issued',
+                payment_id: null,
+            },
+        });
+    });
+}
 
 class PaymentService {
     /**
@@ -15,7 +61,14 @@ class PaymentService {
                     tenant_user_id: tenantUserId,
                     status: { in: ['issued', 'overdue'] },
                 },
-            });
+                select: {
+                        bill_id: true,
+                        total_amount: true,
+                        penalty_amount: true,
+                        tenant_user_id: true,
+                        status: true,
+                    }
+                });
 
             if (bills.length === 0) {
                 const error = new Error('No payable bills found.');
@@ -28,7 +81,14 @@ class PaymentService {
                 throw error;
             }
 
-            const totalAmount = bills.reduce((sum, bill) => sum + Number(bill.total_amount), 0);
+            const totalAmount = bills.reduce((sum, bill) => {
+                const billTotal = Number(bill.total_amount || 0);
+                // Count penalty if status is "overdue"
+                let billPenalty = 0;
+                if (bill.status === 'overdue') {
+                billPenalty = Number(bill.penalty_amount || 0);}
+                return sum + billTotal + billPenalty;}, 0);
+
             return { bills, totalAmount };
         });
 
@@ -79,6 +139,7 @@ class PaymentService {
         const vnp_TxnRef = vnpParams['vnp_TxnRef'];
         const vnp_ResponseCode = vnpParams['vnp_ResponseCode'];
         const vnp_Amount = Number(vnpParams['vnp_Amount']) / 100;
+        const vnp_TransactionNo = vnpParams['vnp_TransactionNo'];
 
         // 2. Find our payment record
         const payment = await prisma.bill_payments.findFirst({
@@ -102,34 +163,16 @@ class PaymentService {
         // 5. Update based on VNPay's response
         if (vnp_ResponseCode === '00') {
             // SUCCESS
-            await prisma.$transaction(async (tx) => {
-                // Update payment
-                await tx.bill_payments.update({
-                    where: { payment_id: payment.payment_id },
-                    data: {
-                        status: 'completed',
-                        payment_date: new Date(),
-                    },
-                });
-                
-                // Update associated bills
-                await tx.bills.updateMany({
-                    where: { payment_id: payment.payment_id },
-                    data: {
-                        status: 'paid',
-                        paid_amount: payment.amount,
-                    },
-                });
-            });
-            
+            await _markVnpayPaymentAsCompleted(
+                payment.payment_id, 
+                payment.amount, 
+                vnp_TransactionNo 
+            );
             return { RspCode: '00', Message: 'Confirm Success' };
-            
+
         } else {
-            // FAILED (e.g., user cancelled, card failed)
-            await prisma.bill_payments.update({
-                where: { payment_id: payment.payment_id },
-                data: { status: 'failed' },
-            });
+            // FAILED
+            await _markPaymentAsFailed(payment.payment_id);
             return { RspCode: '00', Message: 'Confirm Success' };
         }
     }

@@ -1,3 +1,6 @@
+// Updated: 2025-24-10
+// by: MinhBH
+
 const PaymentService = require('../services/payment.service');
 
 class PaymentController {

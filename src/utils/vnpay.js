@@ -1,3 +1,6 @@
+// Updated: 2025-24-10
+// by: MinhBH
+
 const crypto = require('crypto');
 const querystring = require('qs');
 const dateFormat = require('dateformat');
