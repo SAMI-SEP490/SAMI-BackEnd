@@ -90,6 +90,40 @@ class TenantController {
             next(err);
         }
     }
+
+    /**
+     * Get all bills (paid, unpaid, etc.) for the authenticated tenant.
+     */
+    async getAllTenantBills(req, res, next) {
+        try {
+            const tenantUserId = req.user.user_id;
+            const bills = await TenantService.getAllTenantBills(tenantUserId);
+            res.status(200).json({
+                success: true,
+                message: 'All bills retrieved successfully',
+                data: bills,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    /**
+     * Get all unpaid bills for the authenticated tenant.
+     */
+    async getAllUnpaidTenantBills(req, res, next) { // <-- RENAMED
+        try {
+            const tenantUserId = req.user.user_id;
+            const bills = await TenantService.getAllUnpaidTenantBills(tenantUserId); // <-- Calls renamed service
+            res.status(200).json({
+                success: true,
+                message: 'Unpaid bills retrieved successfully',
+                data: bills,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
 }
 
 module.exports = new TenantController();
