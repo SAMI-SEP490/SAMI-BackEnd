@@ -3,6 +3,8 @@
 
 const prisma = require('../config/prisma');
 const { generateVnpayUrl, verifyVnpaySignature } = require('../utils/vnpay');
+const excelJS = require('exceljs');
+const fastcsv = require('fast-csv');
 
 // Helper function to mark VNPay payment as completed
 async function _markVnpayPaymentAsCompleted(paymentId, amount, transactionId) {
@@ -175,6 +177,186 @@ class PaymentService {
             await _markPaymentAsFailed(payment.payment_id);
             return { RspCode: '00', Message: 'Confirm Success' };
         }
+    }
+
+    /**
+     * Get Tenant Transactions
+     */
+    async getTenantPaymentHistory(tenantUserId) {
+        return prisma.bill_payments.findMany({
+            where: {
+                paid_by: tenantUserId,
+                status: { in: ['completed', 'failed', 'refunded'] } // Show settled payments
+            },
+            orderBy: { payment_date: 'desc' },
+            select: {
+                payment_id: true,
+                amount: true,
+                payment_date: true,
+                method: true,
+                status: true,
+                reference: true,
+                transaction_id: true,
+                online_type: true,
+                note: true,
+                // Include related bills
+                bills: {
+                    select: {
+                        bill_id: true,
+                        bill_number: true,
+                        description: true,
+                        billing_period_start: true,
+                         billing_period_end: true
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Get Year Revenue Report
+     */
+    async getYearlyRevenueReport(year) {
+        const monthlyRevenue = await prisma.$queryRaw`
+            SELECT 
+                EXTRACT(MONTH FROM "payment_date")::integer as month,
+                SUM("amount") as total_revenue
+            FROM "bill_payments"
+            WHERE 
+                "status" = 'completed' AND
+                EXTRACT(YEAR FROM "payment_date") = ${year}
+            GROUP BY month
+            ORDER BY month ASC;
+        `;
+        // Convert BigInt to Number/String and create a full year map
+        const yearMap = Array.from({length: 12}, (_, i) => ({ month: i + 1, total_revenue: '0.00' }));
+        monthlyRevenue.forEach(row => {
+            const monthIndex = yearMap.findIndex(m => m.month === row.month);
+            if (monthIndex !== -1) {
+                // Ensure revenue is formatted as string to avoid precision issues
+                 yearMap[monthIndex].total_revenue = parseFloat(row.total_revenue).toFixed(2);
+            }
+        });
+        return yearMap;
+    }
+
+    /**
+     * Get Month Revenue Report
+     */
+    async getMonthlyRevenueDetails(year, month) {
+        // Prisma query to get individual payments for the month
+        const startDate = new Date(year, month - 1, 1);
+        const endDate = new Date(year, month, 0, 23, 59, 59, 999); // Last moment of the month
+
+        return prisma.bill_payments.findMany({
+            where: {
+                status: 'completed',
+                payment_date: {
+                    gte: startDate,
+                    lte: endDate,
+                }
+            },
+            orderBy: { payment_date: 'asc' },
+            select: {
+                payment_id: true,
+                amount: true,
+                payment_date: true,
+                method: true,
+                reference: true,
+                transaction_id: true,
+                online_type: true,
+                users: { select: { user_id: true, full_name: true } }
+            }
+        });
+    }
+
+    /**
+     * Export Revenue
+     */
+     async exportRevenueData(year, month = null) {
+        let payments;
+        let filenameBase = `revenue-${year}`;
+
+        if (month) {
+            // Get specific month data
+            payments = await this.getMonthlyRevenueDetails(year, month);
+            filenameBase += `-${String(month).padStart(2, '0')}`;
+        } else {
+            // Get full year data (similar to monthly but for the whole year)
+            const startDate = new Date(year, 0, 1); // Jan 1st
+            const endDate = new Date(year, 11, 31, 23, 59, 59, 999); // Dec 31st
+             payments = await prisma.bill_payments.findMany({
+                where: {
+                    status: 'completed',
+                    payment_date: { gte: startDate, lte: endDate }
+                },
+                orderBy: { payment_date: 'asc' },
+                select: {
+                    payment_id: true,
+                    amount: true,
+                    payment_date: true,
+                    method: true,
+                    reference: true,
+                    transaction_id: true,
+                    online_type: true,
+                    users: { select: { user_id: true, full_name: true } }
+                }
+            });
+        }
+
+        // Prepare data for export (flatten user info)
+        const exportData = payments.map(p => ({
+            payment_id: p.payment_id,
+            amount: parseFloat(p.amount), // Convert Decimal to number for export
+            payment_date: p.payment_date ? p.payment_date.toISOString() : '',
+            method: p.method || '',
+            paid_by_user_id: p.users?.user_id || '',
+            paid_by_name: p.users?.full_name || '',
+            reference: p.reference || '',
+            transaction_id: p.transaction_id || '',
+            online_type: p.online_type || '',
+        }));
+
+        return exportData;
+    }
+
+    /**
+     * Gets all payment transactions (for Manager/Owner).
+     */
+    async getAllPaymentHistory(filters = {}) {
+        return prisma.bill_payments.findMany({
+            where: {
+                status: { in: ['completed', 'failed', 'refunded', 'pending'] } // Show all settled and pending
+            },
+            orderBy: { payment_date: 'desc' }, // Show most recent first
+            select: {
+                payment_id: true,
+                amount: true,
+                payment_date: true,
+                method: true,
+                status: true,
+                reference: true,
+                transaction_id: true,
+                online_type: true,
+                note: true,
+                // Include who paid
+                users: {
+                    select: {
+                        user_id: true,
+                        full_name: true,
+                        phone: true // Add phone for easier identification
+                    }
+                },
+                // Optionally include related bills
+                bills: {
+                    select: {
+                        bill_id: true,
+                        bill_number: true,
+                        description: true,
+                    }
+                }
+            }
+        });
     }
 }
 

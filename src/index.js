@@ -1,5 +1,5 @@
 // Updated: 2024-28-10
-// by: MinhBH
+// by: DatNB & MinhBH
 
 
 const express = require('express');
@@ -19,6 +19,7 @@ const guestRoutes = require('./routes/guest.routes');
 const addendumRoutes = require('./routes/addendum.routes');
 const paymentRoutes = require('./routes/payment.routes.js');
 const scriptRoutes = require('./routes/script.routes');
+const billRoutes = require('./routes/bill.routes');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
 const { applyOverduePenalties, generateRecurringBills } = require('./scripts/dailyBillRunner');
 
@@ -96,6 +97,7 @@ app.use('/api/guest', guestRoutes);
 app.use('/api/addendum', addendumRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/script', scriptRoutes);
+app.use('/api/bill', billRoutes);
 
 // Schedule the Daily Task
 cron.schedule('1 0 * * *', async () => {
