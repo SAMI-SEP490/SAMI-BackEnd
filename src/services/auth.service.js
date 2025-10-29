@@ -38,7 +38,7 @@ class AuthService {
                 gender,
                 birthday: birthday ? new Date(birthday) : null,
                 status: 'Active',
-                is_verified: false // New field to track if user has completed first login OTP
+                is_verified: false
             }
         });
 

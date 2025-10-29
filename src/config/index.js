@@ -29,8 +29,7 @@ module.exports = {
     },
     googleCloud: {
         projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
-        // Thêm keyFilename nếu bạn không dùng biến môi trường GOOGLE_APPLICATION_CREDENTIALS
-        // keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS_PATH
+        keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
     },
     documentai: {
         location: process.env.DOCUMENTAI_LOCATION || 'us',
