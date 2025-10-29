@@ -182,6 +182,58 @@ const createPaymentSchema = z.object({
     ).min(1, { message: 'billIds must be a non-empty array' })
 });
 
+const billing_cycle = {
+  WEEKLY: 'WEEKLY',
+  MONTHLY: 'MONTHLY',
+  EVERY_2_MONTHS: 'EVERY_2_MONTHS',
+  HALF_A_YEAR: 'HALF_A_YEAR',
+  YEARLY: 'YEARLY',
+};
+
+const baseBillSchema = z.object({
+    tenant_user_id: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive({ message: 'tenant_user_id must be a positive integer' })),
+    total_amount: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().positive({ message: 'total_amount must be positive' })),
+    description: z.string().min(1, 'Description is required').max(255),
+    is_recurring: z.boolean().optional(),
+    billing_cycle: z.nativeEnum(billing_cycle).optional(),
+    penalty_amount: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().nonnegative({ message: 'penalty_amount cannot be negative' })).optional(),
+    status: z.enum(['draft', 'master']).optional()
+    // **NO .refine() here yet**
+});
+
+const billSchema = baseBillSchema.refine(data => {
+    // If recurring, cycle must be present
+    if (data.is_recurring === true && !data.billing_cycle) {
+        return false;
+    }
+    // Add other CREATE-specific refinements if needed
+    return true;
+}, {
+    message: "If recurring, cycle is required.",
+    path: ["billing_cycle"]
+});
+
+const updateBillSchema = baseBillSchema.partial().refine(data => {
+    // If recurring, cycle must be present
+    if (data.is_recurring === true && !data.billing_cycle) {
+        return false;
+    }
+    // Add other CREATE-specific refinements if needed
+    return true;
+}, {
+    message: "If recurring, cycle is required.",
+    path: ["billing_cycle"]
+});
+
 const validate = (schema) => {
     return (req, res, next) => {
         try {
@@ -218,5 +270,7 @@ module.exports = {
     changeToTenantSchema,
     changeToManagerSchema,
     updateUserSchema,
-    createPaymentSchema
+    createPaymentSchema,
+    billSchema,
+    updateBillSchema
 };

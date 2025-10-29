@@ -233,11 +233,12 @@ class TenantService {
         return prisma.bills.findMany({
             where: {
                 tenant_user_id: tenantUserId,
-                status: { notIn: ['draft', 'cancelled'] }, // Show history (issued, paid, overdue)
+                // Exclude templates ('master') and cancelled bills
+                status: { notIn: ['master', 'draft', 'cancelled'] },
                 deleted_at: null,
             },
             orderBy: {
-                billing_period_start: 'desc', // Show the most recent bills first
+                billing_period_start: 'desc', // Show most recent first
             },
             select: {
                 bill_id: true,
@@ -247,8 +248,9 @@ class TenantService {
                 due_date: true,
                 total_amount: true,
                 paid_amount: true,
+                penalty_amount: true,
                 status: true,
-                description: true,
+                description: true, 
             }
         });
     }
@@ -256,7 +258,7 @@ class TenantService {
     /**
      * Gets all unpaid bills for a specific tenant.
      */
-    async getAllUnpaidTenantBills(tenantUserId) { 
+    async getAllUnpaidTenantBills(tenantUserId) {
         return prisma.bills.findMany({
             where: {
                 tenant_user_id: tenantUserId,
@@ -264,7 +266,7 @@ class TenantService {
                 deleted_at: null,
             },
             orderBy: {
-                due_date: 'asc', // Show most urgent bills first
+                due_date: 'asc', // Show most urgent first
             },
             select: {
                 bill_id: true,
@@ -274,6 +276,7 @@ class TenantService {
                 due_date: true,
                 total_amount: true,
                 paid_amount: true,
+                penalty_amount: true,
                 status: true,
                 description: true,
             }

@@ -1,4 +1,6 @@
-// /routes/payment.routes.js
+// Updated: 2025-28-10
+// by: MinhBH
+
 const express = require('express');
 const router = express.Router();
 const paymentController = require('../controllers/payment.controller');
@@ -23,6 +25,41 @@ router.get(
 router.get(
     '/vnpay_ipn',
     paymentController.handleVnpayIpn
+);
+
+router.get(
+    '/history',
+    authenticate,
+    requireRole(['tenant']),
+    paymentController.getTenantPaymentHistory
+);
+
+router.get(
+    '/list-all',
+    authenticate,
+    requireRole(['owner', 'manager']),
+    paymentController.getAllPaymentHistory
+);
+
+router.get(
+    '/revenue/yearly',
+    authenticate,
+    requireRole(['owner', 'manager']),
+    paymentController.getYearlyRevenueReport
+);
+
+router.get(
+    '/revenue/monthly',
+    authenticate,
+    requireRole(['owner', 'manager']),
+    paymentController.getMonthlyRevenueDetails
+);
+
+router.get(
+    '/revenue/export',
+    authenticate,
+    requireRole(['owner', 'manager']),
+    paymentController.exportRevenue
 );
 
 module.exports = router;
