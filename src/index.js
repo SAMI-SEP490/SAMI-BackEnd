@@ -20,6 +20,7 @@ const addendumRoutes = require('./routes/addendum.routes');
 const paymentRoutes = require('./routes/payment.routes.js');
 const scriptRoutes = require('./routes/script.routes');
 const billRoutes = require('./routes/bill.routes');
+const maintenanceRoutes = require('./routes/maintenance.routes');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
 const { applyOverduePenalties, generateRecurringBills } = require('./scripts/dailyBillRunner');
 
@@ -95,6 +96,7 @@ app.use('/api/contract', contractRoutes);
 app.use('/api/tenant', tenantRoutes);
 app.use('/api/guest', guestRoutes);
 app.use('/api/addendum', addendumRoutes);
+app.use('/api/maintenance', maintenanceRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/script', scriptRoutes);
 app.use('/api/bill', billRoutes);
