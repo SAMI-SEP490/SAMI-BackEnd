@@ -16,6 +16,7 @@ const contractRoutes = require('./routes/contract.routes');
 const tenantRoutes = require('./routes/tenant.routes');
 const guestRoutes = require('./routes/guest.routes');
 const addendumRoutes = require('./routes/addendum.routes');
+const maintenanceRoutes = require('./routes/maintenance.routes');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
 
 const app = express();
@@ -90,6 +91,7 @@ app.use('/api/contract', contractRoutes);
 app.use('/api/tenant', tenantRoutes);
 app.use('/api/guest', guestRoutes);
 app.use('/api/addendum', addendumRoutes);
+app.use('/api/maintenance', maintenanceRoutes);
 
 // 404 handler
 app.use(notFound);
