@@ -206,7 +206,7 @@ model maintenance_requests {
   status         maintenance_status?   @default(pending)
   approved_by    Int?
   created_at     DateTime?             @default(now()) @db.Timestamp(6)
-  updated_at     DateTime?             @db.Timestamp(6)
+  updated_at     DateTime?             @updatedAt @db.Timestamp(6)
   approved_at    DateTime?             @db.Timestamp(6)
   resolved_at    DateTime?             @db.Timestamp(6)
   note           String?

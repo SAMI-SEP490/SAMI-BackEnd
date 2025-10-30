@@ -237,13 +237,12 @@ class MaintenanceService {
 
         // Prepare update data
         const updateData = {
-            updated_at: new Date()
         };
 
-        if (title) updateData.title = title;
+        if (title !== undefined) updateData.title = title;
+        if (priority !== undefined) updateData.priority = priority;
         if (description !== undefined) updateData.description = description;
         if (category !== undefined) updateData.category = category;
-        if (priority) updateData.priority = priority;
         if (note !== undefined) updateData.note = note;
 
         // Only manager/owner can update these fields

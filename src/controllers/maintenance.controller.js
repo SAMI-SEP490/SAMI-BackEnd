@@ -67,7 +67,6 @@ class MaintenanceController {
                 req.body,
                 req.user
             );
-
             res.json({
                 success: true,
                 message: 'Maintenance request updated successfully',
