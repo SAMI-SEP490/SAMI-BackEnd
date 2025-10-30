@@ -95,14 +95,7 @@ const validateUpdateMaintenanceRequest = [
         .isIn(['pending', 'in_progress', 'on_hold', 'resolved', 'completed', 'cancelled', 'rejected'])
         .withMessage('Invalid status'),
 
-    body('actual_cost')
-        .optional()
-        .custom((value) => {
-            if (value === null) return true;
-            const num = parseFloat(value);
-            return !isNaN(num) && num >= 0;
-        })
-        .withMessage('Invalid actual cost'),
+
 
     body('note')
         .optional()
@@ -142,14 +135,6 @@ const validateRejectMaintenanceRequest = [
 
 // Validate resolve maintenance request
 const validateResolveMaintenanceRequest = [
-    body('actual_cost')
-        .optional()
-        .custom((value) => {
-            if (value === null || value === undefined) return true;
-            const num = parseFloat(value);
-            return !isNaN(num) && num >= 0;
-        })
-        .withMessage('Invalid actual cost'),
 
     (req, res, next) => {
         const errors = validationResult(req);
