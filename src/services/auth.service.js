@@ -51,13 +51,12 @@ class AuthService {
         };
     }
 
-    async login(email, password, ipAddress, userAgent, deviceId) {
+    async login(email, password) {
         // Find user by email or phone
         const user = await prisma.users.findFirst({
             where: {
                 OR: [
-                    { email },
-                    { phone: email } // Allow login with phone number too
+                    { email }
                 ],
                 deleted_at: null
             }

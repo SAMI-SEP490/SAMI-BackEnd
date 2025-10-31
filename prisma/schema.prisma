@@ -268,6 +268,9 @@ model rooms {
   size                 String?                @db.VarChar(50)
   description          String?
   is_active            Boolean?               @default(true)
+  status               room_status?           @default(available)
+  created_at           DateTime?              @default(now()) @db.Timestamp(6)
+  updated_at           DateTime?              @updatedAt @db.Timestamp(6)
   contracts            contracts[]
   guest_registrations  guest_registrations[]
   maintenance_requests maintenance_requests[]
@@ -520,4 +523,11 @@ enum guest_relationship {
 enum online_type {
   VNPAY
   VIETQR
+}
+
+enum room_status {
+  available
+  occupied
+  maintenance
+  reserved
 }
