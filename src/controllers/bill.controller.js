@@ -20,12 +20,6 @@ class BillController {
             res.status(200).json({ success: true, data: bills });
         } catch (err) { next(err); }
     }
-    async getMasterBills(req, res, next) {
-        try {
-            const bills = await BillService.getMasterBills();
-            res.status(200).json({ success: true, data: bills });
-        } catch (err) { next(err); }
-    }
      async getDeletedBills(req, res, next) {
         try {
             const bills = await BillService.getDeletedBills();
@@ -45,40 +39,55 @@ class BillController {
     }
 
     // --- CREATE ---
-    async createBill(req, res, next) {
+    async createDraftBill(req, res, next) {
         try {
-            // Validation is handled by middleware
             const createdById = req.user.user_id;
-            const newBill = await BillService.createBill(req.body, createdById);
-            res.status(201).json({ success: true, message: "Bill created successfully", data: newBill });
+            const newBill = await BillService.createDraftBill(req.body, createdById);
+            res.status(201).json({ success: true, message: "Draft bill saved", data: newBill });
+        } catch (err) { next(err); }
+    }
+    
+    async createIssuedBill(req, res, next) {
+        try {
+            const createdById = req.user.user_id;
+            const newBill = await BillService.createIssuedBill(req.body, createdById);
+            res.status(201).json({ success: true, message: "Bill created and issued", data: newBill });
         } catch (err) { next(err); }
     }
 
     // --- EDIT ---
-    async updateBill(req, res, next) {
+    async updateDraftBill(req, res, next) {
         try {
             const billId = parseInt(req.params.id, 10);
             if (isNaN(billId)) return res.status(400).json({ success: false, message: "Invalid Bill ID" });
             
-            // Validation handled by middleware
-            const updatedById = req.user.user_id;
-            const updatedBill = await BillService.updateBill(billId, req.body, updatedById);
-            res.status(200).json({ success: true, message: "Bill updated successfully", data: updatedBill });
+            const updatedBill = await BillService.updateDraftBill(billId, req.body);
+            const message = req.body.status === 'issued' ? "Bill published successfully" : "Draft bill updated";
+            res.status(200).json({ success: true, message: message, data: updatedBill });
         } catch (err) { next(err); }
     }
     
-    // --- CLONE DRAFT TO MASTER ---
-     async cloneDraftToMaster(req, res, next) {
+    async updateIssuedBill(req, res, next) {
         try {
-            const draftBillId = parseInt(req.params.id, 10);
-             if (isNaN(draftBillId)) return res.status(400).json({ success: false, message: "Invalid Draft Bill ID" });
-             
-             const updatedById = req.user.user_id;
-             const newMasterBill = await BillService.cloneDraftToMaster(draftBillId, updatedById);
-             res.status(201).json({ success: true, message: "Draft bill cloned to master successfully", data: newMasterBill });
+            const billId = parseInt(req.params.id, 10);
+            if (isNaN(billId)) return res.status(400).json({ success: false, message: "Invalid Bill ID" });
+            
+            const updatedBill = await BillService.updateIssuedBill(billId, req.body);
+            res.status(200).json({ success: true, message: "Issued bill updated", data: updatedBill });
         } catch (err) { next(err); }
-     }
+    }
 
+    // --- GET UNBILLED ROOMS ---
+    async getUnbilledRooms(req, res, next) {
+        try {
+            const { period_start } = req.query; // e.g., ?period_start=2025-11-01
+            if (!period_start) {
+                 return res.status(400).json({ success: false, message: "Query parameter 'period_start' (YYYY-MM-DD) is required." });
+            }
+            const rooms = await BillService.getUnbilledRooms(period_start);
+            res.status(200).json({ success: true, data: rooms });
+        } catch (err) { next(err); }
+    }
 
     // --- DELETE / CANCEL ---
     async deleteOrCancelBill(req, res, next) {
