@@ -1,4 +1,4 @@
-// Updated: 2025-30-10
+// Updated: 2025-31-10
 // By: DatNB
 
 const express = require('express');
@@ -10,7 +10,6 @@ const {
     validateCreateMaintenanceRequest,
     validateUpdateMaintenanceRequest,
     validateRejectMaintenanceRequest,
-    validateResolveMaintenanceRequest,
     validateRoomId
 } = require('../middlewares/maintenance.validation');
 
@@ -25,7 +24,7 @@ router.get('/statistics',
 
 // ROOM HISTORY - Lấy lịch sử bảo trì của một phòng
 router.get('/room/:roomId/history',
-    requireRole(['owner', 'manager', 'tenant']),
+    requireRole(['owner', 'manager']),
     validateRoomId,
     maintenanceController.getRoomMaintenanceHistory
 );
@@ -84,7 +83,6 @@ router.post('/:id/reject',
 router.post('/:id/resolve',
     requireRole(['owner', 'manager']),
     validateMaintenanceRequestId,
-    validateResolveMaintenanceRequest,
     maintenanceController.resolveMaintenanceRequest
 );
 

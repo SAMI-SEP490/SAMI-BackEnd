@@ -20,9 +20,9 @@ const registerSchema = z.object({
     email: z.string().email('Invalid email format'),
     password: z.string().min(8, 'Password must be at least 8 characters'),
     phone: z.string().min(10, 'Phone number must be at least 10 characters'),
-    full_name: z.string().min(1, 'Full name is required').optional(),
-    gender: z.enum(['Male', 'Female', 'Other']).optional(),
-    birthday: z.string().or(z.date()).optional()
+    full_name: z.string().min(1, 'Full name is required'),
+    gender: z.enum(['Male', 'Female', 'Other']),
+    birthday: z.string().or(z.date())
 });
 
 const loginSchema = z.object({
@@ -125,10 +125,10 @@ const changeToManagerSchema = z.object({
 
 const updateUserSchema = z.object({
     // User fields
-    full_name: z.string().min(1, 'Full name is required').optional(),
-    gender: z.enum(['Male', 'Female', 'Other']).optional(),
-    birthday: z.string().or(z.date()).optional(),
-    status: z.string().min(1, 'Status cannot be empty').optional(),
+    full_name: z.string().min(1, 'Full name is required'),
+    gender: z.enum(['Male', 'Female', 'Other']),
+    birthday: z.string().or(z.date()),
+    status: z.string().min(1, 'Status cannot be empty'),
 
     // Role-specific fields (all optional)
     
@@ -144,12 +144,12 @@ const updateUserSchema = z.object({
         .min(10, 'Phone number must be at least 10 digits')
         .max(11, 'Phone number must not exceed 11 digits')
         .regex(/^[0-9]+$/, { message: 'Phone number must contain only numbers' })
-        .optional(),
+        ,
     id_number: z.string()
         .min(9, 'ID number must be at least 9 characters')
         .max(12, 'ID number must not exceed 12 characters')
         .regex(/^[0-9]+$/, { message: 'ID number must contain only numbers' })
-        .optional(),
+        ,
     
     // For Managers
     building_id: z.preprocess((val) => {

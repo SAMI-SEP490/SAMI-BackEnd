@@ -211,7 +211,7 @@ class MaintenanceService {
 
     // UPDATE - Cập nhật yêu cầu bảo trì
     async updateMaintenanceRequest(requestId, data, currentUser) {
-        const { title, description, category, priority, status, actual_cost, note } = data;
+        const { title, description, category, priority, status, note } = data;
 
         // Verify request exists
         const existingRequest = await prisma.maintenance_requests.findUnique({
@@ -229,21 +229,20 @@ class MaintenanceService {
                 throw new Error('You do not have permission to update this maintenance request');
             }
 
-            // Tenant không thể thay đổi status, actual_cost
-            if (status || actual_cost !== undefined) {
-                throw new Error('Tenants cannot update status or actual cost');
+            // Tenant không thể thay đổi status
+            if (status !== undefined) {
+                throw new Error('Tenants cannot update status');
             }
         }
 
         // Prepare update data
         const updateData = {
-            updated_at: new Date()
         };
 
-        if (title) updateData.title = title;
+        if (title !== undefined) updateData.title = title;
+        if (priority !== undefined) updateData.priority = priority;
         if (description !== undefined) updateData.description = description;
         if (category !== undefined) updateData.category = category;
-        if (priority) updateData.priority = priority;
         if (note !== undefined) updateData.note = note;
 
         // Only manager/owner can update these fields
@@ -258,9 +257,7 @@ class MaintenanceService {
                 }
             }
 
-            if (actual_cost !== undefined) {
-                updateData.actual_cost = actual_cost ? parseFloat(actual_cost) : null;
-            }
+
         }
 
         const maintenanceRequest = await prisma.maintenance_requests.update({
@@ -420,7 +417,7 @@ class MaintenanceService {
     }
 
     // RESOLVE - Đánh dấu đã giải quyết
-    async resolveMaintenanceRequest(requestId, actualCost, currentUser) {
+    async resolveMaintenanceRequest(requestId, currentUser) {
         // Only manager/owner can resolve
         if (currentUser.role !== 'MANAGER' && currentUser.role !== 'OWNER') {
             throw new Error('Only managers and owners can resolve maintenance requests');
@@ -448,9 +445,6 @@ class MaintenanceService {
             updated_at: new Date()
         };
 
-        if (actualCost !== undefined) {
-            updateData.actual_cost = actualCost ? parseFloat(actualCost) : null;
-        }
 
         const resolved = await prisma.maintenance_requests.update({
             where: { request_id: requestId },
@@ -614,7 +608,6 @@ class MaintenanceService {
             total_requests: total,
             by_status: {},
             by_category: {},
-            total_cost: 0
         };
 
         statistics.forEach(stat => {
@@ -633,19 +626,6 @@ class MaintenanceService {
                 stats.by_category[stat.category] = stat._count;
             }
         });
-
-        // Calculate total cost
-        const costResult = await prisma.maintenance_requests.aggregate({
-            where: {
-                room_id: roomId,
-                actual_cost: { not: null }
-            },
-            _sum: {
-                actual_cost: true
-            }
-        });
-
-        stats.total_cost = costResult._sum.actual_cost || 0;
 
         return {
             room_info: {
@@ -710,7 +690,6 @@ class MaintenanceService {
             byStatus,
             byCategory,
             byPriority,
-            totalCost,
             avgResolutionTime
         ] = await Promise.all([
             // Total requests
@@ -737,15 +716,6 @@ class MaintenanceService {
                 _count: true
             }),
 
-            // Total cost
-            prisma.maintenance_requests.aggregate({
-                where: {
-                    ...where,
-                    actual_cost: { not: null }
-                },
-                _sum: { actual_cost: true },
-                _avg: { actual_cost: true }
-            }),
 
             // Get resolved requests for avg time calculation
             prisma.maintenance_requests.findMany({
@@ -784,10 +754,6 @@ class MaintenanceService {
                 acc[item.priority] = item._count;
                 return acc;
             }, {}),
-            cost_summary: {
-                total: totalCost._sum.actual_cost || 0,
-                average: totalCost._avg.actual_cost || 0
-            },
             average_resolution_time_hours: Math.round(avgTime * 100) / 100
         };
     }
@@ -811,7 +777,6 @@ class MaintenanceService {
             approved_by: request.approved_by,
             approved_by_name: request.users?.full_name,
             approved_by_email: request.users?.email,
-            actual_cost: request.actual_cost,
             note: request.note,
             created_at: request.created_at,
             updated_at: request.updated_at,

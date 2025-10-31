@@ -67,7 +67,6 @@ class MaintenanceController {
                 req.body,
                 req.user
             );
-
             res.json({
                 success: true,
                 message: 'Maintenance request updated successfully',
@@ -141,11 +140,10 @@ class MaintenanceController {
     async resolveMaintenanceRequest(req, res, next) {
         try {
             const { id } = req.params;
-            const { actual_cost } = req.body;
+
 
             const maintenanceRequest = await maintenanceService.resolveMaintenanceRequest(
                 parseInt(id),
-                actual_cost,
                 req.user
             );
 

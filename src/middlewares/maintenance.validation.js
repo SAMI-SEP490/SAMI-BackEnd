@@ -1,4 +1,4 @@
-// Updated: 2025-30-10
+// Updated: 2025-31-10
 // By: DatNB
 
 const { body, param, validationResult } = require('express-validator');
@@ -95,15 +95,6 @@ const validateUpdateMaintenanceRequest = [
         .isIn(['pending', 'in_progress', 'on_hold', 'resolved', 'completed', 'cancelled', 'rejected'])
         .withMessage('Invalid status'),
 
-    body('actual_cost')
-        .optional()
-        .custom((value) => {
-            if (value === null) return true;
-            const num = parseFloat(value);
-            return !isNaN(num) && num >= 0;
-        })
-        .withMessage('Invalid actual cost'),
-
     body('note')
         .optional()
         .isString()
@@ -140,29 +131,6 @@ const validateRejectMaintenanceRequest = [
     }
 ];
 
-// Validate resolve maintenance request
-const validateResolveMaintenanceRequest = [
-    body('actual_cost')
-        .optional()
-        .custom((value) => {
-            if (value === null || value === undefined) return true;
-            const num = parseFloat(value);
-            return !isNaN(num) && num >= 0;
-        })
-        .withMessage('Invalid actual cost'),
-
-    (req, res, next) => {
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-            return res.status(400).json({
-                success: false,
-                errors: errors.array()
-            });
-        }
-        next();
-    }
-];
-
 // Validate room ID param
 const validateRoomId = [
     param('roomId')
@@ -186,6 +154,5 @@ module.exports = {
     validateCreateMaintenanceRequest,
     validateUpdateMaintenanceRequest,
     validateRejectMaintenanceRequest,
-    validateResolveMaintenanceRequest,
     validateRoomId
 };
