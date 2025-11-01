@@ -23,6 +23,7 @@ const billRoutes = require('./routes/bill.routes');
 const buildingRoutes = require('./routes/building.routes');
 const maintenanceRoutes = require('./routes/maintenance.routes');
 const roomRoutes = require('./routes/room.routes');
+const floorPlanRoutes = require('./routes/floor-plan.routes');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
 const { applyOverduePenalties, generateRecurringBills } = require('./scripts/dailyBillRunner');
 
@@ -104,6 +105,7 @@ app.use('/api/script', scriptRoutes);
 app.use('/api/bill', billRoutes);
 app.use('/api/building', buildingRoutes);
 app.use('/api/room', roomRoutes);
+app.use('/api/floor-plan', floorPlanRoutes);
 
 // Schedule the Daily Task
 cron.schedule('1 0 * * *', async () => {
