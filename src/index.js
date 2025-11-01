@@ -5,7 +5,6 @@
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
-const cron = require('node-cron');
 const morgan = require('morgan');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
@@ -18,14 +17,12 @@ const tenantRoutes = require('./routes/tenant.routes');
 const guestRoutes = require('./routes/guest.routes');
 const addendumRoutes = require('./routes/addendum.routes');
 const paymentRoutes = require('./routes/payment.routes.js');
-const scriptRoutes = require('./routes/script.routes');
 const billRoutes = require('./routes/bill.routes');
 const buildingRoutes = require('./routes/building.routes');
 const maintenanceRoutes = require('./routes/maintenance.routes');
 const roomRoutes = require('./routes/room.routes');
 const floorPlanRoutes = require('./routes/floor-plan.routes');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
-const { applyOverduePenalties, generateRecurringBills } = require('./scripts/dailyBillRunner');
 
 const app = express();
 
@@ -101,28 +98,10 @@ app.use('/api/guest', guestRoutes);
 app.use('/api/addendum', addendumRoutes);
 app.use('/api/maintenance', maintenanceRoutes);
 app.use('/api/payments', paymentRoutes);
-app.use('/api/script', scriptRoutes);
 app.use('/api/bill', billRoutes);
 app.use('/api/building', buildingRoutes);
 app.use('/api/room', roomRoutes);
 app.use('/api/floor-plan', floorPlanRoutes);
-
-// Schedule the Daily Task
-cron.schedule('1 0 * * *', async () => {
-    console.log('⏰ Running daily bill generation and penalty check...');
-    try {
-        // It's better if these functions handle their own Prisma client
-        // or you pass one in.
-        await applyOverduePenalties();
-        await generateRecurringBills();
-        console.log('✅ Daily tasks completed successfully.');
-    } catch (error) {
-        console.error('❌ Error running daily tasks:', error);
-    }
-}, {
-    scheduled: true,
-    timezone: "Asia/Ho_Chi_Minh"
-});
 
 // 404 handler
 app.use(notFound);

@@ -182,56 +182,74 @@ const createPaymentSchema = z.object({
     ).min(1, { message: 'billIds must be a non-empty array' })
 });
 
-const billing_cycle = {
-  WEEKLY: 'WEEKLY',
-  MONTHLY: 'MONTHLY',
-  EVERY_2_MONTHS: 'EVERY_2_MONTHS',
-  HALF_A_YEAR: 'HALF_A_YEAR',
-  YEARLY: 'YEARLY',
-};
-
 const baseBillSchema = z.object({
     tenant_user_id: z.preprocess((val) => {
         if (typeof val === 'string' && val.trim() !== '') return Number(val);
         return val;
-    }, z.number().int().positive({ message: 'tenant_user_id must be a positive integer' })),
+    }, z.number().int().positive({ message: 'tenant_user_id must be a positive integer' })).optional(),
+    
+    room_id: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive({ message: 'room_id must be a positive integer' })).optional(),
+    
     total_amount: z.preprocess((val) => {
         if (typeof val === 'string' && val.trim() !== '') return Number(val);
         return val;
-    }, z.number().positive({ message: 'total_amount must be positive' })),
-    description: z.string().min(1, 'Description is required').max(255),
-    is_recurring: z.boolean().optional(),
-    billing_cycle: z.nativeEnum(billing_cycle).optional(),
+    }, z.number().positive({ message: 'total_amount must be positive' })).optional(),
+    
+    description: z.string().min(1, 'Description is required').max(255).optional(),
+    
+    billing_period_start: z.string().datetime({ message: "Invalid date format" }).optional(),
+    billing_period_end: z.string().datetime({ message: "Invalid date format" }).optional(),
+    due_date: z.string().datetime({ message: "Invalid date format" }).optional(),
     penalty_amount: z.preprocess((val) => {
         if (typeof val === 'string' && val.trim() !== '') return Number(val);
         return val;
     }, z.number().nonnegative({ message: 'penalty_amount cannot be negative' })).optional(),
-    status: z.enum(['draft', 'master']).optional()
-    // **NO .refine() here yet**
+    
+    status: z.enum(['draft', 'issued']).optional()
 });
 
-const billSchema = baseBillSchema.refine(data => {
-    // If recurring, cycle must be present
-    if (data.is_recurring === true && !data.billing_cycle) {
-        return false;
-    }
-    // Add other CREATE-specific refinements if needed
-    return true;
-}, {
-    message: "If recurring, cycle is required.",
-    path: ["billing_cycle"]
+// We can just use the partial base schema, as a draft can be very empty.
+const createDraftBillSchema = baseBillSchema.partial();
+
+const createIssuedBillSchema = baseBillSchema.required({
+    tenant_user_id: true,
+    room_id: true,
+    total_amount: true,
+    description: true,
+    billing_period_start: true,
+    billing_period_end: true,
+    due_date: true,
+}).refine(data => new Date(data.billing_period_start) < new Date(data.billing_period_end), {
+    message: "Billing end date must be after start date",
+    path: ["billing_period_end"],
+}).refine(data => new Date(data.billing_period_end) < new Date(data.due_date), {
+    message: "Due date must be after billing end date",
+    path: ["due_date"],
 });
 
-const updateBillSchema = baseBillSchema.partial().refine(data => {
-    // If recurring, cycle must be present
-    if (data.is_recurring === true && !data.billing_cycle) {
-        return false;
+const updateDraftBillSchema = baseBillSchema.partial().superRefine((data, ctx) => {
+    if (data.status === 'issued') {
+        // If they try to "publish" the draft, it must have all required fields.
+        // We're checking the data *being sent*. The service layer must check the *final merged* data.
+        if (data.tenant_user_id === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "tenant_user_id is required to publish", path: ["tenant_user_id"] });
+        if (data.room_id === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "room_id is required to publish", path: ["room_id"] });
+        if (data.total_amount === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "total_amount is required to publish", path: ["total_amount"] });
+        if (data.description === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "description is required to publish", path: ["description"] });
+        if (data.billing_period_start === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "billing_period_start is required to publish", path: ["billing_period_start"] });
+        if (data.billing_period_end === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "billing_period_end is required to publish", path: ["billing_period_end"] });
+        if (data.due_date === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "due_date is required to publish", path: ["due_date"] });
     }
-    // Add other CREATE-specific refinements if needed
-    return true;
-}, {
-    message: "If recurring, cycle is required.",
-    path: ["billing_cycle"]
+});
+
+const updateIssuedBillSchema = baseBillSchema.partial().omit({
+    tenant_user_id: true, // Once issued, you can't change who/what it's for
+    room_id: true,
+    billing_period_start: true,
+    billing_period_end: true,
+    status: true, // Cannot change status of an issued bill (except to 'cancelled' via DELETE)
 });
 
 const validate = (schema) => {
@@ -271,6 +289,8 @@ module.exports = {
     changeToManagerSchema,
     updateUserSchema,
     createPaymentSchema,
-    billSchema,
-    updateBillSchema
+    createDraftBillSchema,
+    createIssuedBillSchema,
+    updateDraftBillSchema,
+    updateIssuedBillSchema
 };

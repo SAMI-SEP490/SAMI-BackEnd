@@ -2,6 +2,15 @@
 // by: MinhBH
 
 const prisma = require('../config/prisma');
+const crypto = require('crypto');
+
+// Helper to generate unique bill number
+function generateBillNumber(year, month) {
+    const timestampPart = Date.now().toString();
+    const randomPart = crypto.randomBytes(1).toString('hex');
+    const uniqueNum = (timestampPart + randomPart).slice(-6).padStart(6, '0');
+    return `B-${year}-${month}-GEN-${uniqueNum}`;
+}
 
 class BillService {
 
@@ -9,14 +18,15 @@ class BillService {
     async getAllBills(filters = {}) {
         return prisma.bills.findMany({
             where: {
-                status: { notIn: ['master', 'draft', 'cancelled'] },
+                status: { notIn: ['draft', 'cancelled'] },
                 deleted_at: null,
                 ...filters, // Allow additional filters (e.g., by tenant_id)
             },
             orderBy: { created_at: 'desc' },
             include: { // Include related data for context
                 tenants: { select: { users: { select: { user_id: true, full_name: true } } } },
-                users: { select: { user_id: true, full_name: true } } // created_by user
+                users: { select: { user_id: true, full_name: true } }, // created_by user
+                rooms: { select: { room_id: true, room_number: true } } // Include room info
             }
         });
     }
@@ -25,15 +35,11 @@ class BillService {
         return prisma.bills.findMany({
             where: { status: 'draft', deleted_at: null },
             orderBy: { created_at: 'desc' },
-             include: { tenants: { select: { users: { select: { user_id: true, full_name: true } } } } }
-        });
-    }
-
-    async getMasterBills() {
-        return prisma.bills.findMany({
-            where: { status: 'master', deleted_at: null },
-            orderBy: { created_at: 'desc' },
-            include: { tenants: { select: { users: { select: { user_id: true, full_name: true } } } } }
+            include: { // Include related data for context
+                tenants: { select: { users: { select: { user_id: true, full_name: true } } } },
+                users: { select: { user_id: true, full_name: true } }, // created_by user
+                rooms: { select: { room_id: true, room_number: true } } // Include room info
+            }
         });
     }
     
@@ -41,7 +47,43 @@ class BillService {
          return prisma.bills.findMany({
             where: { deleted_at: { not: null } },
             orderBy: { deleted_at: 'desc' },
-            include: { tenants: { select: { users: { select: { user_id: true, full_name: true } } } } }
+            include: { // Include related data for context
+                tenants: { select: { users: { select: { user_id: true, full_name: true } } } },
+                users: { select: { user_id: true, full_name: true } }, // created_by user
+                rooms: { select: { room_id: true, room_number: true } } // Include room info
+            }
+        });
+    }
+
+    // --- GET UNBILLED ROOMS ---
+    // Passing the period_start_date in to know which room is billed
+    async getUnbilledRooms(periodStartDate) {
+        if (!periodStartDate || isNaN(new Date(periodStartDate).getTime())) {
+             const error = new Error('Invalid billing period start date.');
+             error.statusCode = 400;
+             throw error;
+        }
+        
+        return prisma.rooms.findMany({
+            where: {
+                is_active: true,
+                bills: {
+                    none: { // Find rooms that have NO bills
+                        billing_period_start: new Date(periodStartDate),
+                        status: { not: 'cancelled' } // Ignore cancelled bills
+                    }
+                }
+            },
+            select: { 
+                room_id: true, 
+                room_number: true, 
+                floor: true,
+                // Also show the current tenant of that room
+                tenants: { 
+                    select: { user_id: true, users: { select: { full_name: true } } },
+                    where: { users: { role: 'TENANT' } } // Assuming tenant is linked to room
+                }
+            }
         });
     }
 
@@ -52,7 +94,8 @@ class BillService {
              include: {
                 tenants: { select: { users: { select: { user_id: true, full_name: true, phone: true } } } },
                 users: { select: { user_id: true, full_name: true } },
-                bill_payments: { select: { payment_id: true, amount: true, payment_date: true, status: true, reference: true, transaction_id: true, online_type: true }}
+                bill_payments: { select: { payment_id: true, amount: true, payment_date: true, status: true, reference: true, transaction_id: true, online_type: true }},
+                rooms: { select: { room_id: true, room_number: true } }
             }
         });
         if (!bill) {
@@ -64,121 +107,137 @@ class BillService {
     }
 
     // --- CREATE ---
-    async createBill(data, createdById) {
-        // Ensure status is draft or master
-        const status = data.status === 'master' ? 'master' : 'draft';
+    async createDraftBill(data, createdById) {
+        return prisma.bills.create({
+            data: {
+                ...data,
+                status: 'draft', // Force status
+                created_by: createdById,
+            }
+        });
+    }
+
+    async createIssuedBill(data, createdById) {
+        const periodStart = new Date(data.billing_period_start);
+        
+        // Check for duplicates
+        const existing = await prisma.bills.findFirst({
+            where: {
+                room_id: data.room_id,
+                billing_period_start: periodStart,
+                status: { not: 'cancelled' }
+            }
+        });
+        if (existing) {
+             const error = new Error(`A bill for this room and period already exists (Bill ID: ${existing.bill_id}).`);
+             error.statusCode = 409;
+             throw error;
+        }
+
+        const billNumber = generateBillNumber(
+            periodStart.getFullYear(),
+            periodStart.getMonth() + 1
+        );
 
         return prisma.bills.create({
             data: {
-                tenant_user_id: data.tenant_user_id,
-                total_amount: data.total_amount,
-                description: data.description,
-                penalty_amount: data.penalty_amount || 0.00,
-                status: status,
-                is_recurring: data.is_recurring || false,
-                billing_cycle: data.billing_cycle || "MONTHLY",
+                ...data,
+                status: 'issued', // Force status
+                bill_number: billNumber,
                 created_by: createdById,
-                // Dates only for non-master
-                billing_period_start: null,
-                billing_period_end: null,
-                due_date: null,
-                // Master templates don't get a bill number initially
-                bill_number: null,
+                billing_period_start: periodStart, 
+                billing_period_end: new Date(data.billing_period_end), // Ensure dates are saved as Date objects
+                due_date: new Date(data.due_date),
             }
         });
     }
 
     // --- EDIT ---
-    async updateBill(billId, data, updatedById) {
-        // 1. Fetch the bill to check its current status
-        const bill = await prisma.bills.findUnique({
+    async updateDraftBill(billId, data) {
+        // 1. Fetch the draft bill to check its current data
+        const originalDraft = await prisma.bills.findUnique({
             where: { bill_id: billId },
-            select: { status: true }
         });
 
-        if (!bill) {
-            const error = new Error('Bill not found');
-            error.statusCode = 404;
+        if (!originalDraft || originalDraft.status !== 'draft') {
+            const error = new Error('Only draft bills can be updated here.');
+            error.statusCode = 403;
             throw error;
         }
 
-        // 2. Only allow editing 'draft' or 'master' bills
-        if (bill.status !== 'draft' && bill.status !== 'master') {
-            const error = new Error('Only draft or master bills can be edited.');
-            error.statusCode = 403; // Forbidden
-            throw error;
+        let updateData = { ...data, updated_at: new Date() };
+
+        // 2. Handle "Publish" logic (converting draft to issued)
+        if (data.status === 'issued') {
+            // Merge new data with old data to check for completeness
+            const finalData = { ...originalDraft, ...data };
+            
+            // Zod already checked that the *request* had all fields.
+            // Now we ensure the final merged object is valid.
+            // (Note: Zod validation on schema 2 already covers this, but double-check)
+            if (!finalData.tenant_user_id || !finalData.room_id || !finalData.total_amount || !finalData.description ||
+                !finalData.billing_period_start || !finalData.billing_period_end || !finalData.due_date) {
+                const error = new Error('Cannot publish bill: missing required fields (e.g., tenant, room, amount, dates).');
+                error.statusCode = 400;
+                throw error;
+            }
+            
+            // Generate bill number on publish
+            const periodStart = new Date(finalData.billing_period_start);
+            updateData.bill_number = generateBillNumber(
+                finalData.description,
+                periodStart.getFullYear(),
+                periodStart.getMonth() + 1
+            );
         }
-
-        // 3. Prepare update data (similar logic to create)
-        const updateData = {
-            tenant_user_id: data.tenant_user_id,
-            total_amount: data.total_amount,
-            description: data.description,
-            penalty_amount: data.penalty_amount,
-            status: data.status || bill.status,
-            is_recurring: data.is_recurring,
-            billing_cycle: data.billing_cycle,
-            updated_at: new Date(),
-            billing_period_start: null,
-            billing_period_end: null,
-            due_date: null,
-        };
-
-        // Remove undefined fields to avoid accidental nulling
-        Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
-
+        
+        // 3. Convert date strings if they exist
+        if (data.billing_period_start) updateData.billing_period_start = new Date(data.billing_period_start);
+        if (data.billing_period_end) updateData.billing_period_end = new Date(data.billing_period_end);
+        if (data.due_date) updateData.due_date = new Date(data.due_date);
 
         return prisma.bills.update({
             where: { bill_id: billId },
             data: updateData
         });
     }
-    
-    // --- CLONE DRAFT TO MASTER ---
-    async cloneDraftToMaster(draftBillId, updatedById) {
-        // 1. Fetch the draft bill
-        const draftBill = await prisma.bills.findUnique({
-            where: { bill_id: draftBillId },
+
+    async updateIssuedBill(billId, data) {
+        // 1. Fetch the bill to check status and payment_id
+        const bill = await prisma.bills.findUnique({
+            where: { bill_id: billId },
+            select: { status: true, payment_id: true }
         });
 
-        // 2. Basic Check: Exists and is a draft?
-        if (!draftBill || draftBill.status !== 'draft') {
-            const error = new Error('Only existing draft bills can be cloned to master.');
-            error.statusCode = 400;
+        if (!bill) { /* 404 error */ }
+        
+        // 2. Only allow editing 'issued' bills
+        if (bill.status !== 'issued') {
+            const error = new Error(`Cannot edit a bill with status: ${bill.status}.`);
+            error.statusCode = 403;
             throw error;
         }
-
-        // --- 3. MANUAL VALIDATION ---
-        // Check if draft has minimum required fields for a master template
-        if (!draftBill.tenant_user_id || !draftBill.total_amount || !draftBill.description) {
-            const error = new Error('Draft bill is missing required fields (tenant_user_id, total_amount, description) to become a master template.');
-            error.statusCode = 400;
-            throw error;
-        }
-        // Since we force is_recurring=true, a cycle is mandatory
-        if (!draftBill.billing_cycle) {
-             const error = new Error('Draft bill is missing billing_cycle, which is required for a master template.');
-             error.statusCode = 400;
-             throw error;
-        }
-        // --- END MANUAL VALIDATION ---
-
-        // 4. Create the new master bill (using original draftBill data)
-        return prisma.bills.create({
-            data: {
-                tenant_user_id: draftBill.tenant_user_id,
-                total_amount: draftBill.total_amount,
-                description: draftBill.description,
-                penalty_amount: draftBill.penalty_amount || 0.00,
-                status: 'master',
-                is_recurring: true,
-                billing_cycle: draftBill.billing_cycle,
-                created_by: updatedById,
-                billing_period_start: null,
-                billing_period_end: null,
-                due_date: null,
-                bill_number: null,
+        
+        // 3. Safety Check for pending payment
+        if (bill.payment_id) {
+            const payment = await prisma.bill_payments.findUnique({
+                where: { payment_id: bill.payment_id },
+                select: { status: true }
+            });
+            if (payment && payment.status === 'pending') {
+                const error = new Error('Cannot edit this bill: a payment is currently pending.');
+                error.statusCode = 409;
+                throw error;
             }
+        }
+
+        // 4. Prepare update data
+        const updateData = { ...data, updated_at: new Date() };
+        if (data.due_date) updateData.due_date = new Date(data.due_date);
+
+        return prisma.bills.update({
+            where: { bill_id: billId },
+            data: updateData
         });
     }
 
@@ -200,8 +259,8 @@ class BillService {
              throw error;
         }
 
-        // Draft or Master: Soft delete
-        if (bill.status === 'draft' || bill.status === 'master') {
+        // Draft: Soft delete
+        if (bill.status === 'draft') {
             return prisma.bills.update({
                 where: { bill_id: billId },
                 data: { deleted_at: new Date() }
@@ -217,7 +276,7 @@ class BillService {
              }
             return prisma.bills.update({
                 where: { bill_id: billId },
-                data: { status: 'cancelled', updated_at: new Date() }
+                data: { status: 'cancelled', updated_at: new Date(), deleted_at: new Date() }
             });
         }
         // Paid, Partially Paid, Cancelled: Cannot delete/cancel further
@@ -228,7 +287,7 @@ class BillService {
         }
     }
 
-// --- RESTORE ---
+    // --- RESTORE ---
     async restoreBill(billId) {
         const bill = await prisma.bills.findUnique({
             where: { bill_id: billId },
@@ -246,13 +305,6 @@ class BillService {
             const error = new Error('Bill is not deleted.');
             error.statusCode = 400; // Bad Request
             throw error;
-        }
-
-        // Check if it was a type that *could* be soft-deleted (draft or master)
-        if (bill.status !== 'draft' && bill.status !== 'master') {
-             const error = new Error(`Cannot restore a bill with status '${bill.status}'. Only soft-deleted drafts or masters can be restored.`);
-             error.statusCode = 400;
-             throw error;
         }
 
         // Perform the restore (update deleted_at to null)
