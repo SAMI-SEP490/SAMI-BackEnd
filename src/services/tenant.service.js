@@ -1,9 +1,67 @@
-// Updated: 2025-18-10
+// Updated: 2025-01-11
 // by: MinhBH
 
 const prisma = require('../config/prisma');
 
 class TenantService {
+    /**
+     * Gets a list of all tenants with their user and room details.
+     */
+    async getAllTenants() {
+        const tenants = await prisma.tenants.findMany({
+            orderBy: {
+                users: { full_name: 'asc' } // Order tenants alphabetically by name
+            },
+            include: {
+                users: { // Include the user data (name, phone, email, etc.)
+                    select: {
+                        user_id: true,
+                        full_name: true,
+                        phone: true,
+                        email: true,
+                        status: true,
+                        is_verified: true,
+                        created_at: true,
+                        avatar_url: true,
+                    }
+                },
+                rooms: { // Include the room they are linked to
+                    select: {
+                        room_id: true,
+                        room_number: true,
+                        floor: true
+                    }
+                }
+            }
+        });
+
+        // Format the data to be a clean, flat list for the frontend
+        return tenants.map(tenant => ({
+            // User info
+            user_id: tenant.users.user_id,
+            full_name: tenant.users.full_name,
+            phone: tenant.users.phone,
+            email: tenant.users.email,
+            status: tenant.users.status,
+            is_verified: tenant.users.is_verified,
+            avatar_url: tenant.users.avatar_url,
+            created_at: tenant.users.created_at, // User account creation date
+            
+            // Tenant-specific info
+            id_number: tenant.id_number,
+            tenant_since: tenant.tenant_since,
+            emergency_contact_phone: tenant.emergency_contact_phone,
+            note: tenant.note,
+            
+            // Room info
+            room: tenant.rooms ? {
+                room_id: tenant.rooms.room_id,
+                room_number: tenant.rooms.room_number,
+                floor: tenant.rooms.floor
+            } : null // Handle if tenant is not linked to a room
+        }));
+    }
+
     /**
      * Searches only tenants by full_name.
      */
