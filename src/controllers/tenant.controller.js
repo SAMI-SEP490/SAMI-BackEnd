@@ -1,9 +1,25 @@
-// Updated: 2025-18-10
+// Updated: 2025-01-11
 // by: MinhBH
 
 const TenantService = require('../services/tenant.service');
 
 class TenantController {
+    /**
+     * Get a list of all tenants.
+     */
+    async getAllTenants(req, res, next) {
+        try {
+            const tenants = await TenantService.getAllTenants();
+            res.status(200).json({
+                success: true,
+                message: 'Tenants retrieved successfully',
+                data: tenants
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
     /**
      * Controller to search only tenants by name.
      */
