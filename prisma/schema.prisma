@@ -38,22 +38,21 @@ model bills {
   paid_amount          Decimal?       @default(0) @db.Decimal(12, 2)
   status               bill_status?   @default(draft)
   description          String?
-  penalty_amount       Decimal?  @default(0.00) @db.Decimal(12, 2)
+  penalty_amount       Decimal?       @default(0.00) @db.Decimal(12, 2)
   created_by           Int?
   created_at           DateTime?      @default(now()) @db.Timestamp(6)
   updated_at           DateTime?      @db.Timestamp(6)
   deleted_at           DateTime?      @db.Timestamp(6)
-  users         users?         @relation(fields: [created_by], references: [user_id], onDelete: SetNull, map: "fk_bills_created_by")
-  bill_payments bill_payments? @relation(fields: [payment_id], references: [payment_id], map: "fk_bills_payment")
-  tenants       tenants        @relation(fields: [tenant_user_id], references: [user_id], map: "fk_bills_tenant")
-  rooms         rooms?         @relation(fields: [room_id], references: [room_id], map: "fk_bills_room") // <-- ADDED RELATION
+  users                users?         @relation(fields: [created_by], references: [user_id], onDelete: SetNull, map: "fk_bills_created_by")
+  bill_payments        bill_payments? @relation(fields: [payment_id], references: [payment_id], map: "fk_bills_payment")
+  tenants              tenants        @relation(fields: [tenant_user_id], references: [user_id], map: "fk_bills_tenant")
+  rooms                rooms?         @relation(fields: [room_id], references: [room_id], map: "fk_bills_room") // <-- ADDED RELATION
 
+  // This prevents creating two bills for the same room for the same start date
+  @@unique([room_id, billing_period_start])
   @@index([status], map: "idx_bills_status")
   @@index([tenant_user_id], map: "idx_bills_tenant_user_id")
   @@index([room_id], map: "idx_bills_room_id")
-  
-  // This prevents creating two bills for the same room for the same start date
-  @@unique([room_id, billing_period_start])
 }
 
 model building_managers {
@@ -244,23 +243,35 @@ model notifications {
 }
 
 model regulations {
-  regulation_id  Int                @id @default(autoincrement())
-  title          String             @db.VarChar(255)
-  content        String?
-  building_id    Int?
-  effective_date DateTime?          @db.Date
-  version        Int?               @default(1)
-  status         regulation_status? @default(draft)
-  created_by     Int
-  created_at     DateTime?          @default(now()) @db.Timestamp(6)
-  updated_at     DateTime?          @db.Timestamp(6)
-  archived_at    DateTime?          @db.Timestamp(6)
-  note           String?
-  buildings      buildings?         @relation(fields: [building_id], references: [building_id], map: "fk_regulations_building")
-  users          users              @relation(fields: [created_by], references: [user_id], onDelete: SetNull, map: "fk_regulations_created_by")
+  regulation_id        Int                    @id @default(autoincrement())
+  title                String                 @db.VarChar(255)
+  content              String?
+  building_id          Int?
+  effective_date       DateTime?              @db.Date
+  version              Int?                   @default(1)
+  status               regulation_status?     @default(draft)
+  target               regulation_target?     @default(all)
+  created_by           Int
+  created_at           DateTime?              @default(now()) @db.Timestamp(6)
+  updated_at           DateTime?              @db.Timestamp(6)
+  archived_at          DateTime?              @db.Timestamp(6)
+  note                 String?
+  buildings            buildings?             @relation(fields: [building_id], references: [building_id], map: "fk_regulations_building")
+  users                users                  @relation(fields: [created_by], references: [user_id], onDelete: SetNull, map: "fk_regulations_created_by")
+  regulation_feedbacks regulation_feedbacks[]
 
   @@index([building_id], map: "idx_regulations_building_id")
   @@index([status], map: "idx_regulations_status")
+}
+
+model regulation_feedbacks {
+  feedback_id   Int         @id @default(autoincrement())
+  regulation_id Int
+  created_by    Int
+  comment       String?
+  created_at    DateTime?   @default(now()) @db.Timestamp(6)
+  regulations   regulations @relation(fields: [regulation_id], references: [regulation_id], map: "fk_regulations_feedbacks")
+  users         users       @relation(fields: [created_by], references: [user_id], map: "fk_regulations_created_by")
 }
 
 model rooms {
@@ -333,6 +344,7 @@ model users {
   vehicle_slot_registration                                   vehicle_slot_registration[]
   vehicles                                                    vehicles[]
   is_verified                                                 Boolean?                    @default(false)
+  regulation_feedbacks                                        regulation_feedbacks[]
 }
 
 model vehicle_slot_registration {
@@ -525,4 +537,10 @@ enum room_status {
   occupied
   maintenance
   reserved
+}
+
+enum regulation_target {
+  all
+  tenants
+  management
 }
