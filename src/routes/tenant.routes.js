@@ -59,4 +59,10 @@ router.get(
     tenantController.getAllUnpaidTenantBills
 );
 
+router.get(
+    '/ai-context',
+    requireRole(['tenant']),
+    tenantController.getTenantChatbotContext
+);
+
 module.exports = router;

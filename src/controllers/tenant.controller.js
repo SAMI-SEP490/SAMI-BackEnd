@@ -140,6 +140,19 @@ class TenantController {
             next(err);
         }
     }
+
+    /**
+     * Endpoint for the AI agent to get tenant context.
+     */
+    async getTenantChatbotContext(req, res, next) {
+        try {
+            // req.user.user_id comes from your 'authenticate' middleware
+            const context = await TenantService.getTenantChatbotContext(req.user.user_id);
+            res.status(200).json({ success: true, data: context });
+        } catch (err) {
+            next(err);
+        }
+    }
 }
 
 module.exports = new TenantController();
