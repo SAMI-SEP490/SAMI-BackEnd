@@ -370,22 +370,22 @@ model vehicle_registration {
 }
 
 model vehicles {
-  vehicle_id           Int                  @id @default(autoincrement())
+  vehicle_id           Int                   @id @default(autoincrement())
   tenant_user_id       Int
   registration_id      Int
   type                 vehicle_type?
-  license_plate        String?              @db.VarChar(50)
-  brand                String?              @db.VarChar(100)
-  color                String?              @db.VarChar(50)
-  status               vehicle_status?      @default(requested)
-  registered_at        DateTime?            @default(now()) @db.Timestamp(6)
-  updated_at           DateTime?            @db.Timestamp(6)
-  deactivated_at       DateTime?            @db.Timestamp(6)
+  license_plate        String?               @db.VarChar(50)
+  brand                String?               @db.VarChar(100)
+  color                String?               @db.VarChar(50)
+  status               vehicle_status?       @default(requested)
+  registered_at        DateTime?             @default(now()) @db.Timestamp(6)
+  updated_at           DateTime?             @db.Timestamp(6)
+  deactivated_at       DateTime?             @db.Timestamp(6)
   deactivated_by       Int?
   note                 String?
-  users                users?               @relation(fields: [deactivated_by], references: [user_id], map: "fk_vehicles_deactivated_by")
-  tenants              tenants              @relation("TenantVehiclesRelation", fields: [tenant_user_id], references: [user_id], onDelete: Cascade, map: "fk_vehicles_tenant")
-  vehicle_registration vehicle_registration @relation(fields: [registration_id], references: [assignment_id], map: "fk_vehicles_registration")
+  users                users?                @relation(fields: [deactivated_by], references: [user_id], map: "fk_vehicles_deactivated_by")
+  tenants              tenants               @relation("TenantVehiclesRelation", fields: [tenant_user_id], references: [user_id], onDelete: Cascade, map: "fk_vehicles_tenant")
+  vehicle_registration vehicle_registration? @relation(fields: [registration_id], references: [assignment_id], map: "fk_vehicles_registration")
 
   @@unique([license_plate], map: "uq_vehicles_license_plate")
   @@index([tenant_user_id], map: "idx_vehicles_tenant_user_id")
