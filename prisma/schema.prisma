@@ -297,59 +297,58 @@ model rooms {
 }
 
 model tenants {
-  user_id                   Int                         @id
-  room_id                   Int?
-  tenant_since              DateTime?                   @db.Date
-  emergency_contact_phone   String?                     @db.VarChar(20)
-  id_number                 String                      @unique @db.VarChar(50)
-  note                      String?
-  bills                     bills[]
-  contracts                 contracts[]
-  guest_registrations       guest_registrations[]
-  maintenance_requests      maintenance_requests[]
-  users                     users                       @relation(fields: [user_id], references: [user_id], onDelete: Cascade, map: "fk_tenants_user")
-  vehicle_slot_registration vehicle_slot_registration[]
-  vehicles                  vehicles[]                  @relation("TenantVehiclesRelation")
-  rooms                     rooms?                      @relation(fields: [room_id], references: [room_id], map: "fk_tenants_room")
+  user_id                 Int                    @id
+  room_id                 Int?
+  tenant_since            DateTime?              @db.Date
+  emergency_contact_phone String?                @db.VarChar(20)
+  id_number               String                 @unique @db.VarChar(50)
+  note                    String?
+  bills                   bills[]
+  contracts               contracts[]
+  guest_registrations     guest_registrations[]
+  maintenance_requests    maintenance_requests[]
+  users                   users                  @relation(fields: [user_id], references: [user_id], onDelete: Cascade, map: "fk_tenants_user")
+  vehicle_registration    vehicle_registration[]
+  vehicles                vehicles[]             @relation("TenantVehiclesRelation")
+  rooms                   rooms?                 @relation(fields: [room_id], references: [room_id], map: "fk_tenants_room")
 
   @@index([room_id], map: "idx_tenants_room_id")
 }
 
 model users {
-  user_id                                                     Int                         @id @default(autoincrement())
-  phone                                                       String                      @unique @db.VarChar(20)
-  email                                                       String                      @unique @db.VarChar(200)
-  password_hash                                               String                      @db.VarChar(255)
-  full_name                                                   String?                     @db.VarChar(200)
-  gender                                                      String?                     @db.VarChar(10)
-  birthday                                                    DateTime?                   @db.Date
-  avatar_url                                                  String?                     @db.VarChar(255)
-  status                                                      String?                     @default("Active") @db.VarChar(20)
-  role                                                        Role?                       @default(USER)
-  created_at                                                  DateTime?                   @default(now()) @db.Timestamp(6)
-  updated_at                                                  DateTime?                   @db.Timestamp(6)
-  deleted_at                                                  DateTime?                   @db.Timestamp(6)
+  user_id                                                     Int                    @id @default(autoincrement())
+  phone                                                       String                 @unique @db.VarChar(20)
+  email                                                       String                 @unique @db.VarChar(200)
+  password_hash                                               String                 @db.VarChar(255)
+  full_name                                                   String?                @db.VarChar(200)
+  gender                                                      String?                @db.VarChar(10)
+  birthday                                                    DateTime?              @db.Date
+  avatar_url                                                  String?                @db.VarChar(255)
+  status                                                      String?                @default("Active") @db.VarChar(20)
+  role                                                        Role?                  @default(USER)
+  created_at                                                  DateTime?              @default(now()) @db.Timestamp(6)
+  updated_at                                                  DateTime?              @db.Timestamp(6)
+  deleted_at                                                  DateTime?              @db.Timestamp(6)
   bill_payments                                               bill_payments[]
   bills                                                       bills[]
   building_managers                                           building_managers?
   building_owner                                              building_owner?
   contract_addendums                                          contract_addendums[]
   floor_plans                                                 floor_plans[]
-  guest_registrations_guest_registrations_approved_byTousers  guest_registrations[]       @relation("guest_registrations_approved_byTousers")
-  guest_registrations_guest_registrations_cancelled_byTousers guest_registrations[]       @relation("guest_registrations_cancelled_byTousers")
+  guest_registrations_guest_registrations_approved_byTousers  guest_registrations[]  @relation("guest_registrations_approved_byTousers")
+  guest_registrations_guest_registrations_cancelled_byTousers guest_registrations[]  @relation("guest_registrations_cancelled_byTousers")
   maintenance_requests                                        maintenance_requests[]
   notifications                                               notifications[]
   regulations                                                 regulations[]
   tenants                                                     tenants?
-  vehicle_slot_registration                                   vehicle_slot_registration[]
+  vehicle_registration                                        vehicle_registration[]
   vehicles                                                    vehicles[]
-  is_verified                                                 Boolean?                    @default(false)
+  is_verified                                                 Boolean?               @default(false)
   regulation_feedbacks                                        regulation_feedbacks[]
 }
 
-model vehicle_slot_registration {
+model vehicle_registration {
   assignment_id Int                  @id @default(autoincrement())
-  vehicle_id    Int
   requested_by  Int
   requested_at  DateTime?            @default(now()) @db.Timestamp(6)
   updated_at    DateTime?            @updatedAt @db.Timestamp(6)
@@ -362,31 +361,31 @@ model vehicle_slot_registration {
   start_date    DateTime?            @db.Date
   end_date      DateTime?            @db.Date
   note          String?              @db.VarChar(500)
-  users         users?               @relation(fields: [approved_by], references: [user_id], map: "fk_vehicle_slot_approved_by")
-  tenants       tenants              @relation(fields: [requested_by], references: [user_id], onDelete: Cascade, map: "fk_vehicle_slot_requested_by")
-  vehicles      vehicles             @relation(fields: [vehicle_id], references: [vehicle_id], onDelete: Cascade, map: "fk_vehicle_slot_vehicle")
+  users         users?               @relation(fields: [approved_by], references: [user_id], map: "fk_vehicle_approved_by")
+  tenants       tenants              @relation(fields: [requested_by], references: [user_id], onDelete: Cascade, map: "fk_vehicle_requested_by")
+  vehicles      vehicles[]
 
   @@index([requested_by], map: "idx_vehicle_slot_requested_by")
   @@index([status], map: "idx_vehicle_slot_status")
-  @@index([vehicle_id], map: "idx_vehicle_slot_vehicle_id")
 }
 
 model vehicles {
-  vehicle_id                Int                         @id @default(autoincrement())
-  tenant_user_id            Int
-  type                      vehicle_type?
-  license_plate             String?                     @db.VarChar(50)
-  brand                     String?                     @db.VarChar(100)
-  color                     String?                     @db.VarChar(50)
-  status                    registration_status?        @default(requested)
-  registered_at             DateTime?                   @default(now()) @db.Timestamp(6)
-  updated_at                DateTime?                   @db.Timestamp(6)
-  deactivated_at            DateTime?                   @db.Timestamp(6)
-  deactivated_by            Int?
-  note                      String?
-  vehicle_slot_registration vehicle_slot_registration[]
-  users                     users?                      @relation(fields: [deactivated_by], references: [user_id], map: "fk_vehicles_deactivated_by")
-  tenants                   tenants                     @relation("TenantVehiclesRelation", fields: [tenant_user_id], references: [user_id], onDelete: Cascade, map: "fk_vehicles_tenant")
+  vehicle_id           Int                  @id @default(autoincrement())
+  tenant_user_id       Int
+  registration_id      Int
+  type                 vehicle_type?
+  license_plate        String?              @db.VarChar(50)
+  brand                String?              @db.VarChar(100)
+  color                String?              @db.VarChar(50)
+  status               vehicle_status?      @default(requested)
+  registered_at        DateTime?            @default(now()) @db.Timestamp(6)
+  updated_at           DateTime?            @db.Timestamp(6)
+  deactivated_at       DateTime?            @db.Timestamp(6)
+  deactivated_by       Int?
+  note                 String?
+  users                users?               @relation(fields: [deactivated_by], references: [user_id], map: "fk_vehicles_deactivated_by")
+  tenants              tenants              @relation("TenantVehiclesRelation", fields: [tenant_user_id], references: [user_id], onDelete: Cascade, map: "fk_vehicles_tenant")
+  vehicle_registration vehicle_registration @relation(fields: [registration_id], references: [assignment_id], map: "fk_vehicles_registration")
 
   @@unique([license_plate], map: "uq_vehicles_license_plate")
   @@index([tenant_user_id], map: "idx_vehicles_tenant_user_id")
@@ -523,6 +522,13 @@ enum vehicle_type {
   truck
   van
   other
+}
+
+enum vehicle_status {
+  active
+  inactive
+  requested
+  deactivated
 }
 
 enum guest_relationship {

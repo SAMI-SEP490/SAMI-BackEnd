@@ -3,60 +3,86 @@
 
 const express = require('express');
 const router = express.Router();
-const vehicleController = require('../controllers/vehicle.controller');
+const vehicleRegistrationController = require('../controllers/vehicle.controller');
 const { authenticate, requireRole } = require('../middlewares/auth.middleware');
 const {
-    registerVehicleSchema,
-    updateVehicleSchema,
+    createVehicleRegistrationSchema,
+    updateVehicleRegistrationSchema,
+    cancelVehicleRegistrationSchema,
     validate
 } = require('../middlewares/vehicle.middleware');
 
 // All routes require authentication
 router.use(authenticate);
 
-// Tenant routes
+// Vehicle Registration Routes
+
+// Tenant routes - Registration management
 router.post(
-    '/',
+    '/registrations',
     requireRole(['TENANT']),
-    validate(registerVehicleSchema),
-    vehicleController.registerVehicle
+    validate(createVehicleRegistrationSchema),
+    vehicleRegistrationController.createVehicleRegistration
 );
 
 router.put(
-    '/:id',
+    '/registrations/:id',
     requireRole(['TENANT']),
-    validate(updateVehicleSchema),
-    vehicleController.updateVehicle
+    validate(updateVehicleRegistrationSchema),
+    vehicleRegistrationController.updateVehicleRegistration
 );
 
 router.delete(
-    '/:id',
+    '/registrations/:id',
     requireRole(['TENANT']),
-    vehicleController.deleteVehicle
+    vehicleRegistrationController.deleteVehicleRegistration
 );
 
-// Manager/Owner routes
+// Manager/Owner routes - Approval management
 router.post(
-    '/:id/approve',
+    '/registrations/:id/approve',
     requireRole(['MANAGER', 'OWNER']),
-    vehicleController.approveVehicle
-);
-
-router.post(
-    '/:id/reject',
-    requireRole(['MANAGER', 'OWNER']),
-    vehicleController.rejectVehicle
+    vehicleRegistrationController.approveVehicleRegistration
 );
 
 router.post(
-    '/:id/deactivate',
+    '/registrations/:id/reject',
     requireRole(['MANAGER', 'OWNER']),
-    vehicleController.deactivateVehicle
+    vehicleRegistrationController.rejectVehicleRegistration
 );
 
-// Shared routes (all authenticated users)
-router.get('/', vehicleController.getVehicles);
-router.get('/stats', vehicleController.getVehicleStats);
-router.get('/:id', vehicleController.getVehicleById);
+// Shared routes - View registrations
+router.get(
+    '/registrations',
+    vehicleRegistrationController.getVehicleRegistrations
+);
+
+router.get(
+    '/registrations/stats',
+    vehicleRegistrationController.getVehicleRegistrationStats
+);
+
+router.get(
+    '/registrations/:id',
+    vehicleRegistrationController.getVehicleRegistrationById
+);
+
+router.post(
+    '/registrations/:id/cancel',
+    validate(cancelVehicleRegistrationSchema),
+    vehicleRegistrationController.cancelVehicleRegistration
+);
+
+// Vehicle Routes - View only (vehicles are created automatically on approval)
+
+router.get(
+    '/',
+    vehicleRegistrationController.getVehicles
+);
+
+router.get(
+    '/:id',
+    vehicleRegistrationController.getVehicleById
+);
 
 module.exports = router;
