@@ -24,7 +24,7 @@ router.get('/statistics',
 
 // ROOM HISTORY - Lấy lịch sử bảo trì của một phòng
 router.get('/room/:roomId/history',
-    requireRole(['owner', 'manager']),
+    requireRole(['owner', 'manager','tenant']),
     validateRoomId,
     maintenanceController.getRoomMaintenanceHistory
 );
