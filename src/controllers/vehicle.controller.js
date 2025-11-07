@@ -1,33 +1,33 @@
 // Updated: 2025-11-06
 // by: DatNB
 
-const vehicleService = require('../services/vehicle.service');
+const vehicleRegistrationService = require('../services/vehicle.service');
 
-class VehicleController {
-    // Register vehicle (Tenant only)
-    async registerVehicle(req, res, next) {
+class VehicleRegistrationController {
+    // Create vehicle registration (Tenant only)
+    async createVehicleRegistration(req, res, next) {
         try {
-            const vehicle = await vehicleService.registerVehicle(
+            const registration = await vehicleRegistrationService.createVehicleRegistration(
                 req.user.user_id,
                 req.body
             );
 
             res.status(201).json({
                 success: true,
-                message: 'Vehicle registered successfully',
-                data: { vehicle }
+                message: 'Vehicle registration created successfully',
+                data: { registration }
             });
         } catch (err) {
             next(err);
         }
     }
 
-    // Get vehicle by ID
-    async getVehicleById(req, res, next) {
+    // Get vehicle registration by ID
+    async getVehicleRegistrationById(req, res, next) {
         try {
             const { id } = req.params;
 
-            const vehicle = await vehicleService.getVehicleById(
+            const registration = await vehicleRegistrationService.getVehicleRegistrationById(
                 parseInt(id),
                 req.user.user_id,
                 req.user.role
@@ -35,26 +35,26 @@ class VehicleController {
 
             res.json({
                 success: true,
-                data: { vehicle }
+                data: { registration }
             });
         } catch (err) {
             next(err);
         }
     }
 
-    // Get all vehicles with filters
-    async getVehicles(req, res, next) {
+    // Get all vehicle registrations with filters
+    async getVehicleRegistrations(req, res, next) {
         try {
             const filters = {
                 status: req.query.status,
-                type: req.query.type,
-                tenant_user_id: req.query.tenant_user_id ? parseInt(req.query.tenant_user_id) : undefined,
-                license_plate: req.query.license_plate,
+                requested_by: req.query.requested_by ? parseInt(req.query.requested_by) : undefined,
+                start_date_from: req.query.start_date_from,
+                start_date_to: req.query.start_date_to,
                 page: req.query.page,
                 limit: req.query.limit
             };
 
-            const result = await vehicleService.getVehicles(
+            const result = await vehicleRegistrationService.getVehicleRegistrations(
                 filters,
                 req.user.user_id,
                 req.user.role
@@ -69,12 +69,12 @@ class VehicleController {
         }
     }
 
-    // Update vehicle (Tenant only, requested status only)
-    async updateVehicle(req, res, next) {
+    // Update vehicle registration (Tenant only, requested status only)
+    async updateVehicleRegistration(req, res, next) {
         try {
             const { id } = req.params;
 
-            const updated = await vehicleService.updateVehicle(
+            const updated = await vehicleRegistrationService.updateVehicleRegistration(
                 parseInt(id),
                 req.user.user_id,
                 req.body
@@ -82,87 +82,90 @@ class VehicleController {
 
             res.json({
                 success: true,
-                message: 'Vehicle updated successfully',
-                data: { vehicle: updated }
+                message: 'Vehicle registration updated successfully',
+                data: { registration: updated }
             });
         } catch (err) {
             next(err);
         }
     }
 
-    // Approve vehicle (Manager/Owner only)
-    async approveVehicle(req, res, next) {
+    // Approve vehicle registration (Manager/Owner only)
+    async approveVehicleRegistration(req, res, next) {
         try {
             const { id } = req.params;
 
-            const approved = await vehicleService.approveVehicle(
+            const approved = await vehicleRegistrationService.approveVehicleRegistration(
                 parseInt(id),
                 req.user.user_id
             );
 
             res.json({
                 success: true,
-                message: 'Vehicle approved successfully',
-                data: { vehicle: approved }
+                message: 'Vehicle registration approved and vehicle created successfully',
+                data: { registration: approved }
             });
         } catch (err) {
             next(err);
         }
     }
 
-    // Reject vehicle (Manager/Owner only)
-    async rejectVehicle(req, res, next) {
+    // Reject vehicle registration (Manager/Owner only)
+    async rejectVehicleRegistration(req, res, next) {
         try {
             const { id } = req.params;
 
-            const rejected = await vehicleService.rejectVehicle(
+            const rejected = await vehicleRegistrationService.rejectVehicleRegistration(
                 parseInt(id),
                 req.user.user_id
             );
 
             res.json({
                 success: true,
-                message: 'Vehicle rejected successfully',
-                data: { vehicle: rejected }
+                message: 'Vehicle registration rejected successfully',
+                data: { registration: rejected }
             });
         } catch (err) {
             next(err);
         }
     }
 
-    // Deactivate vehicle (Manager/Owner only)
-    async deactivateVehicle(req, res, next) {
+    // Cancel vehicle registration
+    async cancelVehicleRegistration(req, res, next) {
         try {
             const { id } = req.params;
+            const { cancellation_reason } = req.body;
 
-            const deactivated = await vehicleService.deactivateVehicle(
+            const cancelled = await vehicleRegistrationService.cancelVehicleRegistration(
                 parseInt(id),
-                req.user.user_id
+                req.user.user_id,
+                req.user.role,
+                cancellation_reason
             );
 
             res.json({
                 success: true,
-                message: 'Vehicle deactivated successfully',
-                data: { vehicle: deactivated }
+                message: 'Vehicle registration cancelled successfully',
+                data: { registration: cancelled }
             });
         } catch (err) {
             next(err);
         }
     }
 
-    // Delete vehicle
-    async deleteVehicle(req, res, next) {
+    // Delete vehicle registration
+    async deleteVehicleRegistration(req, res, next) {
         try {
             const { id } = req.params;
 
-            await vehicleService.deleteVehicle(
+            await vehicleRegistrationService.deleteVehicleRegistration(
                 parseInt(id),
                 req.user.user_id
             );
 
             res.json({
                 success: true,
-                message: 'Vehicle deleted successfully'
+                message: 'Vehicle registration deleted successfully'
             });
         } catch (err) {
             next(err);
@@ -170,9 +173,9 @@ class VehicleController {
     }
 
     // Get statistics
-    async getVehicleStats(req, res, next) {
+    async getVehicleRegistrationStats(req, res, next) {
         try {
-            const stats = await vehicleService.getVehicleStats(
+            const stats = await vehicleRegistrationService.getVehicleRegistrationStats(
                 req.user.user_id,
                 req.user.role
             );
@@ -185,6 +188,53 @@ class VehicleController {
             next(err);
         }
     }
+
+    // Get all vehicles
+    async getVehicles(req, res, next) {
+        try {
+            const filters = {
+                status: req.query.status,
+                type: req.query.type,
+                tenant_user_id: req.query.tenant_user_id ? parseInt(req.query.tenant_user_id) : undefined,
+                license_plate: req.query.license_plate,
+                page: req.query.page,
+                limit: req.query.limit
+            };
+
+            const result = await vehicleRegistrationService.getVehicles(
+                filters,
+                req.user.user_id,
+                req.user.role
+            );
+
+            res.json({
+                success: true,
+                data: result
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    // Get vehicle by ID
+    async getVehicleById(req, res, next) {
+        try {
+            const { id } = req.params;
+
+            const vehicle = await vehicleRegistrationService.getVehicleById(
+                parseInt(id),
+                req.user.user_id,
+                req.user.role
+            );
+
+            res.json({
+                success: true,
+                data: { vehicle }
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
 }
 
-module.exports = new VehicleController();
+module.exports = new VehicleRegistrationController();

@@ -1,9 +1,10 @@
 // Updated: 2025-11-06
 // by: DatNB
+
 const Joi = require('joi');
 
-// Schema for registering vehicle
-const registerVehicleSchema = Joi.object({
+// Schema for creating vehicle registration
+const createVehicleRegistrationSchema = Joi.object({
     type: Joi.string()
         .valid('car', 'motorcycle', 'truck', 'van', 'other')
         .required()
@@ -38,18 +39,37 @@ const registerVehicleSchema = Joi.object({
             'string.max': 'Color cannot exceed 50 characters'
         }),
 
+    start_date: Joi.date()
+        .iso()
+        .optional()
+        .allow(null)
+        .messages({
+            'date.format': 'Start date must be in ISO format (YYYY-MM-DD)'
+        }),
+
+    end_date: Joi.date()
+        .iso()
+        .optional()
+        .allow(null)
+        .greater(Joi.ref('start_date'))
+        .messages({
+            'date.format': 'End date must be in ISO format (YYYY-MM-DD)',
+            'date.greater': 'End date must be after start date'
+        }),
+
     note: Joi.string()
         .optional()
         .allow(null, '')
+        .max(500)
         .messages({
-            'string.base': 'Note must be a string'
+            'string.max': 'Note cannot exceed 500 characters'
         })
 }).messages({
     'object.unknown': 'Unknown field: {{#label}}'
 });
 
-// Schema for updating vehicle
-const updateVehicleSchema = Joi.object({
+// Schema for updating vehicle registration
+const updateVehicleRegistrationSchema = Joi.object({
     type: Joi.string()
         .valid('car', 'motorcycle', 'truck', 'van', 'other')
         .optional()
@@ -82,14 +102,42 @@ const updateVehicleSchema = Joi.object({
             'string.max': 'Color cannot exceed 50 characters'
         }),
 
+    start_date: Joi.date()
+        .iso()
+        .optional()
+        .allow(null)
+        .messages({
+            'date.format': 'Start date must be in ISO format (YYYY-MM-DD)'
+        }),
+
+    end_date: Joi.date()
+        .iso()
+        .optional()
+        .allow(null)
+        .messages({
+            'date.format': 'End date must be in ISO format (YYYY-MM-DD)'
+        }),
+
     note: Joi.string()
         .optional()
         .allow(null, '')
+        .max(500)
         .messages({
-            'string.base': 'Note must be a string'
+            'string.max': 'Note cannot exceed 500 characters'
         })
 }).min(1).messages({
     'object.min': 'At least one field must be provided for update'
+});
+
+// Schema for cancelling vehicle registration
+const cancelVehicleRegistrationSchema = Joi.object({
+    cancellation_reason: Joi.string()
+        .max(300)
+        .optional()
+        .allow(null, '')
+        .messages({
+            'string.max': 'Cancellation reason cannot exceed 300 characters'
+        })
 });
 
 // Validation middleware function
@@ -119,7 +167,8 @@ const validate = (schema) => {
 };
 
 module.exports = {
-    registerVehicleSchema,
-    updateVehicleSchema,
+    createVehicleRegistrationSchema,
+    updateVehicleRegistrationSchema,
+    cancelVehicleRegistrationSchema,
     validate
 };
