@@ -1,4 +1,4 @@
-// Updated: 2025-10-31
+// Updated: 2025-11-06
 // by: DatNB
 
 const prisma = require('../config/prisma');
@@ -478,6 +478,181 @@ class RoomService {
         return { success: true, message: 'Room permanently deleted' };
     }
 
+    // READ - Tìm phòng theo user_id (tenant)
+    async getRoomsByUserId(userId) {
+        const userIdInt = parseInt(userId);
+        if (isNaN(userIdInt)) {
+            throw new Error('user_id must be a valid number');
+        }
+
+        // Kiểm tra user có tồn tại không
+        const user = await prisma.users.findUnique({
+            where: { user_id: userIdInt }
+        });
+
+        if (!user) {
+            throw new Error('User not found');
+        }
+
+        // Tìm tenant record
+        const tenant = await prisma.tenants.findUnique({
+            where: { user_id: userIdInt },
+            include: {
+                rooms: {
+                    include: {
+                        buildings: {
+                            select: {
+                                building_id: true,
+                                name: true,
+                                address: true
+                            }
+                        },
+                        contracts: {
+                            where: {
+                                tenant_user_id: userIdInt,
+                                status: 'active',
+                                deleted_at: null
+                            },
+                            select: {
+                                contract_id: true,
+                                start_date: true,
+                                end_date: true,
+                                rent_amount: true,
+                                deposit_amount: true,
+                                status: true
+                            }
+                        },
+                        maintenance_requests: {
+                            where: {
+                                tenant_user_id: userIdInt,
+                                status: {
+                                    in: ['pending', 'in_progress']
+                                }
+                            },
+                            select: {
+                                request_id: true,
+                                title: true,
+                                category: true,
+                                priority: true,
+                                status: true,
+                                created_at: true
+                            },
+                            orderBy: { created_at: 'desc' }
+                        }
+                    }
+                }
+            }
+        });
+
+        if (!tenant) {
+            throw new Error('User is not a tenant');
+        }
+
+        // Nếu tenant có room_id, lấy thông tin room đó
+        let currentRoom = null;
+        if (tenant.room_id) {
+            currentRoom = await prisma.rooms.findUnique({
+                where: { room_id: tenant.room_id },
+                include: {
+                    buildings: {
+                        select: {
+                            building_id: true,
+                            name: true,
+                            address: true
+                        }
+                    },
+                    contracts: {
+                        where: {
+                            tenant_user_id: userIdInt,
+                            status: 'active',
+                            deleted_at: null
+                        },
+                        select: {
+                            contract_id: true,
+                            start_date: true,
+                            end_date: true,
+                            rent_amount: true,
+                            deposit_amount: true,
+                            status: true
+                        }
+                    },
+                    maintenance_requests: {
+                        where: {
+                            tenant_user_id: userIdInt,
+                            status: {
+                                in: ['pending', 'in_progress']
+                            }
+                        },
+                        select: {
+                            request_id: true,
+                            title: true,
+                            category: true,
+                            priority: true,
+                            status: true,
+                            created_at: true
+                        },
+                        orderBy: { created_at: 'desc' }
+                    }
+                }
+            });
+        }
+
+        // Lấy lịch sử các phòng đã thuê (qua contracts)
+        const contractHistory = await prisma.contracts.findMany({
+            where: {
+                tenant_user_id: userIdInt,
+                deleted_at: null
+            },
+            include: {
+                rooms: {
+                    include: {
+                        buildings: {
+                            select: {
+                                building_id: true,
+                                name: true,
+                                address: true
+                            }
+                        }
+                    }
+                }
+            },
+            orderBy: { created_at: 'desc' }
+        });
+
+        return {
+            user_id: userIdInt,
+            user_info: {
+                full_name: user.full_name,
+                email: user.email,
+                phone: user.phone,
+                avatar_url: user.avatar_url
+            },
+            tenant_info: {
+                id_number: tenant.id_number,
+                tenant_since: tenant.tenant_since,
+                emergency_contact_phone: tenant.emergency_contact_phone
+            },
+            current_room: currentRoom ? this.formatRoomDetailForTenant(currentRoom, userIdInt) : null,
+            contract_history: contractHistory.map(c => ({
+                contract_id: c.contract_id,
+                room: {
+                    room_id: c.rooms.room_id,
+                    room_number: c.rooms.room_number,
+                    building_name: c.rooms.buildings?.name,
+                    building_address: c.rooms.buildings?.address,
+                    floor: c.rooms.floor,
+                    size: c.rooms.size
+                },
+                start_date: c.start_date,
+                end_date: c.end_date,
+                rent_amount: c.rent_amount,
+                deposit_amount: c.deposit_amount,
+                status: c.status,
+                created_at: c.created_at
+            }))
+        };
+    }
+
     // STATISTICS - Thống kê phòng theo building
     async getRoomStatisticsByBuilding(buildingId) {
         const building = await prisma.buildings.findUnique({
@@ -650,6 +825,39 @@ class RoomService {
                 status: c.status
             })) || [],
             recent_maintenance_requests: room.maintenance_requests?.map(m => ({
+                request_id: m.request_id,
+                title: m.title,
+                category: m.category,
+                priority: m.priority,
+                status: m.status,
+                created_at: m.created_at
+            })) || [],
+            created_at: room.created_at,
+            updated_at: room.updated_at
+        };
+    }
+
+    formatRoomDetailForTenant(room, tenantUserId) {
+        return {
+            room_id: room.room_id,
+            building_id: room.building_id,
+            building_name: room.buildings?.name,
+            building_address: room.buildings?.address,
+            room_number: room.room_number,
+            floor: room.floor,
+            size: room.size,
+            description: room.description,
+            status: room.status,
+            is_active: room.is_active,
+            active_contracts: room.contracts?.map(c => ({
+                contract_id: c.contract_id,
+                start_date: c.start_date,
+                end_date: c.end_date,
+                rent_amount: c.rent_amount,
+                deposit_amount: c.deposit_amount,
+                status: c.status
+            })) || [],
+            my_maintenance_requests: room.maintenance_requests?.map(m => ({
                 request_id: m.request_id,
                 title: m.title,
                 category: m.category,
