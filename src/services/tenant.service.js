@@ -340,6 +340,101 @@ class TenantService {
             }
         });
     }
+
+    async getTenantChatbotContext(tenantUserId) {
+        // Find owners (for contact)
+        const owners = await prisma.users.findMany({
+            where: { role: 'OWNER', deleted_at: null },
+            select: { full_name: true, phone: true }
+        });
+        
+        // Find tenant and all related data
+        const tenantInfo = await prisma.tenants.findUnique({
+            where: { user_id: tenantUserId },
+            include: {
+                users: { select: { full_name: true, user_id: true } },
+                bills: {
+                    where: { status: { in: ['issued', 'overdue'] } },
+                    select: { bill_id: true, bill_number: true, due_date: true, total_amount: true, penalty_amount: true, description: true }
+                },
+                contracts: {
+                    where: { status: 'active', deleted_at: null },
+                    select: { contract_id: true, end_date: true, start_date: true, rent_amount: true },
+                    orderBy: { start_date: 'desc' },
+                    take: 1
+                },
+                rooms: {
+                    select: {
+                        room_id: true,
+                        room_number: true,
+                        buildings: {
+                            include: {
+                                building_managers: {
+                                    include: { users: { select: { full_name: true, phone: true } } }
+                                }
+                            }
+                        }
+                    }
+                },
+                maintenance_requests: {
+                    where: { status: { in: ['pending', 'in_progress'] } },
+                    select: { request_id: true, title: true, status: true, created_at: true },
+                    orderBy: { created_at: 'desc' }
+                }
+            }
+        });
+
+        if (!tenantInfo) {
+            const error = new Error('Tenant not found');
+            error.statusCode = 404;
+            throw error;
+        }
+
+        // --- Format the data cleanly for the AI agent ---
+        
+        const unpaid_bills = tenantInfo.bills.map(bill => ({
+            bill_id: bill.bill_id,
+            bill_number: bill.bill_number,
+            description: bill.description,
+            total_due: (Number(bill.total_amount) || 0) + (Number(bill.penalty_amount) || 0),
+            due_date: bill.due_date
+        }));
+
+        const active_contract = tenantInfo.contracts.length > 0 ? {
+            contract_id: tenantInfo.contracts[0].contract_id,
+            start_date: tenantInfo.contracts[0].start_date,
+            end_date: tenantInfo.contracts[0].end_date,
+            rent_amount: tenantInfo.contracts[0].rent_amount
+        } : null;
+
+        const contacts = [];
+        tenantInfo.rooms?.buildings?.building_managers.forEach(mgr => {
+            contacts.push({ role: 'Manager', name: mgr.users.full_name, phone: mgr.users.phone });
+        });
+        owners.forEach(owner => {
+            contacts.push({ role: 'Owner', name: owner.full_name, phone: owner.phone });
+        });
+        
+        const pending_maintenance = tenantInfo.maintenance_requests.map(req => ({
+            request_id: req.request_id,
+            title: req.title,
+            status: req.status,
+            created_at: req.created_at
+        }));
+
+        // This is the final JSON object Dify will receive
+        return {
+            tenant_user_id: tenantInfo.users.user_id,
+            tenant_name: tenantInfo.users.full_name,
+            room_id: tenantInfo.room_id,
+            room_number: tenantInfo.rooms?.room_number,
+            current_date: new Date().toISOString(),
+            unpaid_bills: unpaid_bills,
+            active_contract: active_contract,
+            contacts: contacts,
+            pending_maintenance: pending_maintenance
+        };
+    }
 }
 
 module.exports = new TenantService();
