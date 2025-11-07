@@ -191,7 +191,8 @@ class AuthService {
                 gender: user.gender,
                 birthday: user.birthday,
                 avatar_url: user.avatar_url,
-                status: user.status
+                status: user.status,
+                role: user.role
             }
         };
     }
