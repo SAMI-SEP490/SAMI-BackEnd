@@ -1,4 +1,4 @@
-// Updated: 2025-10-31
+// Updated: 2025-11-06
 // by: DatNB
 
 const validateCreateRoom = (req, res, next) => {
@@ -252,10 +252,22 @@ const validateBuildingId = (req, res, next) => {
 
     next();
 };
+const validateUserID = (req, res, next) =>{
+const { userId } = req.params;
+const userIdInt = parseInt(userId);
 
+if (isNaN(userId) || userIdInt <= 0) {
+    return res.status(400).json({
+        success: false,
+        message: 'Invalid building ID'
+    });
+}
+next();
+};
 module.exports = {
     validateCreateRoom,
     validateUpdateRoom,
     validateRoomId,
-    validateBuildingId
+    validateBuildingId,
+    validateUserID
 };

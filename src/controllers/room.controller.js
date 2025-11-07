@@ -1,4 +1,4 @@
-// Updated: 2025-10-31
+// Updated: 2025-11-06
 // By: DatNB
 
 const roomService = require('../services/room.service');
@@ -43,6 +43,21 @@ class RoomController {
                 success: true,
                 data: rooms.data,
                 pagination: rooms.pagination
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    // Lấy thông tin phòng theo user_id (tenant)
+    async getRoomsByUserId(req, res, next) {
+        try {
+            const { userId } = req.params;
+            const rooms = await roomService.getRoomsByUserId(parseInt(userId));
+
+            res.json({
+                success: true,
+                data: rooms
             });
         } catch (err) {
             next(err);

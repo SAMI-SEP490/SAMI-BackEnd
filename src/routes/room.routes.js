@@ -1,4 +1,4 @@
-// Updated: 2025-10-31
+// Updated: 2025-11-06
 // By: DatNB
 
 const express = require('express');
@@ -9,7 +9,8 @@ const {
     validateCreateRoom,
     validateUpdateRoom,
     validateRoomId,
-    validateBuildingId
+    validateBuildingId,
+    validateUserID
 } = require('../middlewares/room.validation');
 
 // Tất cả routes đều yêu cầu authentication
@@ -33,6 +34,12 @@ router.get('/:id',
     requireRole(['owner', 'manager', 'tenant']),
     validateRoomId,
     roomController.getRoomById
+);
+// READ - Lấy thông tin phòng theo userID
+router.get('/user/:userId',
+    requireRole(['owner', 'manager', 'tenant']),
+    validateUserID,
+    roomController.getRoomsByUserId
 );
 
 // READ - Lấy thống kê phòng theo building
