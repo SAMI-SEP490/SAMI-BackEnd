@@ -1,0 +1,36 @@
+// Updated: 2025-07-11
+// by: MinhBH
+
+const express = require('express');
+const router = express.Router();
+const notificationController = require('../controllers/notification.controller');
+const { authenticate, requireRole } = require('../middlewares/auth.middleware');
+const { validate, sendNotificationSchema, registerDeviceSchema } = require('../middlewares/validation.middleware');
+
+// --- Routes for ALL authenticated users (Tenant, Manager, Owner) ---
+router.use(authenticate);
+
+// Get my notification inbox
+router.get('/', notificationController.getMyNotifications);
+
+// Register my device token
+router.post(
+    '/register-device',
+    validate(registerDeviceSchema),
+    notificationController.registerDevice
+);
+
+// Mark a notification as read
+router.post('/:id/read', notificationController.markAsRead);
+
+// --- Routes for Manager/Owner only ---
+
+// Send a new notification
+router.post(
+    '/send',
+    requireRole(['owner', 'manager']),
+    validate(sendNotificationSchema),
+    notificationController.sendNotification
+);
+
+module.exports = router;

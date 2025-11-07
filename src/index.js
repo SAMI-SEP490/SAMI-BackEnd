@@ -24,6 +24,7 @@ const roomRoutes = require('./routes/room.routes');
 const floorPlanRoutes = require('./routes/floor-plan.routes');
 const regulationRoutes = require('./routes/regulation.routes');
 const vehicleRoutes = require('./routes/vehicle.routes');
+const notificationRoutes = require('./routes/notification.routes');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
 
 const app = express();
@@ -106,6 +107,7 @@ app.use('/api/room', roomRoutes);
 app.use('/api/floor-plan', floorPlanRoutes);
 app.use('/api/regulation', regulationRoutes);
 app.use('/api/vehicle', vehicleRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // 404 handler
 app.use(notFound);
