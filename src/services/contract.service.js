@@ -5,6 +5,9 @@
 
 const prisma = require('../config/prisma');
 const s3Service = require('./s3.service');
+const fs = require('fs');
+const PDFDocument = require('pdfkit');
+const path = require('path');
 
 class ContractService {
     // CREATE - Tạo hợp đồng mới với file PDF
@@ -457,6 +460,78 @@ class ContractService {
             throw new Error(`Failed to download contract file: ${error.message}`);
         }
     }
+
+    async convertAndUpload(contractId, files) {
+        if (!files || files.length === 0) {
+            throw new Error('Không có ảnh nào để chuyển đổi.');
+        }
+
+        // Tạo thư mục tạm
+        const tempDir = path.join(__dirname, '../temp');
+        if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+
+        // Đường dẫn file PDF tạm
+        const outputFilePath = path.join(
+            tempDir,
+            `contract-${contractId}-${Date.now()}.pdf`
+        );
+
+        const doc = new PDFDocument({ autoFirstPage: false });
+        const output = fs.createWriteStream(outputFilePath);
+        doc.pipe(output);
+
+        // Ghi từng ảnh vào PDF
+        for (const file of files) {
+            // Nếu dùng memoryStorage => phải tạo file tạm
+            let imgPath;
+            if (file.path) {
+                imgPath = file.path; // Có sẵn khi dùng diskStorage
+            } else {
+                imgPath = path.join(tempDir, `${Date.now()}-${file.originalname}`);
+                fs.writeFileSync(imgPath, file.buffer);
+            }
+
+            // Đọc và thêm ảnh vào PDF
+            const img = doc.openImage(imgPath);
+            doc.addPage({ size: [img.width, img.height] });
+            doc.image(imgPath, 0, 0, { width: img.width, height: img.height });
+
+            // Xóa ảnh tạm (nếu có)
+            if (!file.path && fs.existsSync(imgPath)) {
+                fs.unlinkSync(imgPath);
+            }
+        }
+
+        // Hoàn tất PDF
+        doc.end();
+        await new Promise((resolve) => output.on('finish', resolve));
+
+        // Upload PDF lên S3
+        const fileBuffer = fs.readFileSync(outputFilePath);
+        const uploadResult = await s3Service.uploadFile(
+            fileBuffer,
+            path.basename(outputFilePath),
+            'contracts'
+        );
+
+        // Cập nhật contract trong DB
+        await prisma.contracts.update({
+            where: { contract_id: parseInt(contractId) },
+            data: {
+                s3_key: uploadResult.s3_key,
+                file_name: uploadResult.file_name,
+                checksum: uploadResult.checksum,
+                uploaded_at: uploadResult.uploaded_at,
+                updated_at: new Date(),
+            },
+        });
+
+        // Xóa file PDF tạm
+        if (fs.existsSync(outputFilePath)) fs.unlinkSync(outputFilePath);
+
+        return uploadResult;
+    }
+
 
     // Helper function - Format response
     formatContractResponse(contract) {
