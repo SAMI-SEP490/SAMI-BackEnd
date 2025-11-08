@@ -225,21 +225,43 @@ model maintenance_requests {
 model notifications {
   notification_id  Int                    @id @default(autoincrement())
   title            String?                @db.VarChar(300)
-  body             Json?
+  body             String?
   priority         notification_priority? @default(normal)
   payload          Json?
-  send_immediately Boolean?               @default(true)
-  scheduled_at     DateTime?              @db.Timestamp(6)
-  status           notification_status?   @default(queued)
   created_by       Int?
   created_at       DateTime?              @default(now()) @db.Timestamp(6)
-  sent_at          DateTime?              @db.Timestamp(6)
-  note             String?
   users            users?                 @relation(fields: [created_by], references: [user_id], map: "fk_notifications_created_by")
+  user_notifications user_notifications[]
 
   @@index([created_by], map: "idx_notifications_created_by")
-  @@index([scheduled_at], map: "idx_notifications_scheduled_at")
-  @@index([status], map: "idx_notifications_status")
+}
+
+// This links a User to a Notification and tracks read status.
+model user_notifications {
+  user_notification_id Int       @id @default(autoincrement())
+  notification_id      Int       // The ID of the message content
+  user_id              Int       // The ID of the recipient
+  is_read              Boolean   @default(false)
+  read_at              DateTime? @db.Timestamp(6)
+  
+  notification         notifications @relation(fields: [notification_id], references: [notification_id], onDelete: Cascade)
+  user                 users         @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+
+  @@unique([notification_id, user_id]) // Prevent duplicate notifications
+  @@index([user_id])
+}
+
+// Stores device tokens for Firebase (FCM)
+model device_tokens {
+  token_id    Int          @id @default(autoincrement())
+  user_id     Int
+  token       String       @unique @db.VarChar(500) // The token from Google/Apple
+  device_type device_type?
+  created_at  DateTime     @default(now()) @db.Timestamp(6)
+  
+  user        users        @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+
+  @@index([user_id])
 }
 
 model regulations {
@@ -345,6 +367,8 @@ model users {
   vehicles                                                    vehicles[]
   is_verified                                                 Boolean?               @default(false)
   regulation_feedbacks                                        regulation_feedbacks[]
+  user_notifications                                          user_notifications[]
+  device_tokens                                               device_tokens[]
 }
 
 model vehicle_registration {
@@ -558,4 +582,10 @@ enum regulation_target {
   all
   tenants
   management
+}
+
+enum device_type {
+  IOS
+  ANDROID
+  WEB
 }

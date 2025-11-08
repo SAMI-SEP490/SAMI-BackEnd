@@ -1,4 +1,4 @@
-// Updated: 2025-18-10
+// Updated: 2025-07-11
 // by: DatNB & MinhBH
 
 
@@ -252,6 +252,25 @@ const updateIssuedBillSchema = baseBillSchema.partial().omit({
     status: true, // Cannot change status of an issued bill (except to 'cancelled' via DELETE)
 });
 
+// Schema for Manager/Owner sending a notification
+const sendNotificationSchema = z.object({
+    recipient_id: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive()),
+    title: z.string().min(1, "Title is required").max(300),
+    body: z.string().min(1, "Body is required"),
+    payload: z.record(z.any()).optional() // e.g., { "link": "/some/path" }
+});
+
+// Schema for registering a device
+const registerDeviceSchema = z.object({
+    token: z.string().min(1, "Token is required"),
+    device_type: z.enum(['IOS', 'ANDROID', 'WEB'])
+});
+
+
+
 const validate = (schema) => {
     return (req, res, next) => {
         try {
@@ -292,5 +311,7 @@ module.exports = {
     createDraftBillSchema,
     createIssuedBillSchema,
     updateDraftBillSchema,
-    updateIssuedBillSchema
+    updateIssuedBillSchema,
+    sendNotificationSchema,
+    registerDeviceSchema
 };

@@ -1,0 +1,116 @@
+// Updated: 2025-07-11
+// by: MinhBH
+
+const prisma = require('../config/prisma');
+const PushService = require('./push.service');
+
+class NotificationService {
+    
+    /**
+     * Creates a notification in the DB and sends a push.
+     * This is the central function used by all other services.
+     * @param {number | null} senderId - The user_id of who sent it (or null for system).
+     * @param {number} recipientId - The user_id of who receives it.
+     * @param {string} title - The notification title.
+     * @param {string} body - The notification body.
+     * @param {object} [payload] - Optional data (e.g., { "link": "/maintenance/123" }).
+     */
+    async createNotification(senderId, recipientId, title, body, payload = {}) {
+        try {
+            // 1. Create the master notification content
+            const newNotification = await prisma.notifications.create({
+                data: {
+                    title: title,
+                    body: body,
+                    payload: payload,
+                    created_by: senderId,
+                }
+            });
+            
+            // 2. Link it to the recipient's inbox
+            const userNotification = await prisma.user_notifications.create({
+                data: {
+                    notification_id: newNotification.notification_id,
+                    user_id: recipientId,
+                    is_read: false
+                }
+            });
+            
+            // 3. Send the real-time push notification (the "ping")
+            // This is "fire-and-forget" - we don't wait for it.
+            PushService.sendPushToUser(recipientId, title, body, payload);
+            
+            return userNotification;
+
+        } catch (error) {
+            console.error("Error creating notification:", error);
+            if (error.code === 'P2002') { // Handle unique constraint error
+                 console.log('Duplicate notification ignored.');
+                 return;
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Gets all notifications (the inbox) for a specific user.
+     */
+    async getNotificationsForUser(userId) {
+        return prisma.user_notifications.findMany({
+            where: { user_id: userId },
+            orderBy: { notification: { created_at: 'desc' } },
+            select: {
+                user_notification_id: true, // This is the ID to mark as read
+                is_read: true,
+                read_at: true,
+                notification: { // The content
+                    select: {
+                        notification_id: true,
+                        title: true,
+                        body: true,
+                        payload: true,
+                        created_at: true,
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Marks a specific notification as read.
+     */
+    async markAsRead(userNotificationId, userId) {
+        // We check for userId to make sure a user can't mark someone else's mail as read
+        const updated = await prisma.user_notifications.updateMany({
+            where: {
+                user_notification_id: userNotificationId,
+                user_id: userId,
+                is_read: false // Only update if it's unread
+            },
+            data: {
+                is_read: true,
+                read_at: new Date()
+            }
+        });
+        
+        if (updated.count === 0) {
+             const error = new Error('Notification not found or already read.');
+             error.statusCode = 404;
+             throw error;
+        }
+        return updated;
+    }
+    
+     /**
+     * Saves or updates a device token for FCM.
+     */
+    async registerDeviceToken(userId, token, deviceType) {
+        return prisma.device_tokens.upsert({
+            where: { token: token }, // Find by the unique token
+            update: { user_id: userId, device_type: deviceType }, // Update owner if needed
+            create: { user_id: userId, token: token, device_type: deviceType }
+        });
+    }
+}
+
+module.exports = new NotificationService();
