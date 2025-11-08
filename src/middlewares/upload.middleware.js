@@ -19,10 +19,26 @@ const fileFilter = (req, file, cb) => {
     }
 };
 
+const imageFilter = (req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg'];
+    if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+    } else {
+        cb(new Error('Only image files (jpg, png) are allowed!'), false);
+    }
+};
 // Cấu hình upload
 const upload = multer({
     storage: storage,
     fileFilter: fileFilter,
+    limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB max file size
+    }
+});
+
+const uploadImage = multer({
+    storage: storage,
+    fileFilter: imageFilter,
     limits: {
         fileSize: 10 * 1024 * 1024, // 10MB max file size
     }
@@ -52,5 +68,6 @@ const handleUploadError = (err, req, res, next) => {
 
 module.exports = {
     upload,
+    uploadImage,
     handleUploadError
 };

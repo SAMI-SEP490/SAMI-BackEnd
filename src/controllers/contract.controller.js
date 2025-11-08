@@ -122,8 +122,6 @@ class ContractController {
         }
     }
 
-
-
     async downloadContract(req, res, next) {
         try {
             const { id } = req.params;
@@ -151,6 +149,25 @@ class ContractController {
             res.setHeader('Content-Type', result.content_type);
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(result.file_name)}"`);
             res.send(result.buffer);
+        } catch (err) {
+            next(err);
+        }
+    }
+    async uploadContractImages(req, res, next) {
+        try {
+            const { id } = req.params; // contract_id
+            if (!req.files || req.files.length === 0) {
+                return res.status(400).json({ message: 'Không có ảnh nào được upload!' });
+            }
+
+            // Gửi toàn bộ file (buffer + thông tin) cho service
+            const result = await contractService.convertAndUpload(parseInt(id), req.files);
+
+            res.json({
+                success: true,
+                message: '✅ Ảnh đã được chuyển thành PDF và upload lên S3 thành công!',
+                data: result,
+            });
         } catch (err) {
             next(err);
         }
