@@ -348,21 +348,24 @@ class TenantService {
             select: { full_name: true, phone: true }
         });
         
-        // Find tenant and all related data
+        // Find tenant and all related data in one go
         const tenantInfo = await prisma.tenants.findUnique({
             where: { user_id: tenantUserId },
             include: {
                 users: { select: { full_name: true, user_id: true } },
+                // Get all payable bills
                 bills: {
                     where: { status: { in: ['issued', 'overdue'] } },
                     select: { bill_id: true, bill_number: true, due_date: true, total_amount: true, penalty_amount: true, description: true }
                 },
+                // Get the most recent active contract
                 contracts: {
                     where: { status: 'active', deleted_at: null },
                     select: { contract_id: true, end_date: true, start_date: true, rent_amount: true },
                     orderBy: { start_date: 'desc' },
                     take: 1
                 },
+                // Get room/building info
                 rooms: {
                     select: {
                         room_id: true,
@@ -376,10 +379,23 @@ class TenantService {
                         }
                     }
                 },
+                // Get pending maintenance requests
                 maintenance_requests: {
                     where: { status: { in: ['pending', 'in_progress'] } },
                     select: { request_id: true, title: true, status: true, created_at: true },
                     orderBy: { created_at: 'desc' }
+                },
+                // Get pending/rejected registrations
+                vehicle_registration: {
+                    where: { status: { in: ['requested', 'rejected'] } },
+                    select: { assignment_id: true, status: true, reason: true, requested_at: true },
+                    orderBy: { requested_at: 'desc' }
+                },
+                // Get active, approved vehicles
+                vehicles: {
+                    where: { deactivated_at: null, status: 'active' }, 
+                    select: { vehicle_id: true, type: true, license_plate: true, brand: true, color: true, status: true },
+                    orderBy: { registered_at: 'desc' }
                 }
             }
         });
@@ -390,7 +406,7 @@ class TenantService {
             throw error;
         }
 
-        // --- Format the data cleanly for the AI agent ---
+        // --- Format all data cleanly for the AI agent ---
         
         const unpaid_bills = tenantInfo.bills.map(bill => ({
             bill_id: bill.bill_id,
@@ -422,6 +438,28 @@ class TenantService {
             created_at: req.created_at
         }));
 
+        const pending_registrations = tenantInfo.vehicle_registration.map(reg => {
+            const info = JSON.parse(reg.reason || '{}'); // Parse vehicle info
+            return {
+                registration_id: reg.assignment_id,
+                status: reg.status,
+                requested_at: reg.requested_at,
+                type: info.type,
+                license_plate: info.license_plate,
+                brand: info.brand,
+                color: info.color
+            };
+        });
+        
+        const active_vehicles = tenantInfo.vehicles.map(v => ({
+            vehicle_id: v.vehicle_id,
+            type: v.type,
+            license_plate: v.license_plate,
+            brand: v.brand,
+            color: v.color,
+            status: v.status
+        }));
+
         // This is the final JSON object Dify will receive
         return {
             tenant_user_id: tenantInfo.users.user_id,
@@ -432,7 +470,9 @@ class TenantService {
             unpaid_bills: unpaid_bills,
             active_contract: active_contract,
             contacts: contacts,
-            pending_maintenance: pending_maintenance
+            pending_maintenance: pending_maintenance,
+            pending_registrations: pending_registrations,
+            active_vehicles: active_vehicles
         };
     }
 }
