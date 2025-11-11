@@ -110,14 +110,16 @@ class VehicleRegistrationController {
         }
     }
 
-    // Reject vehicle registration (Manager/Owner only)
+// Reject vehicle registration (Manager/Owner only)
     async rejectVehicleRegistration(req, res, next) {
         try {
             const { id } = req.params;
+            const { rejection_reason } = req.body; // Thêm lý do từ chối
 
             const rejected = await vehicleRegistrationService.rejectVehicleRegistration(
                 parseInt(id),
-                req.user.user_id
+                req.user.user_id,
+                rejection_reason // Thêm tham số này
             );
 
             res.json({

@@ -1,7 +1,10 @@
-// Updated: 2025-30-10
+// Updated: 2025-12-11
 // by: DatNB
 
+
+
 const prisma = require('../config/prisma');
+const NotificationService = require('./notification.service');
 
 class MaintenanceService {
     // CREATE - Tạo yêu cầu bảo trì mới
@@ -236,8 +239,7 @@ class MaintenanceService {
         }
 
         // Prepare update data
-        const updateData = {
-        };
+        const updateData = {};
 
         if (title !== undefined) updateData.title = title;
         if (priority !== undefined) updateData.priority = priority;
@@ -256,8 +258,6 @@ class MaintenanceService {
                     updateData.resolved_at = new Date();
                 }
             }
-
-
         }
 
         const maintenanceRequest = await prisma.maintenance_requests.update({
@@ -323,7 +323,14 @@ class MaintenanceService {
         }
 
         const maintenanceRequest = await prisma.maintenance_requests.findUnique({
-            where: { request_id: requestId }
+            where: { request_id: requestId },
+            include: {
+                rooms: {
+                    select: {
+                        room_number: true
+                    }
+                }
+            }
         });
 
         if (!maintenanceRequest) {
@@ -362,6 +369,27 @@ class MaintenanceService {
             }
         });
 
+        // Send notification to tenant
+        try {
+            const roomInfo = maintenanceRequest.rooms?.room_number
+                ? ` phòng ${maintenanceRequest.rooms.room_number}`
+                : '';
+
+            await NotificationService.createNotification(
+                currentUser.user_id, // sender (manager/owner)
+                maintenanceRequest.tenant_user_id, // recipient (tenant)
+                'Yêu cầu bảo trì đã được phê duyệt',
+                `Yêu cầu bảo trì "${maintenanceRequest.title}"${roomInfo} đã được chấp nhận và đang được xử lý.`,
+                {
+                    type: 'maintenance_approved',
+                    request_id: requestId,
+                    link: `/maintenance/${requestId}`
+                }
+            );
+        } catch (notificationError) {
+            console.error('Error sending approval notification:', notificationError);
+        }
+
         return this.formatMaintenanceResponse(approved);
     }
 
@@ -373,7 +401,14 @@ class MaintenanceService {
         }
 
         const maintenanceRequest = await prisma.maintenance_requests.findUnique({
-            where: { request_id: requestId }
+            where: { request_id: requestId },
+            include: {
+                rooms: {
+                    select: {
+                        room_number: true
+                    }
+                }
+            }
         });
 
         if (!maintenanceRequest) {
@@ -413,6 +448,32 @@ class MaintenanceService {
             }
         });
 
+        // Send notification to tenant
+        try {
+            const roomInfo = maintenanceRequest.rooms?.room_number
+                ? ` phòng ${maintenanceRequest.rooms.room_number}`
+                : '';
+
+            const reasonText = reason
+                ? ` Lý do: ${reason}`
+                : '';
+
+            await NotificationService.createNotification(
+                currentUser.user_id, // sender (manager/owner)
+                maintenanceRequest.tenant_user_id, // recipient (tenant)
+                'Yêu cầu bảo trì đã bị từ chối',
+                `Yêu cầu bảo trì "${maintenanceRequest.title}"${roomInfo} đã bị từ chối.${reasonText}`,
+                {
+                    type: 'maintenance_rejected',
+                    request_id: requestId,
+                    reason: reason,
+                    link: `/maintenance/${requestId}`
+                }
+            );
+        } catch (notificationError) {
+            console.error('Error sending rejection notification:', notificationError);
+        }
+
         return this.formatMaintenanceResponse(rejected);
     }
 
@@ -424,7 +485,14 @@ class MaintenanceService {
         }
 
         const maintenanceRequest = await prisma.maintenance_requests.findUnique({
-            where: { request_id: requestId }
+            where: { request_id: requestId },
+            include: {
+                rooms: {
+                    select: {
+                        room_number: true
+                    }
+                }
+            }
         });
 
         if (!maintenanceRequest) {
@@ -444,7 +512,6 @@ class MaintenanceService {
             resolved_at: new Date(),
             updated_at: new Date()
         };
-
 
         const resolved = await prisma.maintenance_requests.update({
             where: { request_id: requestId },
@@ -468,6 +535,27 @@ class MaintenanceService {
                 }
             }
         });
+
+        // Send notification to tenant
+        try {
+            const roomInfo = maintenanceRequest.rooms?.room_number
+                ? ` phòng ${maintenanceRequest.rooms.room_number}`
+                : '';
+
+            await NotificationService.createNotification(
+                currentUser.user_id, // sender (manager/owner)
+                maintenanceRequest.tenant_user_id, // recipient (tenant)
+                'Yêu cầu bảo trì đã được giải quyết',
+                `Yêu cầu bảo trì "${maintenanceRequest.title}"${roomInfo} đã được giải quyết xong.`,
+                {
+                    type: 'maintenance_resolved',
+                    request_id: requestId,
+                    link: `/maintenance/${requestId}`
+                }
+            );
+        } catch (notificationError) {
+            console.error('Error sending resolve notification:', notificationError);
+        }
 
         return this.formatMaintenanceResponse(resolved);
     }
@@ -715,7 +803,6 @@ class MaintenanceService {
                 where,
                 _count: true
             }),
-
 
             // Get resolved requests for avg time calculation
             prisma.maintenance_requests.findMany({
