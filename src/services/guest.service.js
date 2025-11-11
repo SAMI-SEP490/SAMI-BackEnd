@@ -1,8 +1,9 @@
 // Updated: 2025-10-24
 // by: DatNB
-
+// Modified: Added notifications for approval/rejection
 
 const prisma = require('../config/prisma');
+const NotificationService = require('./notification.service');
 
 class GuestService {
     // Tenant creates a guest registration with multiple guests
@@ -433,7 +434,14 @@ class GuestService {
     // Approve guest registration (Manager/Owner only)
     async approveGuestRegistration(registrationId, approvedBy) {
         const registration = await prisma.guest_registrations.findUnique({
-            where: { registration_id: registrationId }
+            where: { registration_id: registrationId },
+            include: {
+                rooms: {
+                    select: {
+                        room_number: true
+                    }
+                }
+            }
         });
 
         if (!registration) {
@@ -486,13 +494,42 @@ class GuestService {
             }
         });
 
+        // Send notification to tenant
+        try {
+            const roomInfo = registration.rooms?.room_number
+                ? ` cho phòng ${registration.rooms.room_number}`
+                : '';
+
+            await NotificationService.createNotification(
+                approvedBy, // sender (manager/owner)
+                registration.host_user_id, // recipient (tenant)
+                'Đơn đăng ký khách đã được chấp nhận',
+                `Đơn đăng ký khách${roomInfo} của bạn đã được chấp nhận. Số lượng khách: ${registration.guest_count}`,
+                {
+                    type: 'guest_registration_approved',
+                    registration_id: registrationId,
+                    link: `/guest-registrations/${registrationId}`
+                }
+            );
+        } catch (notificationError) {
+            console.error('Error sending approval notification:', notificationError);
+            // Don't fail the approval if notification fails
+        }
+
         return approved;
     }
 
     // Reject guest registration (Manager/Owner only)
-    async rejectGuestRegistration(registrationId, approvedBy) {
+    async rejectGuestRegistration(registrationId, approvedBy, rejectionReason) {
         const registration = await prisma.guest_registrations.findUnique({
-            where: { registration_id: registrationId }
+            where: { registration_id: registrationId },
+            include: {
+                rooms: {
+                    select: {
+                        room_number: true
+                    }
+                }
+            }
         });
 
         if (!registration) {
@@ -508,7 +545,8 @@ class GuestService {
             data: {
                 status: 'rejected',
                 approved_by: approvedBy,
-                approved_at: new Date()
+                approved_at: new Date(),
+                cancellation_reason: rejectionReason // Store reason in cancellation_reason field
             },
             include: {
                 tenants: {
@@ -544,6 +582,33 @@ class GuestService {
                 }
             }
         });
+
+        // Send notification to tenant
+        try {
+            const roomInfo = registration.rooms?.room_number
+                ? ` cho phòng ${registration.rooms.room_number}`
+                : '';
+
+            const reasonText = rejectionReason
+                ? ` Lý do: ${rejectionReason}`
+                : '';
+
+            await NotificationService.createNotification(
+                approvedBy, // sender (manager/owner)
+                registration.host_user_id, // recipient (tenant)
+                'Đơn đăng ký khách đã bị từ chối',
+                `Đơn đăng ký khách${roomInfo} của bạn đã bị từ chối.${reasonText}`,
+                {
+                    type: 'guest_registration_rejected',
+                    registration_id: registrationId,
+                    reason: rejectionReason,
+                    link: `/guest-registrations/${registrationId}`
+                }
+            );
+        } catch (notificationError) {
+            console.error('Error sending rejection notification:', notificationError);
+            // Don't fail the rejection if notification fails
+        }
 
         return rejected;
     }
