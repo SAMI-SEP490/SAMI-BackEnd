@@ -1,7 +1,9 @@
 // Updated: 2025-11-06
 // by: DatNB
+// Modified: Added notifications for approve/reject
 
 const prisma = require('../config/prisma');
+const NotificationService = require('./notification.service');
 
 class VehicleRegistrationService {
     // Tenant creates a vehicle registration request
@@ -449,11 +451,31 @@ class VehicleRegistrationService {
             });
         });
 
+        // Send notification to tenant
+        try {
+            const vehicleDesc = `${vehicleInfo.type || 'xe'} ${vehicleInfo.brand || ''} (${vehicleInfo.license_plate || 'N/A'})`.trim();
+
+            await NotificationService.createNotification(
+                approvedBy, // sender (manager/owner)
+                registration.requested_by, // recipient (tenant)
+                'Đăng ký xe đã được phê duyệt',
+                `Đăng ký ${vehicleDesc} của bạn đã được chấp nhận. Xe đã được kích hoạt trong hệ thống.`,
+                {
+                    type: 'vehicle_registration_approved',
+                    registration_id: registrationId,
+                    vehicle_info: vehicleInfo,
+                    link: `/vehicle-registrations/${registrationId}`
+                }
+            );
+        } catch (notificationError) {
+            console.error('Error sending vehicle approval notification:', notificationError);
+        }
+
         return result;
     }
 
     // Reject vehicle registration (Manager/Owner only)
-    async rejectVehicleRegistration(registrationId, rejectedBy) {
+    async rejectVehicleRegistration(registrationId, rejectedBy, rejectionReason) {
         const registration = await prisma.vehicle_registration.findUnique({
             where: { assignment_id: registrationId }
         });
@@ -466,12 +488,16 @@ class VehicleRegistrationService {
             throw new Error(`Cannot reject registration with status: ${registration.status}`);
         }
 
+        // Parse vehicle info for notification
+        const vehicleInfo = JSON.parse(registration.reason);
+
         const rejected = await prisma.vehicle_registration.update({
             where: { assignment_id: registrationId },
             data: {
                 status: 'rejected',
                 approved_by: rejectedBy,
-                approved_at: new Date()
+                approved_at: new Date(),
+                note: rejectionReason ? `${registration.note || ''}\nRejection reason: ${rejectionReason}` : registration.note
             },
             include: {
                 tenants: {
@@ -502,6 +528,28 @@ class VehicleRegistrationService {
                 }
             }
         });
+
+        // Send notification to tenant
+        try {
+            const vehicleDesc = `${vehicleInfo.type || 'xe'} ${vehicleInfo.brand || ''} (${vehicleInfo.license_plate || 'N/A'})`.trim();
+            const reasonText = rejectionReason ? ` Lý do: ${rejectionReason}` : '';
+
+            await NotificationService.createNotification(
+                rejectedBy, // sender (manager/owner)
+                registration.requested_by, // recipient (tenant)
+                'Đăng ký xe đã bị từ chối',
+                `Đăng ký ${vehicleDesc} của bạn đã bị từ chối.${reasonText}`,
+                {
+                    type: 'vehicle_registration_rejected',
+                    registration_id: registrationId,
+                    vehicle_info: vehicleInfo,
+                    reason: rejectionReason,
+                    link: `/vehicle-registrations/${registrationId}`
+                }
+            );
+        } catch (notificationError) {
+            console.error('Error sending vehicle rejection notification:', notificationError);
+        }
 
         return rejected;
     }
