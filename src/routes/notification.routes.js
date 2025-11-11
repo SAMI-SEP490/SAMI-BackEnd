@@ -41,4 +41,12 @@ router.post(
     notificationController.sendBroadcast
 );
 
+// Send a broadcast to a specific building
+router.post(
+    '/broadcast/building/:id', // <-- :id is the buildingId
+    requireRole(['owner', 'manager']),
+    validate(sendBroadcastSchema),
+    notificationController.sendBuildingBroadcast
+);
+
 module.exports = router;
