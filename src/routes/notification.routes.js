@@ -5,7 +5,7 @@ const express = require('express');
 const router = express.Router();
 const notificationController = require('../controllers/notification.controller');
 const { authenticate, requireRole } = require('../middlewares/auth.middleware');
-const { validate, sendNotificationSchema, registerDeviceSchema } = require('../middlewares/validation.middleware');
+const { validate, sendNotificationSchema, registerDeviceSchema, sendBroadcastSchema } = require('../middlewares/validation.middleware');
 
 // --- Routes for ALL authenticated users (Tenant, Manager, Owner) ---
 router.use(authenticate);
@@ -31,6 +31,14 @@ router.post(
     requireRole(['owner', 'manager']),
     validate(sendNotificationSchema),
     notificationController.sendNotification
+);
+
+// Send a broadcast to all tenants
+router.post(
+    '/broadcast',
+    requireRole(['owner', 'manager']),
+    validate(sendBroadcastSchema),
+    notificationController.sendBroadcast
 );
 
 module.exports = router;

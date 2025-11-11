@@ -56,6 +56,19 @@ class NotificationController {
             next(err); 
         }
     }
+
+    async sendBroadcast(req, res, next) {
+        try {
+            // Data is already validated
+            const { title, body, payload } = req.body;
+            const senderId = req.user.user_id;
+
+            await NotificationService.createBroadcastNotification(senderId, title, body, payload);
+            res.status(201).json({ success: true, message: "Broadcast notification sent to all tenants" });
+        } catch (err) {
+            next(err); 
+        }
+    }
 }
 
 module.exports = new NotificationController();
