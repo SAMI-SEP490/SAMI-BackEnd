@@ -263,6 +263,12 @@ const sendNotificationSchema = z.object({
     payload: z.record(z.any()).optional() // e.g., { "link": "/some/path" }
 });
 
+const sendBroadcastSchema = z.object({
+    title: z.string().min(1, "Title is required").max(300),
+    body: z.string().min(1, "Body is required"),
+    payload: z.record(z.any()).optional()
+});
+
 // Schema for registering a device
 const registerDeviceSchema = z.object({
     token: z.string().min(1, "Token is required"),
@@ -313,5 +319,6 @@ module.exports = {
     updateDraftBillSchema,
     updateIssuedBillSchema,
     sendNotificationSchema,
+    sendBroadcastSchema,
     registerDeviceSchema
 };

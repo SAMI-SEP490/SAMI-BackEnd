@@ -111,6 +111,63 @@ class NotificationService {
             create: { user_id: userId, token: token, device_type: deviceType }
         });
     }
+
+    /**
+     * Creates a broadcast notification for ALL tenants.
+     * @param {number} senderId - The manager/owner sending the message.
+     * @param {string} title - The notification title.
+     * @param {string} body - The notification body.
+     * @param {object} [payload] - Optional data.
+     */
+    async createBroadcastNotification(senderId, title, body, payload = {}) {
+        try {
+            // 1. Find all tenants
+            const tenants = await prisma.users.findMany({
+                where: {
+                    role: 'TENANT',
+                    deleted_at: null, // Only active tenants
+                },
+                select: { user_id: true }
+            });
+
+            if (tenants.length === 0) {
+                console.log('No tenants found to broadcast to.');
+                return;
+            }
+            
+            const tenantIds = tenants.map(t => t.user_id);
+
+            // 2. Create the ONE master notification content
+            const newNotification = await prisma.notifications.create({
+                data: {
+                    title: title,
+                    body: body,
+                    payload: payload,
+                    created_by: senderId,
+                }
+            });
+
+            // 3. Create the "inbox" records for ALL tenants in bulk
+            const userNotificationData = tenantIds.map(userId => ({
+                notification_id: newNotification.notification_id,
+                user_id: userId
+            }));
+
+            await prisma.user_notifications.createMany({
+                data: userNotificationData
+            });
+
+            // 4. Send the "ping" to all tenants
+            // (Fire-and-forget, we don't await this)
+            PushService.sendPushToUsers(tenantIds, title, body, payload);
+            
+            return newNotification;
+
+        } catch (error) {
+            console.error("Error creating broadcast notification:", error);
+            throw error;
+        }
+    }
 }
 
 module.exports = new NotificationService();
