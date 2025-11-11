@@ -1,6 +1,6 @@
-// Updated: 2025-10-24
+// Updated: 2025-11-12
 // by: DatNB
-// Modified: Added notifications for approval/rejection
+
 
 const prisma = require('../config/prisma');
 const NotificationService = require('./notification.service');
