@@ -69,6 +69,27 @@ class NotificationController {
             next(err); 
         }
     }
+
+    /**
+     * For Manager: Send 1-to-MANY broadcast to a specific building.
+     */
+    async sendBuildingBroadcast(req, res, next) {
+        try {
+            const buildingId = parseInt(req.params.id, 10);
+            if (isNaN(buildingId)) {
+                return res.status(400).json({ success: false, message: "Invalid Building ID" });
+            }
+
+            // Data is already validated by the middleware
+            const { title, body, payload } = req.body;
+            const senderId = req.user.user_id;
+            
+            await NotificationService.createBuildingBroadcast(senderId, buildingId, title, body, payload);
+            res.status(201).json({ success: true, message: `Broadcast notification sent to tenants in building ${buildingId}` });
+        } catch (err) {
+            next(err); 
+        }
+    }
 }
 
 module.exports = new NotificationController();
