@@ -1,6 +1,7 @@
-// Updated: 2025-05-11
+// Updated: 2025-15-11
 // by: DatNB
 const prisma = require('../config/prisma');
+const NotificationService = require('./notification.service');
 
 class RegulationService {
     // CREATE - Tạo regulation mới
@@ -327,7 +328,15 @@ class RegulationService {
 
         // Verify regulation exists
         const existingRegulation = await prisma.regulations.findUnique({
-            where: { regulation_id: regulationId }
+            where: { regulation_id: regulationId },
+            include: {
+                buildings: {
+                    select: {
+                        building_id: true,
+                        name: true
+                    }
+                }
+            }
         });
 
         if (!existingRegulation) {
@@ -392,13 +401,41 @@ class RegulationService {
             }
         });
 
+        // GỬI THÔNG BÁO KHI CÓ CẬP NHẬT
+        if (regulation.building_id) {
+            const notificationTitle = `Cập nhật quy định: ${regulation.title}`;
+            const notificationBody = `Quy định "${regulation.title}" đã được cập nhật. Vui lòng xem lại nội dung mới.`;
+            const payload = {
+                type: 'regulation_updated',
+                regulation_id: regulation.regulation_id,
+                building_id: regulation.building_id
+            };
+
+            // Gửi thông báo cho tất cả tenant trong tòa nhà
+            await NotificationService.createBuildingBroadcast(
+                regulation.created_by,
+                regulation.building_id,
+                notificationTitle,
+                notificationBody,
+                payload
+            );
+        }
+
         return this.formatRegulationResponse(regulation);
     }
 
     // PUBLISH - Publish regulation
     async publishRegulation(regulationId) {
         const regulation = await prisma.regulations.findUnique({
-            where: { regulation_id: regulationId }
+            where: { regulation_id: regulationId },
+            include: {
+                buildings: {
+                    select: {
+                        building_id: true,
+                        name: true
+                    }
+                }
+            }
         });
 
         if (!regulation) {
@@ -435,13 +472,56 @@ class RegulationService {
             }
         });
 
+        // GỬI THÔNG BÁO KHI PUBLISH
+        if (published.building_id) {
+            const notificationTitle = `Quy định mới: ${published.title}`;
+            const notificationBody = `Quy định "${published.title}" đã được công bố. Vui lòng đọc và tuân thủ.`;
+            const payload = {
+                type: 'regulation_published',
+                regulation_id: published.regulation_id,
+                building_id: published.building_id
+            };
+
+            // Gửi thông báo cho tất cả tenant trong tòa nhà
+            await NotificationService.createBuildingBroadcast(
+                published.created_by,
+                published.building_id,
+                notificationTitle,
+                notificationBody,
+                payload
+            );
+        } else {
+            // Nếu là quy định chung (không có building_id), gửi cho tất cả tenant
+            const notificationTitle = `Quy định chung mới: ${published.title}`;
+            const notificationBody = `Quy định chung "${published.title}" đã được công bố. Vui lòng đọc và tuân thủ.`;
+            const payload = {
+                type: 'regulation_published',
+                regulation_id: published.regulation_id
+            };
+
+            await NotificationService.createBroadcastNotification(
+                published.created_by,
+                notificationTitle,
+                notificationBody,
+                payload
+            );
+        }
+
         return this.formatRegulationResponse(published);
     }
 
     // ARCHIVE - Archive regulation
     async archiveRegulation(regulationId) {
         const regulation = await prisma.regulations.findUnique({
-            where: { regulation_id: regulationId }
+            where: { regulation_id: regulationId },
+            include: {
+                buildings: {
+                    select: {
+                        building_id: true,
+                        name: true
+                    }
+                }
+            }
         });
 
         if (!regulation) {
@@ -475,13 +555,56 @@ class RegulationService {
             }
         });
 
+        // GỬI THÔNG BÁO KHI ARCHIVE (nếu regulation đã được publish trước đó)
+        if (regulation.status === 'published') {
+            if (archived.building_id) {
+                const notificationTitle = `Quy định đã lưu trữ: ${archived.title}`;
+                const notificationBody = `Quy định "${archived.title}" đã được lưu trữ và không còn hiệu lực.`;
+                const payload = {
+                    type: 'regulation_archived',
+                    regulation_id: archived.regulation_id,
+                    building_id: archived.building_id
+                };
+
+                await NotificationService.createBuildingBroadcast(
+                    archived.created_by,
+                    archived.building_id,
+                    notificationTitle,
+                    notificationBody,
+                    payload
+                );
+            } else {
+                const notificationTitle = `Quy định chung đã lưu trữ: ${archived.title}`;
+                const notificationBody = `Quy định chung "${archived.title}" đã được lưu trữ và không còn hiệu lực.`;
+                const payload = {
+                    type: 'regulation_archived',
+                    regulation_id: archived.regulation_id
+                };
+
+                await NotificationService.createBroadcastNotification(
+                    archived.created_by,
+                    notificationTitle,
+                    notificationBody,
+                    payload
+                );
+            }
+        }
+
         return this.formatRegulationResponse(archived);
     }
 
     // DELETE - Xóa regulation (soft delete)
     async deleteRegulation(regulationId) {
         const regulation = await prisma.regulations.findUnique({
-            where: { regulation_id: regulationId }
+            where: { regulation_id: regulationId },
+            include: {
+                buildings: {
+                    select: {
+                        building_id: true,
+                        name: true
+                    }
+                }
+            }
         });
 
         if (!regulation) {
@@ -499,6 +622,25 @@ class RegulationService {
                 archived_at: new Date()
             }
         });
+
+        // GỬI THÔNG BÁO KHI XÓA (nếu regulation là draft nhưng có thể đã được share)
+        if (regulation.building_id && regulation.status === 'draft') {
+            const notificationTitle = `Quy định đã bị xóa: ${regulation.title}`;
+            const notificationBody = `Quy định "${regulation.title}" (bản nháp) đã bị xóa.`;
+            const payload = {
+                type: 'regulation_deleted',
+                regulation_id: regulation.regulation_id,
+                building_id: regulation.building_id
+            };
+
+            await NotificationService.createBuildingBroadcast(
+                regulation.created_by,
+                regulation.building_id,
+                notificationTitle,
+                notificationBody,
+                payload
+            );
+        }
 
         return { success: true, message: 'Regulation deleted successfully' };
     }
