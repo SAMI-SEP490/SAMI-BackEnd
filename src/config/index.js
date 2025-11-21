@@ -3,6 +3,7 @@ require('dotenv').config();
 module.exports = {
     port: process.env.PORT || 3000,
     nodeEnv: process.env.NODE_ENV || 'development',
+    baseUrl: process.env.BASE_URL || '/',
 
     jwt: {
         accessSecret: process.env.JWT_ACCESS_SECRET,
@@ -11,9 +12,9 @@ module.exports = {
         refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d'
     },
     email: {
-        gmailUser: process.env.GMAIL_USER,           // e.g., 'your-email@gmail.com'
-        gmailAppPassword: process.env.GMAIL_APP_PASSWORD, // Gmail App Password
-        fromName: process.env.EMAIL_FROM_NAME         // e.g., 'SAMI Support'
+        gmailUser: process.env.GMAIL_USER,
+        gmailAppPassword: process.env.GMAIL_APP_PASSWORD,
+        fromName: process.env.EMAIL_FROM_NAME
     },
     redis: {
         host: process.env.REDIS_HOST || 'localhost',
@@ -47,7 +48,7 @@ module.exports = {
 
     tokens: {
         passwordResetExpires: parseInt(process.env.PASSWORD_RESET_EXPIRES) || 1,
-        emailVerificationExpires: parseInt(process.env.EMAIL_VERIFICATION_EXPIRES) || 24
+        emailVerificationExpires: parseInt(process.env.EMAIL_VERIFICATION_EXPIRES) || 24,
     },
 
     cors: {

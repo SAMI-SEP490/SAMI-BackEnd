@@ -1,4 +1,4 @@
-// Updated: 2025-12-11
+// Updated: 2025-21-11
 // by: DatNB
 
 
@@ -845,6 +845,427 @@ class MaintenanceService {
         };
     }
 
+    // Thêm vào maintenance.service.js
+
+    /**
+     * CREATE BY BOT - Bot tạo maintenance request thay mặt tenant
+     * @param {Object} data - Maintenance request data
+     * @param {number} tenantUserId - ID của tenant cần tạo request
+     * @param {Object} botInfo - Thông tin bot (từ req.bot)
+     */
+    async createMaintenanceRequestByBot(data, tenantUserId, botInfo) {
+        const { room_id, title, description, category, priority, note } = data;
+
+        // Validate tenant exists và active
+        const tenant = await prisma.tenants.findUnique({
+            where: { user_id: tenantUserId },
+            include: {
+                users: {
+                    select: {
+                        user_id: true,
+                        full_name: true,
+                        email: true,
+                        phone: true,
+                        status: true
+                    }
+                }
+            }
+        });
+
+        if (!tenant) {
+            throw new Error('Tenant not found');
+        }
+
+        if ( tenant.users.status !== 'Active') {
+            throw new Error('Tenant account is not active');
+        }
+
+        // Parse room_id if provided
+        const roomId = room_id ? parseInt(room_id) : null;
+
+        // Check if room exists and tenant has access to it
+        if (roomId) {
+            const room = await prisma.rooms.findUnique({
+                where: { room_id: roomId },
+                include: {
+                    contracts: {
+                        where: {
+                            tenant_user_id: tenantUserId,
+                            status: 'active'
+                        }
+                    }
+                }
+            });
+
+            if (!room || !room.is_active) {
+                throw new Error('Room not found or is inactive');
+            }
+
+            // Kiểm tra tenant có hợp đồng với phòng này không
+            if (room.contracts.length === 0) {
+                throw new Error('Tenant does not have an active contract for this room');
+            }
+        }
+
+        // Tạo description với thông tin bot
+        const botDescription = [
+            `🤖 Request created by Bot`,
+            `Bot: ${botInfo.name}`,
+            `Created at: ${new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}`,
+            '',
+            description || ''
+        ].join('\n');
+
+        // Create maintenance request
+        const maintenanceRequest = await prisma.maintenance_requests.create({
+            data: {
+                tenant_user_id: tenantUserId,
+                room_id: roomId,
+                title,
+                description: botDescription,
+                category: category || null,
+                priority: priority || 'normal',
+                status: 'pending',
+                note: note || 'Created by bot service',
+                created_at: new Date(),
+                updated_at: new Date()
+            },
+            include: {
+                rooms: {
+                    select: {
+                        room_number: true,
+                        building_id: true,
+                        buildings: {
+                            select: {
+                                name: true
+                            }
+                        }
+                    }
+                },
+                tenants: {
+                    include: {
+                        users: {
+                            select: {
+                                full_name: true,
+                                email: true,
+                                phone: true
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Gửi notification cho tenant
+        try {
+            const roomInfo = maintenanceRequest.rooms?.room_number
+                ? ` cho phòng ${maintenanceRequest.rooms.room_number}`
+                : '';
+
+            await NotificationService.createNotification(
+                null, // Bot không có user_id
+                tenantUserId, // recipient (tenant)
+                'Yêu cầu bảo trì đã được tạo',
+                `Bot đã tạo yêu cầu bảo trì "${title}"${roomInfo} cho bạn. Vui lòng kiểm tra và bổ sung thông tin nếu cần.`,
+                {
+                    type: 'maintenance_created_by_bot',
+                    request_id: maintenanceRequest.request_id,
+                    link: `/maintenance/${maintenanceRequest.request_id}`
+                }
+            );
+        } catch (notificationError) {
+            console.error('Error sending bot creation notification:', notificationError);
+            // Không throw error vì notification không quan trọng bằng việc tạo request
+        }
+
+        return this.formatMaintenanceResponse(maintenanceRequest);
+    }
+
+    // Thêm các method sau vào cuối class MaintenanceService (trước module.exports)
+
+    /**
+     * UPDATE BY BOT - Bot cập nhật maintenance request thay mặt tenant
+     * @param {number} requestId - ID của maintenance request
+     * @param {Object} data - Dữ liệu cần update
+     * @param {number} tenantUserId - ID của tenant sở hữu request
+     * @param {Object} botInfo - Thông tin bot
+     */
+    async updateMaintenanceRequestByBot(requestId, data, tenantUserId, botInfo) {
+        const { title, description, category, priority, room_id, note } = data;
+
+        // Verify request exists
+        const existingRequest = await prisma.maintenance_requests.findUnique({
+            where: { request_id: requestId },
+            include: {
+                tenants: {
+                    include: {
+                        users: {
+                            select: {
+                                status: true,
+                                full_name: true
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        if (!existingRequest) {
+            throw new Error('Maintenance request not found');
+        }
+
+        // Verify ownership
+        if (existingRequest.tenant_user_id !== tenantUserId) {
+            throw new Error('This maintenance request does not belong to the specified tenant');
+        }
+
+        // Verify tenant account is active
+        if (existingRequest.tenants?.users?.status !== 'Active') {
+            throw new Error('Tenant account is not active');
+        }
+
+        // Bot không thể update status, chỉ có thể update khi request đang pending
+        if (existingRequest.status !== 'pending') {
+            throw new Error('Bot can only update pending maintenance requests');
+        }
+
+        // Verify room if room_id is being updated
+        if (room_id !== undefined) {
+            const roomId = room_id ? parseInt(room_id) : null;
+
+            if (roomId) {
+                const room = await prisma.rooms.findUnique({
+                    where: { room_id: roomId },
+                    include: {
+                        contracts: {
+                            where: {
+                                tenant_user_id: tenantUserId,
+                                status: 'active'
+                            }
+                        }
+                    }
+                });
+
+                if (!room || !room.is_active) {
+                    throw new Error('Room not found or is inactive');
+                }
+
+                if (room.contracts.length === 0) {
+                    throw new Error('Tenant does not have an active contract for this room');
+                }
+            }
+        }
+
+        // Prepare update data
+        const updateData = {
+            updated_at: new Date()
+        };
+
+        if (title !== undefined) updateData.title = title;
+        if (priority !== undefined) updateData.priority = priority;
+        if (category !== undefined) updateData.category = category;
+
+        // Update description with bot info
+        if (description !== undefined) {
+            const botUpdateInfo = [
+                `🤖 Updated by Bot`,
+                `Bot: ${botInfo.name}`,
+                `Updated at: ${new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}`,
+                '',
+                description
+            ].join('\n');
+            updateData.description = botUpdateInfo;
+        }
+
+        if (note !== undefined) {
+            const existingNote = existingRequest.note || '';
+            updateData.note = existingNote
+                ? `${existingNote}\n[Bot Update - ${new Date().toLocaleString('vi-VN')}]: ${note}`
+                : `[Bot Update]: ${note}`;
+        }
+
+        if (room_id !== undefined) {
+            updateData.room_id = room_id ? parseInt(room_id) : null;
+        }
+
+        // Perform update
+        const maintenanceRequest = await prisma.maintenance_requests.update({
+            where: { request_id: requestId },
+            data: updateData,
+            include: {
+                rooms: {
+                    select: {
+                        room_number: true,
+                        building_id: true,
+                        buildings: {
+                            select: {
+                                name: true
+                            }
+                        }
+                    }
+                },
+                tenants: {
+                    include: {
+                        users: {
+                            select: {
+                                full_name: true,
+                                email: true,
+                                phone: true
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Send notification to tenant
+        try {
+            const roomInfo = maintenanceRequest.rooms?.room_number
+                ? ` cho phòng ${maintenanceRequest.rooms.room_number}`
+                : '';
+
+            await NotificationService.createNotification(
+                null, // Bot không có user_id
+                tenantUserId,
+                'Yêu cầu bảo trì đã được cập nhật',
+                `Bot đã cập nhật yêu cầu bảo trì "${maintenanceRequest.title}"${roomInfo}.`,
+                {
+                    type: 'maintenance_updated_by_bot',
+                    request_id: requestId,
+                    link: `/maintenance/${requestId}`
+                }
+            );
+        } catch (notificationError) {
+            console.error('Error sending bot update notification:', notificationError);
+        }
+
+        return this.formatMaintenanceResponse(maintenanceRequest);
+    }
+
+    /**
+     * DELETE BY BOT - Bot xóa maintenance request thay mặt tenant
+     * @param {number} requestId - ID của maintenance request
+     * @param {number} tenantUserId - ID của tenant sở hữu request
+     * @param {Object} botInfo - Thông tin bot
+     */
+    async deleteMaintenanceRequestByBot(requestId, tenantUserId, botInfo) {
+        // Verify request exists
+        const maintenanceRequest = await prisma.maintenance_requests.findUnique({
+            where: { request_id: requestId },
+            include: {
+                tenants: {
+                    include: {
+                        users: {
+                            select: {
+                                status: true,
+                                full_name: true
+                            }
+                        }
+                    }
+                },
+                rooms: {
+                    select: {
+                        room_number: true
+                    }
+                }
+            }
+        });
+
+        if (!maintenanceRequest) {
+            throw new Error('Maintenance request not found');
+        }
+
+        // Verify ownership
+        if (maintenanceRequest.tenant_user_id !== tenantUserId) {
+            throw new Error('This maintenance request does not belong to the specified tenant');
+        }
+
+        // Verify tenant account is active
+        if (maintenanceRequest.tenants?.users?.status !== 'Active') {
+            throw new Error('Tenant account is not active');
+        }
+
+        // Bot chỉ có thể xóa request đang pending
+        if (maintenanceRequest.status !== 'pending') {
+            throw new Error('Bot can only delete pending maintenance requests');
+        }
+
+        // Delete the request
+        await prisma.maintenance_requests.delete({
+            where: { request_id: requestId }
+        });
+
+        // Send notification to tenant
+        try {
+            const roomInfo = maintenanceRequest.rooms?.room_number
+                ? ` cho phòng ${maintenanceRequest.rooms.room_number}`
+                : '';
+
+            await NotificationService.createNotification(
+                null, // Bot không có user_id
+                tenantUserId,
+                'Yêu cầu bảo trì đã được xóa',
+                `Bot đã xóa yêu cầu bảo trì "${maintenanceRequest.title}"${roomInfo}.`,
+                {
+                    type: 'maintenance_deleted_by_bot',
+                    request_id: requestId
+                }
+            );
+        } catch (notificationError) {
+            console.error('Error sending bot delete notification:', notificationError);
+        }
+
+        return {
+            success: true,
+            message: 'Maintenance request deleted successfully by bot',
+            deleted_request: {
+                request_id: requestId,
+                title: maintenanceRequest.title,
+                tenant_name: maintenanceRequest.tenants?.users?.full_name
+            }
+        };
+    }
+
+    /**
+     * GET BY BOT - Bot lấy thông tin maintenance request
+     * @param {number} requestId - ID của maintenance request
+     * @param {number} tenantUserId - ID của tenant
+     * @param {Object} botInfo - Thông tin bot
+     */
+    async getMaintenanceRequestByBot(requestId, tenantUserId, botInfo) {
+        const maintenanceRequest = await prisma.maintenance_requests.findUnique({
+            where: { request_id: requestId },
+            include: {
+                rooms: {
+                    include: {
+                        buildings: true
+                    }
+                },
+                tenants: {
+                    include: {
+                        users: true
+                    }
+                },
+                users: {
+                    select: {
+                        full_name: true,
+                        email: true
+                    }
+                }
+            }
+        });
+
+        if (!maintenanceRequest) {
+            throw new Error('Maintenance request not found');
+        }
+
+        // Verify ownership
+        if (maintenanceRequest.tenant_user_id !== tenantUserId) {
+            throw new Error('This maintenance request does not belong to the specified tenant');
+        }
+
+        return this.formatMaintenanceResponse(maintenanceRequest);
+    }
     // Helper function - Format response
     formatMaintenanceResponse(request) {
         return {
