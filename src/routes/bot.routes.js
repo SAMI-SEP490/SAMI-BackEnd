@@ -5,6 +5,7 @@ const express = require('express');
 const router = express.Router();
 const maintenanceController = require('../controllers/maintenance.controller');
 const vehicleController = require('../controllers/vehicle.controller');
+const regulationController = require('../controllers/regulation.controller');
 const { validateBotApiKey, botRateLimit } = require('../middlewares/bot.middleware');
 const {
     validateBotMaintenanceRequest,
@@ -13,7 +14,8 @@ const {
     validateBotVehicleRegistration,
     validateBotVehicleUpdate,
     validateBotVehicleDelete,
-    validateBotVehicleCancel
+    validateBotVehicleCancel,
+    validateBotRegulationFeedback
 } = require('../middlewares/bot.validation');
 
 // Tất cả routes đều yêu cầu bot authentication
@@ -130,6 +132,60 @@ router.get('/vehicle/:id',
 router.get('/vehicle-stats',
     vehicleController.getVehicleStatsByBot
 );
+
+/**
+ * GET /api/bot/regulation/:id
+ * Lấy thông tin chi tiết regulation
+ */
+router.get('/regulation/:id',
+    regulationController.getRegulationByBot
+);
+
+/**
+ * GET /api/bot/regulations
+ * Lấy danh sách regulations (có filter)
+ */
+router.get('/regulations',
+    regulationController.getRegulationsByBot
+);
+
+/**
+ * GET /api/bot/regulations/building/:buildingId
+ * Lấy regulations theo building
+ */
+router.get('/regulations/building/:buildingId',
+    regulationController.getRegulationsByBuildingForBot
+);
+
+
+/**
+ * POST /api/bot/regulation/:id/feedback
+ * Thêm feedback cho regulation thay mặt tenant
+ */
+router.post('/regulation/:id/feedback',
+    validateBotRegulationFeedback,
+    regulationController.addRegulationFeedbackByBot
+);
+
+/**
+ * GET /api/bot/regulation/:id/feedbacks
+ * Lấy danh sách feedbacks của regulation
+ */
+router.get('/regulation/:id/feedbacks',
+    regulationController.getRegulationFeedbacksByBot
+);
+
+/**
+ * GET /api/bot/regulation/versions/:title
+ * Lấy tất cả versions của regulation theo title
+ */
+router.get('/regulation/versions/:title',
+    regulationController.getRegulationVersionsByBot
+);
+
+
+
+
 
 
 /**

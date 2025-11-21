@@ -393,6 +393,34 @@ const validateBotVehicleCancel = (req, res, next) => {
 
     next();
 };
+const validateBotRegulationFeedback = (req, res, next) => {
+    const { tenant_user_id, comment } = req.body;
+    const errors = [];
+
+    // Required fields
+    if (!tenant_user_id) {
+        errors.push('tenant_user_id is required');
+    } else if (!Number.isInteger(tenant_user_id)) {
+        errors.push('tenant_user_id must be an integer');
+    }
+
+    if (!comment || typeof comment !== 'string' || comment.trim().length === 0) {
+        errors.push('comment is required and cannot be empty');
+    } else if (comment.length > 1000) {
+        errors.push('comment must not exceed 1000 characters');
+    }
+
+    // Return errors if any
+    if (errors.length > 0) {
+        return res.status(400).json({
+            success: false,
+            message: 'Validation failed',
+            errors
+        });
+    }
+
+    next();
+};
 module.exports = {
     validateBotMaintenanceRequest,
     validateBotMaintenanceUpdate,
@@ -400,5 +428,6 @@ module.exports = {
     validateBotVehicleRegistration,
     validateBotVehicleUpdate,
     validateBotVehicleDelete,
-    validateBotVehicleCancel
+    validateBotVehicleCancel,
+    validateBotRegulationFeedback
 };
