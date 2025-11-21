@@ -825,6 +825,521 @@ class RegulationService {
         return result;
     }
 
+
+    // ============ BOT METHODS ============
+
+    /**
+     * GET BY BOT - Bot lấy thông tin regulation
+     */
+    async getRegulationByBot(regulationId, tenantUserId = null, botInfo) {
+        const regulation = await prisma.regulations.findUnique({
+            where: { regulation_id: regulationId },
+            include: {
+                buildings: {
+                    select: {
+                        building_id: true,
+                        name: true,
+                        address: true
+                    }
+                },
+                users: {
+                    select: {
+                        user_id: true,
+                        full_name: true,
+                        email: true
+                    }
+                },
+                regulation_feedbacks: {
+                    include: {
+                        users: {
+                            select: {
+                                user_id: true,
+                                full_name: true,
+                                email: true
+                            }
+                        }
+                    },
+                    orderBy: { created_at: 'desc' },
+                    take: 10 // Limit feedbacks to latest 10
+                }
+            }
+        });
+
+        if (!regulation) {
+            throw new Error('Regulation not found');
+        }
+
+        // If tenant_user_id is provided, verify tenant can access this regulation
+        if (tenantUserId) {
+            const tenant = await prisma.tenants.findUnique({
+                where: { user_id: tenantUserId },
+                include: {
+                    rooms: {
+                        where: { is_active: true },
+                        select: {
+                            building_id: true
+                        }
+                    }
+                }
+            });
+
+            if (!tenant) {
+                throw new Error('Tenant not found');
+            }
+
+            // Check if regulation applies to tenant
+            // Regulation applies if:
+            // 1. It's a general regulation (building_id = null)
+            // 2. It's for the tenant's building
+            const tenantBuildingIds = tenant.rooms.map(r => r.building_id);
+
+            if (regulation.building_id && !tenantBuildingIds.includes(regulation.building_id)) {
+                throw new Error('This regulation does not apply to the specified tenant');
+            }
+
+            // Check target
+            if (regulation.target !== 'all' && regulation.target !== 'tenant') {
+                throw new Error('This regulation does not apply to tenants');
+            }
+        }
+
+        return this.formatRegulationDetailResponse(regulation);
+    }
+
+    /**
+     * GET LIST BY BOT - Bot lấy danh sách regulations
+     */
+    async getRegulationsByBot(filters = {}, botInfo) {
+        const {
+            building_id,
+            status,
+            target,
+            version,
+            page = 1,
+            limit = 20
+        } = filters;
+
+        const skip = (page - 1) * limit;
+        const where = {
+            archived_at: null
+        };
+
+        if (building_id !== undefined) {
+            if (building_id === 'null' || building_id === null) {
+                where.building_id = null;
+            } else {
+                const buildingId = parseInt(building_id);
+                if (!isNaN(buildingId)) {
+                    where.building_id = buildingId;
+                }
+            }
+        }
+
+        // Bot typically only shows published regulations
+        if (status) {
+            where.status = status;
+        } else {
+            where.status = 'published';
+        }
+
+        if (target) {
+            where.target = target;
+        }
+
+        if (version !== undefined && version !== '') {
+            const ver = parseInt(version);
+            if (!isNaN(ver)) {
+                where.version = ver;
+            }
+        }
+
+        const [regulations, total] = await Promise.all([
+            prisma.regulations.findMany({
+                where,
+                include: {
+                    buildings: {
+                        select: {
+                            building_id: true,
+                            name: true,
+                            address: true
+                        }
+                    },
+                    users: {
+                        select: {
+                            user_id: true,
+                            full_name: true,
+                            email: true
+                        }
+                    }
+                },
+                skip,
+                take: limit,
+                orderBy: [
+                    { created_at: 'desc' }
+                ]
+            }),
+            prisma.regulations.count({ where })
+        ]);
+
+        return {
+            data: regulations.map(r => this.formatRegulationListResponse(r)),
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit)
+            }
+        };
+    }
+
+    /**
+     * GET BY BUILDING FOR BOT - Bot lấy regulations theo building
+     */
+    async getRegulationsByBuildingForBot(buildingId, filters = {}, botInfo) {
+        const {
+            status,
+            target,
+            latest_only = false,
+            page = 1,
+            limit = 20
+        } = filters;
+
+        // Verify building exists
+        if (buildingId !== null) {
+            const building = await prisma.buildings.findUnique({
+                where: { building_id: buildingId }
+            });
+
+            if (!building) {
+                throw new Error('Building not found');
+            }
+        }
+
+        const skip = (page - 1) * limit;
+        const where = {
+            building_id: buildingId,
+            archived_at: null,
+            status: status || 'published' // Default to published for bot
+        };
+
+        if (target) {
+            where.target = target;
+        }
+
+        // If only latest version
+        if (latest_only === true || latest_only === 'true') {
+            const allRegulations = await prisma.regulations.findMany({
+                where,
+                orderBy: [
+                    { title: 'asc' },
+                    { version: 'desc' }
+                ],
+                include: {
+                    buildings: {
+                        select: {
+                            building_id: true,
+                            name: true
+                        }
+                    },
+                    users: {
+                        select: {
+                            user_id: true,
+                            full_name: true,
+                            email: true
+                        }
+                    }
+                }
+            });
+
+            // Filter latest version for each title
+            const latestRegulations = [];
+            const seenTitles = new Set();
+
+            for (const regulation of allRegulations) {
+                if (!seenTitles.has(regulation.title)) {
+                    latestRegulations.push(regulation);
+                    seenTitles.add(regulation.title);
+                }
+            }
+
+            return {
+                data: latestRegulations.map(r => this.formatRegulationListResponse(r)),
+                pagination: {
+                    total: latestRegulations.length,
+                    page: 1,
+                    limit: latestRegulations.length,
+                    pages: 1
+                }
+            };
+        }
+
+        const [regulations, total] = await Promise.all([
+            prisma.regulations.findMany({
+                where,
+                include: {
+                    buildings: {
+                        select: {
+                            building_id: true,
+                            name: true
+                        }
+                    },
+                    users: {
+                        select: {
+                            user_id: true,
+                            full_name: true,
+                            email: true
+                        }
+                    }
+                },
+                skip,
+                take: limit,
+                orderBy: [
+                    { created_at: 'desc' }
+                ]
+            }),
+            prisma.regulations.count({ where })
+        ]);
+
+        return {
+            data: regulations.map(r => this.formatRegulationListResponse(r)),
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit)
+            }
+        };
+    }
+
+
+    /**
+     * ADD FEEDBACK BY BOT - Bot thêm feedback thay mặt tenant
+     */
+    async addRegulationFeedbackByBot(regulationId, tenantUserId, comment, botInfo) {
+        // Verify regulation exists and is published
+        const regulation = await prisma.regulations.findUnique({
+            where: { regulation_id: regulationId },
+            include: {
+                buildings: {
+                    select: {
+                        building_id: true,
+                        name: true
+                    }
+                }
+            }
+        });
+
+        if (!regulation) {
+            throw new Error('Regulation not found');
+        }
+
+        if (regulation.status !== 'published') {
+            throw new Error('Can only add feedback to published regulations');
+        }
+
+        // Verify tenant exists and is active
+        const tenant = await prisma.tenants.findUnique({
+            where: { user_id: tenantUserId },
+            include: {
+                users: {
+                    select: {
+                        user_id: true,
+                        full_name: true,
+                        email: true,
+                        status: true
+                    }
+                },
+                rooms: {
+                    where: { is_active: true },
+                    select: {
+                        building_id: true
+                    }
+                }
+            }
+        });
+
+        if (!tenant) {
+            throw new Error('Tenant not found');
+        }
+
+        if (tenant.users.status !== 'Active') {
+            throw new Error('Tenant account is not active');
+        }
+
+        // Verify regulation applies to tenant
+        if (regulation.building_id) {
+            const tenantBuildingIds = tenant.rooms.map(r => r.building_id);
+            if (!tenantBuildingIds.includes(regulation.building_id)) {
+                throw new Error('This regulation does not apply to the specified tenant');
+            }
+        }
+
+        // Check target
+        if (regulation.target !== 'all' && regulation.target !== 'tenant') {
+            throw new Error('This regulation does not apply to tenants');
+        }
+
+        // Add bot info to comment
+        const botComment = [
+            `🤖 Feedback from Bot`,
+            `Bot: ${botInfo.name}`,
+            `Submitted at: ${new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}`,
+            `Tenant: ${tenant.users.full_name}`,
+            '',
+            comment
+        ].join('\n');
+
+        const feedback = await prisma.regulation_feedbacks.create({
+            data: {
+                regulation_id: regulationId,
+                created_by: tenantUserId,
+                comment: botComment,
+                created_at: new Date()
+            },
+            include: {
+                users: {
+                    select: {
+                        user_id: true,
+                        full_name: true,
+                        email: true
+                    }
+                }
+            }
+        });
+
+        // Send notification to regulation creator
+        try {
+            const regulationTitle = regulation.title;
+            const buildingInfo = regulation.buildings?.name
+                ? ` tại ${regulation.buildings.name}`
+                : '';
+
+            await NotificationService.createNotification(
+                null, // Bot không có user_id
+                regulation.created_by,
+                'Phản hồi mới cho quy định',
+                `Có phản hồi mới từ ${tenant.users.full_name} cho quy định "${regulationTitle}"${buildingInfo}.`,
+                {
+                    type: 'regulation_feedback_by_bot',
+                    regulation_id: regulationId,
+                    feedback_id: feedback.feedback_id,
+                    link: `/regulations/${regulationId}`
+                }
+            );
+        } catch (notificationError) {
+            console.error('Error sending feedback notification:', notificationError);
+        }
+
+        return {
+            feedback_id: feedback.feedback_id,
+            regulation_id: feedback.regulation_id,
+            comment: feedback.comment,
+            created_by: {
+                user_id: feedback.users.user_id,
+                full_name: feedback.users.full_name,
+                email: feedback.users.email
+            },
+            created_at: feedback.created_at
+        };
+    }
+
+    /**
+     * GET FEEDBACKS BY BOT - Bot lấy feedbacks của regulation
+     */
+    async getRegulationFeedbacksByBot(regulationId, filters = {}, botInfo) {
+        const { page = 1, limit = 20 } = filters;
+        const skip = (page - 1) * limit;
+
+        // Verify regulation exists
+        const regulation = await prisma.regulations.findUnique({
+            where: { regulation_id: regulationId }
+        });
+
+        if (!regulation) {
+            throw new Error('Regulation not found');
+        }
+
+        const [feedbacks, total] = await Promise.all([
+            prisma.regulation_feedbacks.findMany({
+                where: { regulation_id: regulationId },
+                include: {
+                    users: {
+                        select: {
+                            user_id: true,
+                            full_name: true,
+                            email: true
+                        }
+                    }
+                },
+                skip,
+                take: limit,
+                orderBy: { created_at: 'desc' }
+            }),
+            prisma.regulation_feedbacks.count({
+                where: { regulation_id: regulationId }
+            })
+        ]);
+
+        return {
+            data: feedbacks.map(f => ({
+                feedback_id: f.feedback_id,
+                regulation_id: f.regulation_id,
+                comment: f.comment,
+                created_by: {
+                    user_id: f.users.user_id,
+                    full_name: f.users.full_name,
+                    email: f.users.email
+                },
+                created_at: f.created_at
+            })),
+            pagination: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit)
+            }
+        };
+    }
+
+    /**
+     * GET VERSIONS BY BOT - Bot lấy versions của regulation
+     */
+    async getRegulationVersionsByBot(title, buildingId = null, botInfo) {
+        const whereClause = {
+            title: title.trim(),
+            building_id: buildingId ? parseInt(buildingId) : null,
+            status: 'published' // Only show published versions to bot
+        };
+
+        const versions = await prisma.regulations.findMany({
+            where: whereClause,
+            include: {
+                buildings: {
+                    select: {
+                        building_id: true,
+                        name: true
+                    }
+                },
+                users: {
+                    select: {
+                        user_id: true,
+                        full_name: true,
+                        email: true
+                    }
+                }
+            },
+            orderBy: { version: 'desc' }
+        });
+
+        if (versions.length === 0) {
+            throw new Error('No published regulations found with this title');
+        }
+
+        return versions.map(v => this.formatRegulationListResponse(v));
+    }
+
+
+
     // Helper functions - Format response
     formatRegulationResponse(regulation) {
         return {
