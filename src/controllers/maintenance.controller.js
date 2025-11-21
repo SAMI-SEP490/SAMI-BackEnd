@@ -1,4 +1,4 @@
-// Updated: 2025-30-10
+// Updated: 2025-21-11
 // By: DatNB
 
 const maintenanceService = require('../services/maintenance.service');
@@ -211,6 +211,128 @@ class MaintenanceController {
             next(err);
         }
     }
+
+
+
+    /**
+     * Bot tạo maintenance request thay mặt tenant
+     */
+    async createMaintenanceRequestByBot(req, res, next) {
+        try {
+            const { tenant_user_id, ...maintenanceData } = req.body;
+
+            const maintenanceRequest = await maintenanceService.createMaintenanceRequestByBot(
+                maintenanceData,
+                tenant_user_id,
+                req.bot
+            );
+
+            console.log(`[BOT] Created maintenance request ${maintenanceRequest.request_id} for tenant ${tenant_user_id}`);
+
+            res.status(201).json({
+                success: true,
+                message: 'Maintenance request created successfully by bot',
+                data: maintenanceRequest,
+                bot_info: {
+                    created_by: req.bot.name,
+                    created_at: req.bot.authenticated_at
+                }
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    /**
+     * Bot cập nhật maintenance request thay mặt tenant
+     */
+    async updateMaintenanceRequestByBot(req, res, next) {
+        try {
+            const { id } = req.params;
+            const { tenant_user_id, ...updateData } = req.body;
+
+            const maintenanceRequest = await maintenanceService.updateMaintenanceRequestByBot(
+                parseInt(id),
+                updateData,
+                tenant_user_id,
+                req.bot
+            );
+
+            console.log(`[BOT] Updated maintenance request ${id} for tenant ${tenant_user_id}`);
+
+            res.json({
+                success: true,
+                message: 'Maintenance request updated successfully by bot',
+                data: maintenanceRequest,
+                bot_info: {
+                    updated_by: req.bot.name,
+                    updated_at: req.bot.authenticated_at
+                }
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    /**
+     * Bot xóa maintenance request thay mặt tenant
+     */
+    async deleteMaintenanceRequestByBot(req, res, next) {
+        try {
+            const { id } = req.params;
+            const { tenant_user_id } = req.body;
+
+            const result = await maintenanceService.deleteMaintenanceRequestByBot(
+                parseInt(id),
+                tenant_user_id,
+                req.bot
+            );
+
+            console.log(`[BOT] Deleted maintenance request ${id} for tenant ${tenant_user_id}`);
+
+            res.json({
+                success: true,
+                message: result.message,
+                bot_info: {
+                    deleted_by: req.bot.name,
+                    deleted_at: req.bot.authenticated_at
+                }
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    /**
+     * Bot lấy thông tin maintenance request
+     */
+    async getMaintenanceRequestByBot(req, res, next) {
+        try {
+            const { id } = req.params;
+            const { tenant_user_id } = req.query;
+
+            if (!tenant_user_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_user_id is required as query parameter'
+                });
+            }
+
+            const maintenanceRequest = await maintenanceService.getMaintenanceRequestByBot(
+                parseInt(id),
+                parseInt(tenant_user_id),
+                req.bot
+            );
+
+            res.json({
+                success: true,
+                data: maintenanceRequest
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
 }
 
 module.exports = new MaintenanceController();
