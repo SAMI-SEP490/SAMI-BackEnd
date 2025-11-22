@@ -1,4 +1,4 @@
-// Updated: 2025-06-11
+// Updated: 2025-11-22
 // by: DatNB
 
 const validateCreateRegulation = (req, res, next) => {
@@ -77,7 +77,7 @@ const validateCreateRegulation = (req, res, next) => {
 
         // Validate status if provided
         if (status !== undefined && status !== null && status !== '') {
-            const validStatuses = ['draft', 'published', 'archived', 'deleted'];
+            const validStatuses = ['draft', 'published', 'deleted'];
             if (!validStatuses.includes(status)) {
                 return res.status(400).json({
                     success: false,
@@ -187,7 +187,7 @@ const validateUpdateRegulation = (req, res, next) => {
 
         // Validate status if provided
         if (status !== undefined && status !== null && status !== '') {
-            const validStatuses = ['draft', 'published', 'archived', 'deleted'];
+            const validStatuses = ['draft', 'published', 'deleted'];
             if (!validStatuses.includes(status)) {
                 return res.status(400).json({
                     success: false,
