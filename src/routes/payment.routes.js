@@ -62,4 +62,20 @@ router.get(
     paymentController.exportRevenue
 );
 
+// Create PayOS (Tenant)
+router.post(
+    '/create-payos',
+    authenticate,
+    requireRole(['tenant']),
+    validate(createPaymentSchema),
+    paymentController.createPayOS
+);
+
+// PayOS Webhook (Public)
+router.post('/payos-webhook', paymentController.handlePayOSWebhook);
+
+// Return Pages (Public)
+router.get('/success', paymentController.renderSuccessPage);
+router.get('/cancel', paymentController.renderCancelPage);
+
 module.exports = router;
