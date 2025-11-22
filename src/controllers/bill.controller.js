@@ -1,4 +1,4 @@
-// Updated: 2025-28-10
+// Updated: 2025-23-11
 // by: MinhBH
 
 const BillService = require('../services/bill.service');
@@ -7,6 +7,22 @@ const { billSchema } = require('../middlewares/validation.middleware'); // Assum
 class BillController {
 
     // --- LISTING ---
+    async getMyBills(req, res, next) {
+        try {
+            const tenantUserId = req.user.user_id;
+            const bills = await BillService.getBillsForTenant(tenantUserId);
+            res.status(200).json({ success: true, data: bills });
+        } catch (err) { next(err); }
+    }
+
+    async getMyUnpaidBills(req, res, next) {
+        try {
+            const tenantUserId = req.user.user_id;
+            const bills = await BillService.getUnpaidBillsForTenant(tenantUserId);
+            res.status(200).json({ success: true, data: bills });
+        } catch (err) { next(err); }
+    }
+
     async getAllBills(req, res, next) {
         try {
             // Optional: Add filtering from query params if needed later

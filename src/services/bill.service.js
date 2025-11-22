@@ -1,4 +1,4 @@
-// Updated: 2025-28-10
+// Updated: 2025-23-11
 // by: MinhBH
 
 const prisma = require('../config/prisma');
@@ -15,6 +15,67 @@ function generateBillNumber(year, month) {
 class BillService {
 
     // --- LISTING ---
+    /**
+     * Gets ALL visible bills (issued, paid, overdue) for a specific tenant.
+     */
+    async getBillsForTenant(tenantUserId) {
+        return prisma.bills.findMany({
+            where: {
+                tenant_user_id: tenantUserId,
+                // Only show actual bills, not templates or drafts
+                status: { in: ['issued', 'paid', 'partially_paid', 'overdue'] },
+                deleted_at: null,
+            },
+            orderBy: {
+                billing_period_start: 'desc',
+            },
+            select: {
+                bill_id: true,
+                bill_number: true,
+                billing_period_start: true,
+                billing_period_end: true,
+                due_date: true,
+                total_amount: true,
+                paid_amount: true,
+                penalty_amount: true,
+                status: true,
+                description: true,
+                // Include room info for context
+                rooms: {
+                    select: { room_number: true }
+                }
+            }
+        });
+    }
+
+    /**
+     * Gets only UNPAID bills for a specific tenant.
+     */
+    async getUnpaidBillsForTenant(tenantUserId) {
+        return prisma.bills.findMany({
+            where: {
+                tenant_user_id: tenantUserId,
+                status: { in: ['issued', 'overdue'] },
+                deleted_at: null,
+            },
+            orderBy: {
+                due_date: 'asc', // Urgent ones first
+            },
+            select: {
+                bill_id: true,
+                bill_number: true,
+                billing_period_start: true,
+                billing_period_end: true,
+                due_date: true,
+                total_amount: true,
+                paid_amount: true,
+                penalty_amount: true,
+                status: true,
+                description: true,
+            }
+        });
+    }
+
     async getAllBills(filters = {}) {
         return prisma.bills.findMany({
             where: {
