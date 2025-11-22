@@ -1,4 +1,4 @@
-// Updated: 2025-05-11
+// Updated: 2025-11-22
 // By: DatNB
 
 const express = require('express');
@@ -77,22 +77,15 @@ router.post('/:id/publish',
     regulationController.publishRegulation
 );
 
-// ARCHIVE - Archive regulation
-router.post('/:id/archive',
-    requireRole(['owner', 'manager']),
-    validateRegulationId,
-    regulationController.archiveRegulation
-);
-
 // CREATE - Thêm feedback cho regulation (tenant có thể feedback)
 router.post('/:id/feedbacks',
-    requireRole(['owner', 'manager', 'tenant']),
+    requireRole([ 'tenant']),
     validateRegulationId,
     validateAddFeedback,
     regulationController.addFeedback
 );
 
-// DELETE - Xóa regulation
+// DELETE - Xóa regulation (soft delete - chuyển status sang 'deleted')
 router.delete('/:id',
     requireRole(['owner']),
     validateRegulationId,

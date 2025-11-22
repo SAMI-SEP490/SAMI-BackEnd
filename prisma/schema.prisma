@@ -223,14 +223,14 @@ model maintenance_requests {
 }
 
 model notifications {
-  notification_id  Int                    @id @default(autoincrement())
-  title            String?                @db.VarChar(300)
-  body             String?
-  priority         notification_priority? @default(normal)
-  payload          Json?
-  created_by       Int?
-  created_at       DateTime?              @default(now()) @db.Timestamp(6)
-  users            users?                 @relation(fields: [created_by], references: [user_id], map: "fk_notifications_created_by")
+  notification_id    Int                    @id @default(autoincrement())
+  title              String?                @db.VarChar(300)
+  body               String?
+  priority           notification_priority? @default(normal)
+  payload            Json?
+  created_by         Int?
+  created_at         DateTime?              @default(now()) @db.Timestamp(6)
+  users              users?                 @relation(fields: [created_by], references: [user_id], map: "fk_notifications_created_by")
   user_notifications user_notifications[]
 
   @@index([created_by], map: "idx_notifications_created_by")
@@ -239,13 +239,13 @@ model notifications {
 // This links a User to a Notification and tracks read status.
 model user_notifications {
   user_notification_id Int       @id @default(autoincrement())
-  notification_id      Int       // The ID of the message content
-  user_id              Int       // The ID of the recipient
+  notification_id      Int // The ID of the message content
+  user_id              Int // The ID of the recipient
   is_read              Boolean   @default(false)
   read_at              DateTime? @db.Timestamp(6)
 
-  notification         notifications @relation(fields: [notification_id], references: [notification_id], onDelete: Cascade)
-  user                 users         @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  notification notifications @relation(fields: [notification_id], references: [notification_id], onDelete: Cascade)
+  user         users         @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
 
   @@unique([notification_id, user_id]) // Prevent duplicate notifications
   @@index([user_id])
@@ -259,7 +259,7 @@ model device_tokens {
   device_type device_type?
   created_at  DateTime     @default(now()) @db.Timestamp(6)
 
-  user        users        @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  user users @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
 
   @@index([user_id])
 }
@@ -276,7 +276,6 @@ model regulations {
   created_by           Int
   created_at           DateTime?              @default(now()) @db.Timestamp(6)
   updated_at           DateTime?              @db.Timestamp(6)
-  archived_at          DateTime?              @db.Timestamp(6)
   note                 String?
   buildings            buildings?             @relation(fields: [building_id], references: [building_id], map: "fk_regulations_building")
   users                users                  @relation(fields: [created_by], references: [user_id], onDelete: SetNull, map: "fk_regulations_created_by")
@@ -529,7 +528,6 @@ enum registration_status {
 enum regulation_status {
   draft
   published
-  archived
   deleted
 }
 

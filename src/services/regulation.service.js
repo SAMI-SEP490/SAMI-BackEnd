@@ -1,4 +1,4 @@
-// Updated: 2025-15-11
+// Updated: 2025-11-22
 // by: DatNB
 const prisma = require('../config/prisma');
 const NotificationService = require('./notification.service');
@@ -173,9 +173,11 @@ class RegulationService {
             }
         }
 
-        // Không hiển thị regulations đã bị xóa (archived)
-        if (!filters.include_archived) {
-            where.archived_at = null;
+        // Không hiển thị regulations đã bị xóa
+        if (!filters.include_deleted) {
+            where.status = {
+                not: 'deleted'
+            };
         }
 
         const [regulations, total] = await Promise.all([
@@ -239,7 +241,10 @@ class RegulationService {
         }
 
         const skip = (page - 1) * limit;
-        const where = { building_id: buildingId, archived_at: null };
+        const where = {
+            building_id: buildingId,
+            status: { not: 'deleted' }
+        };
 
         if (status) {
             where.status = status;
@@ -343,12 +348,12 @@ class RegulationService {
             throw new Error('Regulation not found');
         }
 
-        if (existingRegulation.archived_at) {
-            throw new Error('Cannot update archived regulation');
+        if (existingRegulation.status === 'deleted') {
+            throw new Error('Cannot update deleted regulation');
         }
 
-        if (existingRegulation.status === 'published' && status !== 'archived') {
-            throw new Error('Cannot update published regulation. Archive it first or create a new version');
+        if (existingRegulation.status === 'published' && status !== 'draft') {
+            throw new Error('Cannot update published regulation. Create a new version instead');
         }
 
         // Prepare update data
@@ -402,7 +407,7 @@ class RegulationService {
         });
 
         // GỬI THÔNG BÁO KHI CÓ CẬP NHẬT
-        if (regulation.building_id) {
+        if (regulation.building_id && regulation.status === 'published') {
             const notificationTitle = `Cập nhật quy định: ${regulation.title}`;
             const notificationBody = `Quy định "${regulation.title}" đã được cập nhật. Vui lòng xem lại nội dung mới.`;
             const payload = {
@@ -411,7 +416,6 @@ class RegulationService {
                 building_id: regulation.building_id
             };
 
-            // Gửi thông báo cho tất cả tenant trong tòa nhà
             await NotificationService.createBuildingBroadcast(
                 regulation.created_by,
                 regulation.building_id,
@@ -442,8 +446,8 @@ class RegulationService {
             throw new Error('Regulation not found');
         }
 
-        if (regulation.archived_at) {
-            throw new Error('Cannot publish archived regulation');
+        if (regulation.status === 'deleted') {
+            throw new Error('Cannot publish deleted regulation');
         }
 
         if (regulation.status === 'published') {
@@ -482,7 +486,6 @@ class RegulationService {
                 building_id: published.building_id
             };
 
-            // Gửi thông báo cho tất cả tenant trong tòa nhà
             await NotificationService.createBuildingBroadcast(
                 published.created_by,
                 published.building_id,
@@ -491,7 +494,6 @@ class RegulationService {
                 payload
             );
         } else {
-            // Nếu là quy định chung (không có building_id), gửi cho tất cả tenant
             const notificationTitle = `Quy định chung mới: ${published.title}`;
             const notificationBody = `Quy định chung "${published.title}" đã được công bố. Vui lòng đọc và tuân thủ.`;
             const payload = {
@@ -508,89 +510,6 @@ class RegulationService {
         }
 
         return this.formatRegulationResponse(published);
-    }
-
-    // ARCHIVE - Archive regulation
-    async archiveRegulation(regulationId) {
-        const regulation = await prisma.regulations.findUnique({
-            where: { regulation_id: regulationId },
-            include: {
-                buildings: {
-                    select: {
-                        building_id: true,
-                        name: true
-                    }
-                }
-            }
-        });
-
-        if (!regulation) {
-            throw new Error('Regulation not found');
-        }
-
-        if (regulation.archived_at) {
-            throw new Error('Regulation is already archived');
-        }
-
-        const archived = await prisma.regulations.update({
-            where: { regulation_id: regulationId },
-            data: {
-                status: 'archived',
-                archived_at: new Date(),
-                updated_at: new Date()
-            },
-            include: {
-                buildings: {
-                    select: {
-                        building_id: true,
-                        name: true
-                    }
-                },
-                users: {
-                    select: {
-                        user_id: true,
-                        full_name: true
-                    }
-                }
-            }
-        });
-
-        // GỬI THÔNG BÁO KHI ARCHIVE (nếu regulation đã được publish trước đó)
-        if (regulation.status === 'published') {
-            if (archived.building_id) {
-                const notificationTitle = `Quy định đã lưu trữ: ${archived.title}`;
-                const notificationBody = `Quy định "${archived.title}" đã được lưu trữ và không còn hiệu lực.`;
-                const payload = {
-                    type: 'regulation_archived',
-                    regulation_id: archived.regulation_id,
-                    building_id: archived.building_id
-                };
-
-                await NotificationService.createBuildingBroadcast(
-                    archived.created_by,
-                    archived.building_id,
-                    notificationTitle,
-                    notificationBody,
-                    payload
-                );
-            } else {
-                const notificationTitle = `Quy định chung đã lưu trữ: ${archived.title}`;
-                const notificationBody = `Quy định chung "${archived.title}" đã được lưu trữ và không còn hiệu lực.`;
-                const payload = {
-                    type: 'regulation_archived',
-                    regulation_id: archived.regulation_id
-                };
-
-                await NotificationService.createBroadcastNotification(
-                    archived.created_by,
-                    notificationTitle,
-                    notificationBody,
-                    payload
-                );
-            }
-        }
-
-        return this.formatRegulationResponse(archived);
     }
 
     // DELETE - Xóa regulation (soft delete)
@@ -612,14 +531,18 @@ class RegulationService {
         }
 
         if (regulation.status === 'published') {
-            throw new Error('Cannot delete published regulation. Archive it first');
+            throw new Error('Cannot delete published regulation. Change status to draft first');
+        }
+
+        if (regulation.status === 'deleted') {
+            throw new Error('Regulation is already deleted');
         }
 
         await prisma.regulations.update({
             where: { regulation_id: regulationId },
             data: {
                 status: 'deleted',
-                archived_at: new Date()
+                updated_at: new Date()
             }
         });
 
@@ -649,7 +572,8 @@ class RegulationService {
     async getRegulationVersions(title, buildingId = null) {
         const whereClause = {
             title: title.trim(),
-            building_id: buildingId ? parseInt(buildingId) : null
+            building_id: buildingId ? parseInt(buildingId) : null,
+            status: { not: 'deleted' }
         };
 
         const versions = await prisma.regulations.findMany({
@@ -675,7 +599,6 @@ class RegulationService {
 
     // FEEDBACK - Thêm feedback cho regulation
     async addFeedback(regulationId, userId, comment) {
-        // Verify regulation exists
         const regulation = await prisma.regulations.findUnique({
             where: { regulation_id: regulationId }
         });
@@ -784,20 +707,20 @@ class RegulationService {
             totalRegulations,
             draftRegulations,
             publishedRegulations,
-            archivedRegulations,
+            deletedRegulations,
             totalFeedbacks
         ] = await Promise.all([
             prisma.regulations.count({
-                where: { ...where, archived_at: null }
+                where: { ...where, status: { not: 'deleted' } }
             }),
             prisma.regulations.count({
-                where: { ...where, status: 'draft', archived_at: null }
+                where: { ...where, status: 'draft' }
             }),
             prisma.regulations.count({
-                where: { ...where, status: 'published', archived_at: null }
+                where: { ...where, status: 'published' }
             }),
             prisma.regulations.count({
-                where: { ...where, status: 'archived' }
+                where: { ...where, status: 'deleted' }
             }),
             prisma.regulation_feedbacks.count({
                 where: buildingId ? {
@@ -810,7 +733,7 @@ class RegulationService {
             total_regulations: totalRegulations,
             draft_regulations: draftRegulations,
             published_regulations: publishedRegulations,
-            archived_regulations: archivedRegulations,
+            deleted_regulations: deletedRegulations,
             total_feedbacks: totalFeedbacks
         };
 
@@ -825,12 +748,8 @@ class RegulationService {
         return result;
     }
 
-
     // ============ BOT METHODS ============
 
-    /**
-     * GET BY BOT - Bot lấy thông tin regulation
-     */
     async getRegulationByBot(regulationId, tenantUserId = null, botInfo) {
         const regulation = await prisma.regulations.findUnique({
             where: { regulation_id: regulationId },
@@ -860,7 +779,7 @@ class RegulationService {
                         }
                     },
                     orderBy: { created_at: 'desc' },
-                    take: 10 // Limit feedbacks to latest 10
+                    take: 10
                 }
             }
         });
@@ -869,7 +788,10 @@ class RegulationService {
             throw new Error('Regulation not found');
         }
 
-        // If tenant_user_id is provided, verify tenant can access this regulation
+        if (regulation.status === 'deleted') {
+            throw new Error('This regulation has been deleted');
+        }
+
         if (tenantUserId) {
             const tenant = await prisma.tenants.findUnique({
                 where: { user_id: tenantUserId },
@@ -887,17 +809,12 @@ class RegulationService {
                 throw new Error('Tenant not found');
             }
 
-            // Check if regulation applies to tenant
-            // Regulation applies if:
-            // 1. It's a general regulation (building_id = null)
-            // 2. It's for the tenant's building
             const tenantBuildingIds = tenant.rooms.map(r => r.building_id);
 
             if (regulation.building_id && !tenantBuildingIds.includes(regulation.building_id)) {
                 throw new Error('This regulation does not apply to the specified tenant');
             }
 
-            // Check target
             if (regulation.target !== 'all' && regulation.target !== 'tenant') {
                 throw new Error('This regulation does not apply to tenants');
             }
@@ -906,9 +823,6 @@ class RegulationService {
         return this.formatRegulationDetailResponse(regulation);
     }
 
-    /**
-     * GET LIST BY BOT - Bot lấy danh sách regulations
-     */
     async getRegulationsByBot(filters = {}, botInfo) {
         const {
             building_id,
@@ -921,7 +835,7 @@ class RegulationService {
 
         const skip = (page - 1) * limit;
         const where = {
-            archived_at: null
+            status: status || 'published'
         };
 
         if (building_id !== undefined) {
@@ -933,13 +847,6 @@ class RegulationService {
                     where.building_id = buildingId;
                 }
             }
-        }
-
-        // Bot typically only shows published regulations
-        if (status) {
-            where.status = status;
-        } else {
-            where.status = 'published';
         }
 
         if (target) {
@@ -992,9 +899,6 @@ class RegulationService {
         };
     }
 
-    /**
-     * GET BY BUILDING FOR BOT - Bot lấy regulations theo building
-     */
     async getRegulationsByBuildingForBot(buildingId, filters = {}, botInfo) {
         const {
             status,
@@ -1004,7 +908,6 @@ class RegulationService {
             limit = 20
         } = filters;
 
-        // Verify building exists
         if (buildingId !== null) {
             const building = await prisma.buildings.findUnique({
                 where: { building_id: buildingId }
@@ -1018,15 +921,13 @@ class RegulationService {
         const skip = (page - 1) * limit;
         const where = {
             building_id: buildingId,
-            archived_at: null,
-            status: status || 'published' // Default to published for bot
+            status: status || 'published'
         };
 
         if (target) {
             where.target = target;
         }
 
-        // If only latest version
         if (latest_only === true || latest_only === 'true') {
             const allRegulations = await prisma.regulations.findMany({
                 where,
@@ -1051,7 +952,6 @@ class RegulationService {
                 }
             });
 
-            // Filter latest version for each title
             const latestRegulations = [];
             const seenTitles = new Set();
 
@@ -1111,12 +1011,7 @@ class RegulationService {
         };
     }
 
-
-    /**
-     * ADD FEEDBACK BY BOT - Bot thêm feedback thay mặt tenant
-     */
     async addRegulationFeedbackByBot(regulationId, tenantUserId, comment, botInfo) {
-        // Verify regulation exists and is published
         const regulation = await prisma.regulations.findUnique({
             where: { regulation_id: regulationId },
             include: {
@@ -1137,7 +1032,6 @@ class RegulationService {
             throw new Error('Can only add feedback to published regulations');
         }
 
-        // Verify tenant exists and is active
         const tenant = await prisma.tenants.findUnique({
             where: { user_id: tenantUserId },
             include: {
@@ -1166,7 +1060,6 @@ class RegulationService {
             throw new Error('Tenant account is not active');
         }
 
-        // Verify regulation applies to tenant
         if (regulation.building_id) {
             const tenantBuildingIds = tenant.rooms.map(r => r.building_id);
             if (!tenantBuildingIds.includes(regulation.building_id)) {
@@ -1174,12 +1067,10 @@ class RegulationService {
             }
         }
 
-        // Check target
         if (regulation.target !== 'all' && regulation.target !== 'tenant') {
             throw new Error('This regulation does not apply to tenants');
         }
 
-        // Add bot info to comment
         const botComment = [
             `🤖 Feedback from Bot`,
             `Bot: ${botInfo.name}`,
@@ -1207,7 +1098,6 @@ class RegulationService {
             }
         });
 
-        // Send notification to regulation creator
         try {
             const regulationTitle = regulation.title;
             const buildingInfo = regulation.buildings?.name
@@ -1215,7 +1105,7 @@ class RegulationService {
                 : '';
 
             await NotificationService.createNotification(
-                null, // Bot không có user_id
+                null,
                 regulation.created_by,
                 'Phản hồi mới cho quy định',
                 `Có phản hồi mới từ ${tenant.users.full_name} cho quy định "${regulationTitle}"${buildingInfo}.`,
@@ -1243,14 +1133,10 @@ class RegulationService {
         };
     }
 
-    /**
-     * GET FEEDBACKS BY BOT - Bot lấy feedbacks của regulation
-     */
     async getRegulationFeedbacksByBot(regulationId, filters = {}, botInfo) {
         const { page = 1, limit = 20 } = filters;
         const skip = (page - 1) * limit;
 
-        // Verify regulation exists
         const regulation = await prisma.regulations.findUnique({
             where: { regulation_id: regulationId }
         });
@@ -1301,14 +1187,11 @@ class RegulationService {
         };
     }
 
-    /**
-     * GET VERSIONS BY BOT - Bot lấy versions của regulation
-     */
     async getRegulationVersionsByBot(title, buildingId = null, botInfo) {
         const whereClause = {
             title: title.trim(),
             building_id: buildingId ? parseInt(buildingId) : null,
-            status: 'published' // Only show published versions to bot
+            status: 'published'
         };
 
         const versions = await prisma.regulations.findMany({
@@ -1338,8 +1221,6 @@ class RegulationService {
         return versions.map(v => this.formatRegulationListResponse(v));
     }
 
-
-
     // Helper functions - Format response
     formatRegulationResponse(regulation) {
         return {
@@ -1360,8 +1241,7 @@ class RegulationService {
             },
             note: regulation.note,
             created_at: regulation.created_at,
-            updated_at: regulation.updated_at,
-            archived_at: regulation.archived_at
+            updated_at: regulation.updated_at
         };
     }
 
@@ -1415,8 +1295,7 @@ class RegulationService {
                 created_at: f.created_at
             })) || [],
             created_at: regulation.created_at,
-            updated_at: regulation.updated_at,
-            archived_at: regulation.archived_at
+            updated_at: regulation.updated_at
         };
     }
 }
