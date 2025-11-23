@@ -77,6 +77,13 @@ router.post('/:id/publish',
     regulationController.publishRegulation
 );
 
+// UNPUBLISH - Unpublish regulation
+router.post('/:id/unpublish',
+    requireRole(['owner', 'manager']),
+    validateRegulationId,
+    regulationController.unpublishRegulation
+);
+
 // CREATE - Thêm feedback cho regulation (tenant có thể feedback)
 router.post('/:id/feedbacks',
     requireRole([ 'tenant']),
