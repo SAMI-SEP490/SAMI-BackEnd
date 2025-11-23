@@ -478,7 +478,6 @@ class PaymentService {
                 status: 'pending',
                 users: { connect: { user_id: tenantUserId } },
                 reference: dbReference, // Store with prefix in DB
-                created_at: new Date(),
             },
         });
 
