@@ -352,9 +352,6 @@ class RegulationService {
             throw new Error('Cannot update deleted regulation');
         }
 
-        if (existingRegulation.status === 'published' && status !== 'draft') {
-            throw new Error('Cannot update published regulation. Create a new version instead');
-        }
 
         // Prepare update data
         const updateData = {
@@ -748,6 +745,95 @@ class RegulationService {
         return result;
     }
 
+// UNPUBLISH - Chuyển regulation từ published về draft
+    async unpublishRegulation(regulationId) {
+        const regulation = await prisma.regulations.findUnique({
+            where: { regulation_id: regulationId },
+            include: {
+                buildings: {
+                    select: {
+                        building_id: true,
+                        name: true
+                    }
+                }
+            }
+        });
+
+        if (!regulation) {
+            throw new Error('Regulation not found');
+        }
+
+        if (regulation.status === 'deleted') {
+            throw new Error('Cannot unpublish deleted regulation');
+        }
+
+        if (regulation.status === 'draft') {
+            throw new Error('Regulation is already in draft status');
+        }
+
+        if (regulation.status !== 'published') {
+            throw new Error('Only published regulations can be unpublished');
+        }
+
+        const unpublished = await prisma.regulations.update({
+            where: { regulation_id: regulationId },
+            data: {
+                status: 'draft',
+                updated_at: new Date()
+            },
+            include: {
+                buildings: {
+                    select: {
+                        building_id: true,
+                        name: true,
+                        address: true
+                    }
+                },
+                users: {
+                    select: {
+                        user_id: true,
+                        full_name: true,
+                        email: true
+                    }
+                }
+            }
+        });
+
+        // GỬI THÔNG BÁO KHI UNPUBLISH
+        if (unpublished.building_id) {
+            const notificationTitle = `Quy định đã gỡ: ${unpublished.title}`;
+            const notificationBody = `Quy định "${unpublished.title}" đã được chuyển về trạng thái nháp và không còn hiệu lực.`;
+            const payload = {
+                type: 'regulation_unpublished',
+                regulation_id: unpublished.regulation_id,
+                building_id: unpublished.building_id
+            };
+
+            await NotificationService.createBuildingBroadcast(
+                unpublished.created_by,
+                unpublished.building_id,
+                notificationTitle,
+                notificationBody,
+                payload
+            );
+        } else {
+            const notificationTitle = `Quy định chung đã gỡ: ${unpublished.title}`;
+            const notificationBody = `Quy định chung "${unpublished.title}" đã được chuyển về trạng thái nháp và không còn hiệu lực.`;
+            const payload = {
+                type: 'regulation_unpublished',
+                regulation_id: unpublished.regulation_id
+            };
+
+            await NotificationService.createBroadcastNotification(
+                unpublished.created_by,
+                notificationTitle,
+                notificationBody,
+                payload
+            );
+        }
+
+        return this.formatRegulationResponse(unpublished);
+    }
     // ============ BOT METHODS ============
 
     async getRegulationByBot(regulationId, tenantUserId = null, botInfo) {

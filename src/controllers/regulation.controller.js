@@ -125,16 +125,15 @@ class RegulationController {
             next(err);
         }
     }
-
-    // Archive regulation
-    async archiveRegulation(req, res, next) {
+    // Unpublish regulation
+    async unpublishRegulation(req, res, next) {
         try {
             const { id } = req.params;
-            const regulation = await regulationService.archiveRegulation(parseInt(id));
+            const regulation = await regulationService.unpublishRegulation(parseInt(id));
 
             res.json({
                 success: true,
-                message: 'Regulation archived successfully',
+                message: 'Regulation unpublished successfully',
                 data: regulation
             });
         } catch (err) {
