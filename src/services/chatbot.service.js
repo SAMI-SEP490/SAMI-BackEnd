@@ -9,7 +9,12 @@ class ChatbotService {
      * Streams the user's prompt to Dify and returns the raw stream.
      */
     async getChatStream(userQuestion, tenantUserId, conversationId = null) {
-        
+        // --- CHECK ENV ---
+        if (!process.env.DIFY_API_KEY || !process.env.DIFY_API_URL) {
+             console.warn("⚠️ Dify API keys missing.");
+             throw new Error("AI Chatbot service is currently unavailable.");
+        }
+
         // 1. Construct Payload dynamically
         const payload = {
             query: userQuestion,
