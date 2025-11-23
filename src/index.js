@@ -26,6 +26,7 @@ const regulationRoutes = require('./routes/regulation.routes');
 const vehicleRoutes = require('./routes/vehicle.routes');
 const notificationRoutes = require('./routes/notification.routes');
 const botRoutes = require('./routes/bot.routes');
+const chatbotRoutes = require('./routes/chatbot.routes.js');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
 
 const app = express();
@@ -110,6 +111,7 @@ app.use('/api/regulation', regulationRoutes);
 app.use('/api/vehicle', vehicleRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/bot', botRoutes);
+app.use('/api/chatbot', chatbotRoutes);
 // 404 handler
 app.use(notFound);
 
