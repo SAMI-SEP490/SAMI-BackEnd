@@ -26,7 +26,7 @@ router.post('/',
 
 // READ - Lấy danh sách tòa nhà
 router.get('/',
-    requireRole(['owner', 'manager']),
+    requireRole(['owner', 'manager','tenant']),
     buildingController.getBuildings
 );
 
