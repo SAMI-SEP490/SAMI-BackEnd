@@ -8,11 +8,37 @@ const fastcsv = require('fast-csv');
 const { PayOS } = require("@payos/node");
 
 // Initialize PayOS
-const payos = new PayOS(
-    process.env.PAYOS_CLIENT_ID,
-    process.env.PAYOS_API_KEY,
-    process.env.PAYOS_CHECKSUM_KEY
-);
+// --- SAFE INITIALIZATION ---
+let payos = null;
+
+if (process.env.PAYOS_CLIENT_ID && process.env.PAYOS_API_KEY && process.env.PAYOS_CHECKSUM_KEY) {
+    try {
+        payos = new PayOS(
+            process.env.PAYOS_CLIENT_ID,
+            process.env.PAYOS_API_KEY,
+            process.env.PAYOS_CHECKSUM_KEY
+        );
+        console.log('✅ PayOS initialized.');
+    } catch (e) {
+        console.warn('⚠️ PayOS init error:', e.message);
+    }
+} else {
+    console.warn('⚠️ PayOS credentials missing in .env. Payments will be disabled.');
+}
+
+// --- SAFE INITIALIZATION: VNPay ---
+// Check if all required VNPay variables exist
+const isVnpayConfigured = 
+    process.env.VNP_TMNCODE && 
+    process.env.VNP_HASHSECRET && 
+    process.env.VNP_URL && 
+    process.env.VNP_RETURN_URL;
+
+if (!isVnpayConfigured) {
+    console.warn('⚠️ VNPay credentials missing. VNPay features disabled.');
+} else {
+    console.log('✅ VNPay configured.');
+}
 
 // Helper function to mark VNPay payment as completed
 async function _markVnpayPaymentAsCompleted(paymentId, amount, transactionId) {
@@ -91,6 +117,11 @@ class PaymentService {
      * Creates a payment record and generates a VNPay URL.
      */
     async createPaymentUrl(tenantUserId, billIds, ipAddr) {
+        // --- SAFETY CHECK ---
+        if (!isVnpayConfigured) {
+            throw new Error("VNPay service is not configured on this server.");
+        }
+
         // 1. Verify and sum bills in a transaction
         const { bills, totalAmount } = await prisma.$transaction(async (tx) => {
             const bills = await tx.bills.findMany({
@@ -168,6 +199,12 @@ class PaymentService {
      * Handles the trusted VNPay IPN callback.
      */
     async handleVnpayIpn(vnpParams) {
+        // --- SAFETY CHECK ---
+        if (!isVnpayConfigured) {
+            console.warn("Received VNPay IPN but service is disabled.");
+            return { RspCode: '99', Message: 'Service Disabled' };
+        }
+
         // 1. Verify signature
         if (!verifyVnpaySignature(vnpParams)) {
             // Signature is invalid, this is a fraudulent request
@@ -399,6 +436,10 @@ class PaymentService {
      * Create a PayOS Payment Link
      */
     async createPayOSLink(tenantUserId, billIds) {
+        if (!payos) {
+            throw new Error("PayOS service is not configured on this server.");
+        }
+
         // 1. Verify and sum bills
         const { bills, totalAmountDue } = await prisma.$transaction(async (tx) => {
             const bills = await tx.bills.findMany({
@@ -468,6 +509,11 @@ class PaymentService {
      * Handle PayOS Webhook (Secure)
      */
     async handlePayOSWebhook(webhookData) {
+        if (!payos) {
+            console.warn("Received PayOS webhook but service is disabled.");
+            return null;
+        }
+
         // 1. Verify Signature (Wrapped in try/catch)
         try {
              // This line throws an error if data is fake/tampered
