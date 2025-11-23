@@ -1,4 +1,4 @@
-// Updated: 2025-01-11
+// Updated: 2025-23-11
 // by: MinhBH
 
 const express = require('express');
@@ -45,18 +45,6 @@ router.get(
     '/analytics/expiring',
     requireRole(['owner', 'manager']),
     tenantController.getExpiringContracts
-);
-
-router.get(
-    '/bills',
-    requireRole(['tenant']),
-    tenantController.getAllTenantBills
-);
-
-router.get(
-    '/bills-unpaid',
-    requireRole(['tenant']),
-    tenantController.getAllUnpaidTenantBills
 );
 
 router.get(

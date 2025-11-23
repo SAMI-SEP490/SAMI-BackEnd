@@ -1,4 +1,4 @@
-// Updated: 2025-28-10
+// Updated: 2025-23-11
 // by: MinhBH
 
 const express = require('express');
@@ -13,8 +13,23 @@ const {
     updateIssuedBillSchema 
 } = require('../middlewares/validation.middleware');
 
-// All bill management routes require owner or manager role
+// We need authentication for everyone (Tenants AND Managers)
 router.use(authenticate);
+
+// Only Tenants can access these
+router.get(
+    '/list', 
+    requireRole(['tenant']), 
+    billController.getMyBills
+);
+
+router.get(
+    '/list/unpaid', 
+    requireRole(['tenant']), 
+    billController.getMyUnpaidBills
+);
+
+// All bill management routes require owner or manager role
 router.use(requireRole(['owner', 'manager']));
 
 // --- LISTING ---

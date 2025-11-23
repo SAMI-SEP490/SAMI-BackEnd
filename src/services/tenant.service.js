@@ -1,4 +1,4 @@
-// Updated: 2025-01-11
+// Updated: 2025-23-11
 // by: MinhBH
 
 const prisma = require('../config/prisma');
@@ -282,63 +282,6 @@ class TenantService {
                 id_number: contract.tenants.id_number,
             },
         }));
-    }
-
-    /**
-     * Gets all non-draft/cancelled bills for a specific tenant.
-     */
-    async getAllTenantBills(tenantUserId) {
-        return prisma.bills.findMany({
-            where: {
-                tenant_user_id: tenantUserId,
-                // Exclude templates ('master') and cancelled bills
-                status: { notIn: ['master', 'draft', 'cancelled'] },
-                deleted_at: null,
-            },
-            orderBy: {
-                billing_period_start: 'desc', // Show most recent first
-            },
-            select: {
-                bill_id: true,
-                bill_number: true,
-                billing_period_start: true,
-                billing_period_end: true,
-                due_date: true,
-                total_amount: true,
-                paid_amount: true,
-                penalty_amount: true,
-                status: true,
-                description: true, 
-            }
-        });
-    }
-
-    /**
-     * Gets all unpaid bills for a specific tenant.
-     */
-    async getAllUnpaidTenantBills(tenantUserId) {
-        return prisma.bills.findMany({
-            where: {
-                tenant_user_id: tenantUserId,
-                status: { in: ['issued', 'overdue'] },
-                deleted_at: null,
-            },
-            orderBy: {
-                due_date: 'asc', // Show most urgent first
-            },
-            select: {
-                bill_id: true,
-                bill_number: true,
-                billing_period_start: true,
-                billing_period_end: true,
-                due_date: true,
-                total_amount: true,
-                paid_amount: true,
-                penalty_amount: true,
-                status: true,
-                description: true,
-            }
-        });
     }
 
     async getTenantChatbotContext(tenantUserId) {
