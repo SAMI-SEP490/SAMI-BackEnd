@@ -567,6 +567,7 @@ enum guest_relationship {
 enum online_type {
   VNPAY
   VIETQR
+  PAYOS
 }
 
 enum room_status {

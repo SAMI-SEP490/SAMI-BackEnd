@@ -5,6 +5,14 @@ const prisma = require('../config/prisma');
 const { generateVnpayUrl, verifyVnpaySignature } = require('../utils/vnpay');
 const excelJS = require('exceljs');
 const fastcsv = require('fast-csv');
+const { PayOS } = require("@payos/node");
+
+// Initialize PayOS
+const payos = new PayOS(
+    process.env.PAYOS_CLIENT_ID,
+    process.env.PAYOS_API_KEY,
+    process.env.PAYOS_CHECKSUM_KEY
+);
 
 // Helper function to mark VNPay payment as completed
 async function _markVnpayPaymentAsCompleted(paymentId, amount, transactionId) {
@@ -28,6 +36,34 @@ async function _markVnpayPaymentAsCompleted(paymentId, amount, transactionId) {
             },
         });
     });
+}
+
+// Helper function to mark PayOS payment as completed
+async function _markPayOSPaymentAsCompleted(payment, payosReference) {
+    return prisma.$transaction(async (tx) => {
+        // 1. Update the Payment Record
+        await tx.bill_payments.update({
+            where: { payment_id: payment.payment_id },
+            data: {
+                status: 'completed',
+                payment_date: new Date(),
+                transaction_id: payosReference, // Save PayOS reference as proof
+                online_type: 'PAYOS',
+            },
+        });
+        
+        // 2. Update the Linked Bills
+        await tx.bills.updateMany({
+            where: { payment_id: payment.payment_id },
+            data: {
+                status: 'paid',
+                paid_amount: payment.amount, // Assumes full payment
+            },
+        });
+    });
+
+    // 3. Send Notifications (Optional but recommended)
+    // await NotificationService.sendPaymentSuccessNotification(payment);
 }
 
 // Helper function to mark any payment as failed
@@ -357,6 +393,135 @@ class PaymentService {
                 }
             }
         });
+    }
+
+    /**
+     * Create a PayOS Payment Link
+     */
+    async createPayOSLink(tenantUserId, billIds) {
+        // 1. Verify and sum bills
+        const { bills, totalAmountDue } = await prisma.$transaction(async (tx) => {
+            const bills = await tx.bills.findMany({
+                where: {
+                    bill_id: { in: billIds },
+                    tenant_user_id: tenantUserId,
+                    status: { in: ['issued', 'overdue'] },
+                },
+                select: { bill_id: true, total_amount: true, penalty_amount: true, status: true, description: true }
+            });
+            
+            if (bills.length === 0 || bills.length !== billIds.length) throw new Error("Invalid bills");
+
+            const total = bills.reduce((sum, bill) => {
+                const billTotal = Number(bill.total_amount || 0);
+                let billPenalty = 0;
+                if (bill.status === 'overdue') billPenalty = Number(bill.penalty_amount || 0);
+                return sum + billTotal + billPenalty;
+            }, 0);
+
+            return { bills, totalAmountDue: total };
+        });
+
+        if (totalAmountDue <= 0) throw new Error("Invalid amount");
+
+        // 2. Create Payment Record
+        // We keep the reference as OUR unique string
+        const newPayment = await prisma.bill_payments.create({
+            data: {
+                amount: totalAmountDue,
+                method: 'online',
+                online_type: 'PAYOS',
+                status: 'pending',
+                users: { 
+                    connect: { user_id: tenantUserId } 
+                },
+                reference: `PAYOS-${Date.now()}`,
+            },
+        });
+
+        // 3. Link bills
+        await prisma.bills.updateMany({
+            where: { bill_id: { in: billIds } },
+            data: { payment_id: newPayment.payment_id },
+        });
+
+        // 4. Create PayOS Link
+        const orderCode = Number(newPayment.payment_id);
+        const description = `SAMI Bill ${orderCode}`;
+
+        const paymentData = {
+            orderCode: orderCode,
+            amount: Number(totalAmountDue),
+            description: description,
+            cancelUrl: process.env.PAYOS_CANCEL_URL,
+            returnUrl: process.env.PAYOS_RETURN_URL
+        };
+
+        const paymentLinkResponse = await payos.paymentRequests.create(paymentData);
+
+        return { 
+            checkoutUrl: paymentLinkResponse.checkoutUrl 
+        };
+    }
+
+    /**
+     * Handle PayOS Webhook (Secure)
+     */
+    async handlePayOSWebhook(webhookData) {
+        // 1. Verify Signature (Wrapped in try/catch)
+        try {
+             // This line throws an error if data is fake/tampered
+             await payos.webhooks.verify(webhookData); 
+        } catch (e) {
+             // LOG THE ATTEMPT, BUT DO NOT CRASH
+             console.warn("⚠️ Webhook signature verification failed. Possible fake data received.");
+             console.error("Error details:", e.message);
+             
+             // Return null to signal "Invalid Request" to the controller
+             return null; 
+        }
+        
+        // 2. Extract Data (Safe to proceed now)
+        // We use webhookData.data because verify succeeded
+        const { orderCode, amount, code, reference } = webhookData.data;
+
+        if (!orderCode) {
+             console.error("Error: orderCode is missing from webhook data.");
+             return null;
+        }
+
+        // 3. Find Payment
+        // Convert to Number to avoid Prisma errors
+        const paymentId = Number(orderCode);
+        if (isNaN(paymentId)) {
+             console.error("Error: Invalid orderCode format.");
+             return null;
+        }
+
+        const payment = await prisma.bill_payments.findUnique({
+            where: { payment_id: paymentId }
+        });
+
+        if (!payment) {
+            console.log(`Webhook ignored: Payment ID ${paymentId} not found.`);
+            return null;
+        }
+
+        // Idempotency check
+        if (payment.status === 'completed') {
+            return { message: "Already completed" };
+        }
+
+        // 4. Update DB
+        if (code === '00') {
+             console.log(`Payment ${paymentId} success. Updating DB...`);
+             await _markPayOSPaymentAsCompleted(payment, reference);
+        } else {
+             console.log(`Payment ${paymentId} failed (Code: ${code}).`);
+             await _markPaymentAsFailed(payment);
+        }
+        
+        return webhookData.data;
     }
 }
 
