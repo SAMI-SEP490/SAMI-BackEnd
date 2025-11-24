@@ -465,33 +465,33 @@ class PaymentService {
 
         if (totalAmountDue <= 0) throw new Error("Invalid amount");
 
-        // 2. Create Payment Record
-        // We keep the reference as OUR unique string
+        // 2. Generate Unique Numeric Order Code (Timestamp)
+        const orderCode = Number(Date.now());
+        const dbReference = `PAYOS-${orderCode}`; // <-- ADD PREFIX FOR DB
+
+        // 3. Create Payment Record
         const newPayment = await prisma.bill_payments.create({
             data: {
                 amount: totalAmountDue,
                 method: 'online',
                 online_type: 'PAYOS',
                 status: 'pending',
-                users: { 
-                    connect: { user_id: tenantUserId } 
-                },
-                reference: `PAYOS-${Date.now()}`,
+                users: { connect: { user_id: tenantUserId } },
+                reference: dbReference, // Store with prefix in DB
             },
         });
 
-        // 3. Link bills
+        // 4. Link bills
         await prisma.bills.updateMany({
             where: { bill_id: { in: billIds } },
             data: { payment_id: newPayment.payment_id },
         });
 
-        // 4. Create PayOS Link
-        const orderCode = Number(newPayment.payment_id);
-        const description = `SAMI Bill ${orderCode}`;
+        // 5. Create PayOS Link
+        const description = `SAMI Bill ${newPayment.payment_id}`;
 
         const paymentData = {
-            orderCode: orderCode,
+            orderCode: orderCode, // Send PURE NUMBER to PayOS
             amount: Number(totalAmountDue),
             description: description,
             cancelUrl: process.env.PAYOS_CANCEL_URL,
@@ -537,19 +537,16 @@ class PaymentService {
         }
 
         // 3. Find Payment
-        // Convert to Number to avoid Prisma errors
-        const paymentId = Number(orderCode);
-        if (isNaN(paymentId)) {
-             console.error("Error: Invalid orderCode format.");
-             return null;
-        }
+        // PayOS sends back the number (e.g., 173...). 
+        // We must re-add the prefix to find it in our DB.
+        const dbReference = `PAYOS-${orderCode}`;
 
-        const payment = await prisma.bill_payments.findUnique({
-            where: { payment_id: paymentId }
+        const payment = await prisma.bill_payments.findFirst({
+            where: { reference: dbReference }
         });
 
         if (!payment) {
-            console.log(`Webhook ignored: Payment ID ${paymentId} not found.`);
+            console.log(`Webhook ignored: Payment with Ref ${dbReference} not found.`);
             return null;
         }
 
@@ -560,11 +557,10 @@ class PaymentService {
 
         // 4. Update DB
         if (code === '00') {
-             console.log(`Payment ${paymentId} success. Updating DB...`);
-             await _markPayOSPaymentAsCompleted(payment, reference);
+             console.log(`Payment ${payment.payment_id} (Ref: ${dbReference}) success.`);
+            await _markPayOSPaymentAsCompleted(payment, reference);
         } else {
-             console.log(`Payment ${paymentId} failed (Code: ${code}).`);
-             await _markPaymentAsFailed(payment);
+            await _markPaymentAsFailed(payment.payment_id);
         }
         
         return webhookData.data;
