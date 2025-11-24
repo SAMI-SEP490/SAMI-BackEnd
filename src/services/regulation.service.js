@@ -1335,6 +1335,7 @@ class RegulationService {
         return {
             regulation_id: regulation.regulation_id,
             title: regulation.title,
+            content: regulation.content,
             building_id: regulation.building_id,
             building_name: regulation.buildings?.name,
             effective_date: regulation.effective_date,
