@@ -52,5 +52,8 @@ router.get(
     requireRole(['tenant']),
     tenantController.getTenantChatbotContext
 );
+router.post('/search',
+    requireRole(['owner', 'manager']),
+    tenantController.searchTenant);
 
 module.exports = router;
