@@ -449,6 +449,234 @@ class TenantService {
             active_vehicles: active_vehicles
         };
     }
-}
 
+    async findBestMatchTenant(searchData) {
+        const { tenant_name, tenant_phone, tenant_id_number, room_number } = searchData;
+
+        // Validate: Cần ít nhất 1 thông tin để tìm kiếm
+        if (!tenant_name && !tenant_phone && !tenant_id_number && !room_number) {
+            const error = new Error('At least one search parameter is required');
+            error.statusCode = 400;
+            throw error;
+        }
+
+        // Build dynamic where conditions
+        const whereConditions = {
+            AND: [],
+            users: {
+                status: 'Active' // Chỉ lấy tenant có status active
+            }
+        };
+
+        // 1. ID Number - Độ ưu tiên cao nhất (unique identifier)
+        if (tenant_id_number && tenant_id_number.trim()) {
+            whereConditions.AND.push({
+                id_number: {
+                    equals: tenant_id_number.trim()
+                }
+            });
+        }
+
+        // 2. Phone - Độ ưu tiên cao (thường unique)
+        if (tenant_phone && tenant_phone.trim()) {
+            // Chuẩn hóa số điện thoại (bỏ dấu cách, dấu gạch ngang)
+            const normalizedPhone = tenant_phone.replace(/[\s\-]/g, '');
+            whereConditions.AND.push({
+                users: {
+                    phone: {
+                        contains: normalizedPhone
+                    }
+                }
+            });
+        }
+
+        // 3. Name - Tìm kiếm linh hoạt (case-insensitive, partial match)
+        if (tenant_name && tenant_name.trim()) {
+            whereConditions.AND.push({
+                users: {
+                    full_name: {
+                        contains: tenant_name.trim(),
+                        mode: 'insensitive'
+                    }
+                }
+            });
+        }
+
+        // 4. Room Number - Có thể không chính xác nên dùng để lọc/scoring
+        if (room_number && room_number.trim()) {
+            const normalizedRoomNumber = room_number.trim().toUpperCase();
+            whereConditions.AND.push({
+                rooms: {
+                    room_number: {
+                        contains: normalizedRoomNumber,
+                        mode: 'insensitive'
+                    }
+                }
+            });
+        }
+
+        // Nếu không có điều kiện AND nào, chỉ lọc theo status active
+        const finalWhere = whereConditions.AND.length > 0
+            ? whereConditions
+            : { users: { status: 'Active' } };
+
+        // Query database
+        const candidates = await prisma.tenants.findMany({
+            where: finalWhere,
+            include: {
+                users: {
+                    select: {
+                        user_id: true,
+                        full_name: true,
+                        phone: true,
+                        email: true,
+                        gender: true,
+                        birthday: true,
+                        status: true,
+                        is_verified: true,
+                        avatar_url: true
+                    }
+                },
+                rooms: {
+                    select: {
+                        room_id: true,
+                        room_number: true,
+                        floor: true
+                    }
+                },
+
+            }
+        });
+
+        // Không tìm thấy kết quả nào
+        if (candidates.length === 0) {
+            return null;
+        }
+
+        // Nếu chỉ có 1 kết quả, trả về luôn
+        if (candidates.length === 1) {
+            return this._formatTenantResult(candidates[0]);
+        }
+
+        // Có nhiều kết quả -> Tính điểm để chọn kết quả tốt nhất
+        const scoredCandidates = candidates.map(candidate => {
+            let score = 0;
+            const matchDetails = {
+                id_number_match: false,
+                phone_match: false,
+                name_match: false,
+                room_match: false
+            };
+
+            // 1. ID Number match (50 điểm - quan trọng nhất)
+            if (tenant_id_number && candidate.id_number === tenant_id_number.trim()) {
+                score += 50;
+                matchDetails.id_number_match = true;
+            }
+
+            // 2. Phone match (30 điểm - rất quan trọng)
+            if (tenant_phone && candidate.users.phone) {
+                const normalizedInputPhone = tenant_phone.replace(/[\s\-]/g, '');
+                const normalizedDbPhone = candidate.users.phone.replace(/[\s\-]/g, '');
+
+                if (normalizedDbPhone.includes(normalizedInputPhone) ||
+                    normalizedInputPhone.includes(normalizedDbPhone)) {
+                    score += 30;
+                    matchDetails.phone_match = true;
+                }
+            }
+
+            // 3. Name match (15 điểm - có thể có lỗi chính tả)
+            if (tenant_name && candidate.users.full_name) {
+                const inputName = tenant_name.trim().toLowerCase();
+                const dbName = candidate.users.full_name.toLowerCase();
+
+                // Exact match
+                if (dbName === inputName) {
+                    score += 15;
+                    matchDetails.name_match = true;
+                }
+                // Partial match (tính điểm theo % khớp)
+                else if (dbName.includes(inputName) || inputName.includes(dbName)) {
+                    const similarity = Math.min(inputName.length, dbName.length) /
+                        Math.max(inputName.length, dbName.length);
+                    score += Math.round(15 * similarity);
+                    matchDetails.name_match = true;
+                }
+            }
+
+            // 4. Room number match (5 điểm - thông tin phụ)
+            if (room_number && candidate.rooms) {
+                const normalizedInput = room_number.trim().toUpperCase();
+                const normalizedRoom = candidate.rooms.room_number.toUpperCase();
+
+                if (normalizedRoom.includes(normalizedInput) ||
+                    normalizedInput.includes(normalizedRoom)) {
+                    score += 5;
+                    matchDetails.room_match = true;
+                }
+            }
+
+            return {
+                tenant: candidate,
+                score,
+                matchDetails
+            };
+        });
+
+        // Sắp xếp theo điểm giảm dần
+        scoredCandidates.sort((a, b) => b.score - a.score);
+
+        // Lấy kết quả tốt nhất
+        const bestMatch = scoredCandidates[0];
+
+        // Kiểm tra ngưỡng tin cậy (tùy chọn)
+        // Nếu điểm quá thấp (< 30), có thể cảnh báo
+        const confidenceThreshold = 30;
+        const isHighConfidence = bestMatch.score >= confidenceThreshold;
+
+        return {
+            ...this._formatTenantResult(bestMatch.tenant),
+            // Thêm metadata về độ tin cậy
+            _match_metadata: {
+                confidence_score: bestMatch.score,
+                max_possible_score: 100,
+                is_high_confidence: isHighConfidence,
+                match_details: bestMatch.matchDetails,
+                total_candidates_found: candidates.length
+            }
+        };
+    }
+
+    /**
+     * Helper method để format kết quả tenant
+     */
+    _formatTenantResult(tenant) {
+        return {
+            // User info
+            user_id: tenant.users.user_id,
+            full_name: tenant.users.full_name,
+            phone: tenant.users.phone,
+            email: tenant.users.email,
+            gender: tenant.users.gender,
+            birthday: tenant.users.birthday,
+            status: tenant.users.status,
+            is_verified: tenant.users.is_verified,
+            avatar_url: tenant.users.avatar_url,
+
+            // Tenant info
+            id_number: tenant.id_number,
+            tenant_since: tenant.tenant_since,
+            emergency_contact_phone: tenant.emergency_contact_phone,
+            note: tenant.note,
+
+            // Room info
+            room: tenant.rooms ? {
+                room_id: tenant.rooms.room_id,
+                room_number: tenant.rooms.room_number,
+                floor: tenant.rooms.floor
+            } : null
+        };
+}
+}
 module.exports = new TenantService();

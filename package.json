@@ -22,6 +22,7 @@
   "dependencies": {
     "@getbrevo/brevo": "^3.0.1",
     "@google-cloud/documentai": "^9.5.0",
+    "@google/generative-ai": "^0.24.1",
     "@payos/node": "^2.0.3",
     "@prisma/client": "^6.17.1",
     "aws-sdk": "^2.1692.0",

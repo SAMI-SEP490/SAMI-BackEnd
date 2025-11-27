@@ -120,6 +120,40 @@ class TenantController {
         }
     }
 
+    async searchTenant(req, res, next) {
+        try {
+            const { tenant_name, tenant_phone, tenant_id_number, room_number } = req.body;
+
+            const result = await TenantService.findBestMatchTenant({
+                tenant_name,
+                tenant_phone,
+                tenant_id_number,
+                room_number
+            });
+
+            if (!result) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'No matching tenant found',
+                    data: null
+                });
+            }
+
+            // Kiểm tra độ tin cậy
+            const isLowConfidence = result._match_metadata &&
+                result._match_metadata.confidence_score < 50;
+
+            res.status(200).json({
+                success: true,
+                message: isLowConfidence
+                    ? 'Tenant found but with low confidence. Please verify the information.'
+                    : 'Tenant found successfully',
+                data: result
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
     /**
      * Same thing but using the API key auth
      */
