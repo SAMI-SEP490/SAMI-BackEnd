@@ -50,7 +50,10 @@ module.exports = {
         passwordResetExpires: parseInt(process.env.PASSWORD_RESET_EXPIRES) || 1,
         emailVerificationExpires: parseInt(process.env.EMAIL_VERIFICATION_EXPIRES) || 24,
     },
-
+    gemini: {
+        apiKey: process.env.GEMINI_API_KEY,
+        modelName: process.env.GEMINI_MODEL || 'gemini-1.5-flash'
+    },
     cors: {
         origins: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3001']
     }
