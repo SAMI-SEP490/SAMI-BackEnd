@@ -172,6 +172,69 @@ class ContractController {
             next(err);
         }
     }
+    async processContractWithAI(req, res, next) {
+        try {
+            const file = req.file; // File từ multer
+
+            if (!file) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Vui lòng upload file PDF hợp đồng'
+                });
+            }
+
+            // Validate file type
+            if (file.mimetype !== 'application/pdf') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Chỉ chấp nhận file PDF'
+                });
+            }
+
+            console.log(`📄 Processing contract PDF: ${file.originalname}`);
+
+            // Xử lý AI
+            const result = await contractService.processContractWithAI(
+                file.buffer,
+                file.mimetype
+            );
+
+            // Nếu không tìm thấy tenant hoặc thiếu thông tin
+            if (!result.success) {
+                return res.status(200).json({
+                    success: false,
+                    stage: result.stage,
+                    message: result.error,
+                    data: {
+                        parsed_data: result.parsed_data,
+                        search_params: result.search_params,
+                        suggestion: result.suggestion
+                    }
+                });
+            }
+
+            // Thành công - trả về data để admin review
+            res.status(200).json({
+                success: true,
+                message: '✅ Xử lý AI thành công',
+                data: {
+                    contract_data: result.contract_data,
+                    tenant_info: result.tenant_info,
+                    parsed_data: result.parsed_data,
+                    validation_warnings: result.validation_warnings,
+                    processing_summary: result.processing_summary
+                },
+                next_steps: result.validation_warnings.length > 0
+                    ? 'Review và sửa data trước khi tạo contract'
+                    : 'Data đầy đủ, có thể tạo contract ngay'
+            });
+
+        } catch (err) {
+            console.error('❌ Error in processContractWithAI controller:', err);
+            next(err);
+        }
+    }
+
 }
 
 module.exports = new ContractController();

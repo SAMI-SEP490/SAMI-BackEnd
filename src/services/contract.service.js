@@ -8,6 +8,9 @@ const s3Service = require('./s3.service');
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const path = require('path');
+const geminiService = require('./gemini.service');
+const tenantService = require('./tenant.service');
+const documentAIService = require('./document-ai.service');
 
 class ContractService {
     // CREATE - Tạo hợp đồng mới với file PDF
@@ -530,6 +533,203 @@ class ContractService {
         if (fs.existsSync(outputFilePath)) fs.unlinkSync(outputFilePath);
 
         return uploadResult;
+    }
+
+    async processContractWithAI(fileBuffer, mimeType = 'application/pdf') {
+        try {
+            console.log('=== BẮT ĐẦU XỬ LÝ HỢP ĐỒNG BẰNG AI ===');
+
+            // BƯỚC 1: Trích xuất text từ PDF bằng Document AI
+            console.log('Step 1: Extracting text from PDF using Document AI...');
+            const documentAIResult = await documentAIService.processContract(fileBuffer, mimeType);
+
+            if (!documentAIResult.success) {
+                throw new Error('Document AI processing failed: ' + documentAIResult.message);
+            }
+
+            const extractedText = documentAIResult.firstPageText || documentAIResult.fullText;
+
+            if (!extractedText || extractedText.trim().length === 0) {
+                throw new Error('No text extracted from PDF');
+            }
+
+            console.log(`✓ Extracted ${extractedText.length} characters from document`);
+            console.log(`  Total pages: ${documentAIResult.totalPages}`);
+
+            // BƯỚC 2: Parse text thành JSON bằng Gemini
+            console.log('Step 2: Parsing contract text with Gemini...');
+            const geminiResult = await geminiService.parseContractText(extractedText);
+
+            if (!geminiResult.success) {
+                throw new Error('Gemini parsing failed: ' + geminiResult.rawResponse);
+            }
+
+            const parsedData = geminiResult.data;
+            console.log('✓ Gemini parsed data:', JSON.stringify(parsedData, null, 2));
+
+            // BƯỚC 3: Tìm tenant trong database
+            console.log('Step 3: Searching for tenant in database...');
+            const searchParams = {
+                tenant_name: parsedData.tenant_name || null,
+                tenant_phone: parsedData.tenant_phone || null,
+                tenant_id_number: parsedData.tenant_id_number || null,
+                room_number: parsedData.room_number || null
+            };
+
+            // Kiểm tra có đủ thông tin để tìm kiếm không
+            const hasSearchCriteria = Object.values(searchParams).some(val => val !== null);
+
+            if (!hasSearchCriteria) {
+                console.warn('⚠ No search criteria available from parsed data');
+                return {
+                    success: false,
+                    stage: 'tenant_search',
+                    error: 'Không tìm thấy thông tin tenant trong hợp đồng (tên, SĐT, CMND, hoặc số phòng)',
+                    parsed_data: parsedData,
+                    extracted_text: extractedText
+                };
+            }
+
+            const tenantMatch = await tenantService.findBestMatchTenant(searchParams);
+
+            if (!tenantMatch) {
+                console.warn('⚠ No matching tenant found in database');
+                return {
+                    success: false,
+                    stage: 'tenant_not_found',
+                    error: 'Không tìm thấy tenant phù hợp trong hệ thống',
+                    search_params: searchParams,
+                    parsed_data: parsedData,
+                    extracted_text: extractedText,
+                    suggestion: 'Vui lòng tạo tenant mới hoặc kiểm tra lại thông tin'
+                };
+            }
+
+            console.log(`✓ Found tenant: ${tenantMatch.full_name} (ID: ${tenantMatch.user_id})`);
+
+            if (tenantMatch._match_metadata) {
+                console.log(`  Confidence score: ${tenantMatch._match_metadata.confidence_score}/100`);
+                console.log(`  Match details:`, tenantMatch._match_metadata.match_details);
+            }
+
+            // BƯỚC 4: Chuẩn bị data cho createContract
+            console.log('Step 4: Preparing data for contract creation...');
+
+            const contractData = {
+                room_id: tenantMatch.room?.room_id || null,
+                tenant_user_id: tenantMatch.user_id,
+                start_date: parsedData.start_date || null,
+                end_date: parsedData.end_date || null,
+                rent_amount: parsedData.rent_amount || null,
+                deposit_amount: parsedData.deposit_amount || null,
+                status: 'pending', // Mặc định pending, admin sẽ review
+                note: this._buildContractNote(parsedData, tenantMatch)
+            };
+
+            // Validate dữ liệu quan trọng
+            const validationErrors = this._validateContractData(contractData, parsedData);
+
+            if (validationErrors.length > 0) {
+                console.warn('⚠ Validation warnings:', validationErrors);
+            }
+
+            console.log('=== HOÀN TẤT XỬ LÝ AI ===');
+
+            return {
+                success: true,
+                contract_data: contractData,
+                tenant_info: {
+                    user_id: tenantMatch.user_id,
+                    full_name: tenantMatch.full_name,
+                    phone: tenantMatch.phone,
+                    email: tenantMatch.email,
+                    id_number: tenantMatch.id_number,
+                    room: tenantMatch.room,
+                    match_confidence: tenantMatch._match_metadata?.confidence_score || null
+                },
+                parsed_data: parsedData,
+                validation_warnings: validationErrors,
+            };
+
+        } catch (error) {
+            console.error('❌ Error in AI contract processing:', error.message);
+            throw new Error(`AI contract processing failed: ${error.message}`);
+        }
+    }
+    /**
+     * [Private] Xây dựng note cho contract từ parsed data
+     */
+    _buildContractNote(parsedData, tenantMatch) {
+        const notes = ['🤖 Contract processed by AI'];
+
+        // Thêm thông tin từ AI parsing
+        if (parsedData.tenant_name) {
+            notes.push(`Tên từ AI: ${parsedData.tenant_name}`);
+        }
+        if (parsedData.tenant_phone) {
+            notes.push(`SĐT từ AI: ${parsedData.tenant_phone}`);
+        }
+        if (parsedData.tenant_id_number) {
+            notes.push(`CMND/CCCD từ AI: ${parsedData.tenant_id_number}`);
+        }
+        if (parsedData.room_number) {
+            notes.push(`Số phòng từ AI: ${parsedData.room_number}`);
+        }
+
+        // Thêm thông tin match confidence
+        if (tenantMatch._match_metadata) {
+            const confidence = tenantMatch._match_metadata.confidence_score;
+            notes.push(`Match confidence: ${confidence}/100`);
+
+            if (confidence < 70) {
+                notes.push('⚠️ Low confidence match - requires manual verification');
+            }
+        }
+
+        return notes.join('\n');
+    }
+
+    /**
+     * [Private] Validate contract data
+     */
+    _validateContractData(contractData, parsedData) {
+        const errors = [];
+
+        if (!contractData.room_id) {
+            errors.push('Không tìm thấy room_id - tenant chưa có phòng hoặc số phòng không khớp');
+        }
+
+        if (!contractData.start_date) {
+            errors.push('Thiếu ngày bắt đầu hợp đồng');
+        }
+
+        if (!contractData.end_date) {
+            errors.push('Thiếu ngày kết thúc hợp đồng');
+        }
+
+        if (!contractData.rent_amount || contractData.rent_amount <= 0) {
+            errors.push('Thiếu hoặc không hợp lệ giá thuê');
+        }
+
+        // Validate date logic
+        if (contractData.start_date && contractData.end_date) {
+            const start = new Date(contractData.start_date);
+            const end = new Date(contractData.end_date);
+
+            if (start >= end) {
+                errors.push('Ngày bắt đầu phải trước ngày kết thúc');
+            }
+
+            // Check if start date is too far in the past
+            const monthsAgo = new Date();
+            monthsAgo.setMonth(monthsAgo.getMonth() - 6);
+
+            if (start < monthsAgo) {
+                errors.push(`Cảnh báo: Ngày bắt đầu quá xa trong quá khứ (${contractData.start_date})`);
+            }
+        }
+
+        return errors;
     }
 
 

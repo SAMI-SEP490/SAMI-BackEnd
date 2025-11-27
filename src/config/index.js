@@ -52,7 +52,7 @@ module.exports = {
     },
     gemini: {
         apiKey: process.env.GEMINI_API_KEY,
-        modelName: process.env.GEMINI_MODEL || 'gemini-1.5-flash'
+        modelName: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
     },
     cors: {
         origins: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3001']
