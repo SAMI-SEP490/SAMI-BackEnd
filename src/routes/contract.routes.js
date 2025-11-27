@@ -88,4 +88,8 @@ router.post('/:id/upload-images',
     uploadImage.array('images', 10),
     contractController.uploadContractImages);
 
+router.post('/import',
+    requireRole(['owner', 'manager']),
+    upload.single('contract_file'),
+    contractController.processContractWithAI);
 module.exports = router;

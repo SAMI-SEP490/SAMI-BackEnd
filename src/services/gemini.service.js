@@ -10,7 +10,7 @@ class GeminiService {
         // Khởi tạo Gemini client
         this.genAI = new GoogleGenerativeAI(config.gemini.apiKey);
         this.model = this.genAI.getGenerativeModel({
-            model: config.gemini.modelName || 'gemini-1.5-flash-latest'
+            model: config.gemini.modelName || 'gemini-2.5-flash'
         });
         console.log(`Gemini Service initialized with model: ${config.gemini.modelName || 'gemini-1.5-flash-latest'}`);
     }
@@ -45,70 +45,6 @@ class GeminiService {
             console.error('Error calling Gemini API:', error.message);
             throw new Error(`Gemini parsing failed: ${error.message}`);
         }
-    }
-
-    /**
-     * Đọc PDF trực tiếp và parse thành JSON (không cần Document AI)
-     * @param {Buffer} pdfBuffer - Buffer của file PDF
-     * @param {string} mimeType - MIME type của file
-     * @returns {Promise<object>} - JSON chứa thông tin đã parse
-     */
-    async parsePDFDirect(pdfBuffer, mimeType = 'application/pdf') {
-        try {
-            console.log('Sending PDF directly to Gemini...');
-
-            // Convert buffer sang base64
-            const base64Data = pdfBuffer.toString('base64');
-
-            const prompt = this._buildPrompt('');
-
-            const imageParts = [
-                {
-                    inlineData: {
-                        data: base64Data,
-                        mimeType: mimeType
-                    }
-                }
-            ];
-
-            const result = await this.model.generateContent([prompt, ...imageParts]);
-            const response = result.response;
-            const text = response.text();
-
-            console.log('Received response from Gemini');
-
-            // Parse JSON từ response
-            const jsonData = this._extractJSON(text);
-
-            return {
-                success: true,
-                data: jsonData,
-                rawResponse: text,
-                method: 'direct_pdf'
-            };
-
-        } catch (error) {
-            console.error('Error calling Gemini API with PDF:', error.message);
-            throw new Error(`Gemini PDF parsing failed: ${error.message}`);
-        }
-    }
-
-    /**
-     * Tự động chọn phương pháp tốt nhất
-     * @param {Buffer} pdfBuffer - Buffer của PDF
-     * @param {string} extractedText - Text đã extract từ Document AI (optional)
-     * @returns {Promise<object>} - Kết quả parse
-     */
-    async parseContract(pdfBuffer, extractedText = null) {
-        // Nếu có text từ Document AI rồi → dùng text
-        if (extractedText && extractedText.length > 100) {
-            console.log('Using extracted text from Document AI');
-            return await this.parseContractText(extractedText);
-        }
-
-        // Nếu không có text → đọc PDF trực tiếp
-        console.log('Using direct PDF parsing');
-        return await this.parsePDFDirect(pdfBuffer);
     }
 
     /**
