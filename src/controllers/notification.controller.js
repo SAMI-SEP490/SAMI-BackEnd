@@ -90,6 +90,27 @@ class NotificationController {
             next(err); 
         }
     }
+
+    /**
+     * Get list of notifications created by the current logged-in manager.
+     */
+    async getSentNotifications(req, res, next) {
+        try {
+            const senderId = req.user.user_id;
+            const notifications = await NotificationService.getSentNotifications(senderId);
+            
+            // Optional: Flatten the _count object for cleaner JSON
+            const formattedData = notifications.map(n => ({
+                ...n,
+                recipient_count: n._count.user_notifications,
+                _count: undefined // Remove the raw prisma count object
+            }));
+
+            res.status(200).json({ success: true, data: formattedData });
+        } catch (err) {
+            next(err); 
+        }
+    }
 }
 
 module.exports = new NotificationController();

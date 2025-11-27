@@ -231,6 +231,32 @@ class NotificationService {
             throw error;
         }
     }
+
+    /**
+     * Get all notifications sent by a specific manager/owner.
+     */
+    async getSentNotifications(senderId) {
+        return prisma.notifications.findMany({
+            where: {
+                created_by: senderId
+            },
+            orderBy: {
+                created_at: 'desc' // Newest first
+            },
+            select: {
+                notification_id: true,
+                title: true,
+                body: true,
+                payload: true,
+                created_at: true,
+                // Also get the count of recipients to show in the dashboard
+                // e.g., "Sent to 1 user" vs "Sent to 50 users"
+                _count: {
+                    select: { user_notifications: true }
+                }
+            }
+        });
+    }
 }
 
 module.exports = new NotificationService();

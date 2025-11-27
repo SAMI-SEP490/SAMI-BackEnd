@@ -6,6 +6,7 @@ const router = express.Router();
 const maintenanceController = require('../controllers/maintenance.controller');
 const vehicleController = require('../controllers/vehicle.controller');
 const regulationController = require('../controllers/regulation.controller');
+const tenantController = require('../controllers/tenant.controller');
 const { validateBotApiKey, botRateLimit } = require('../middlewares/bot.middleware');
 const {
     validateBotMaintenanceRequest,
@@ -183,10 +184,13 @@ router.get('/regulation/versions/:title',
     regulationController.getRegulationVersionsByBot
 );
 
-
-
-
-
+/**
+ * GET /api/bot/context
+ * Lấy ngữ cảnh tenant cho Chatbot
+ */
+router.get('/context', 
+    tenantController.getTenantContextByBot
+);
 
 /**
  * GET /api/bot/health

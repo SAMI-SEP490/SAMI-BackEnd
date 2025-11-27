@@ -285,36 +285,27 @@ class TenantService {
     }
 
     async getTenantChatbotContext(tenantUserId) {
-        // Find owners (for contact)
+        // 1. Find owners (Global contacts)
         const owners = await prisma.users.findMany({
             where: { role: 'OWNER', deleted_at: null },
             select: { full_name: true, phone: true }
         });
         
-        // Find tenant and all related data in one go
+        // 2. Find tenant and all related data
         const tenantInfo = await prisma.tenants.findUnique({
             where: { user_id: tenantUserId },
             include: {
                 users: { select: { full_name: true, user_id: true } },
-                // Get all payable bills
-                bills: {
-                    where: { status: { in: ['issued', 'overdue'] } },
-                    select: { bill_id: true, bill_number: true, due_date: true, total_amount: true, penalty_amount: true, description: true }
-                },
-                // Get the most recent active contract
-                contracts: {
-                    where: { status: 'active', deleted_at: null },
-                    select: { contract_id: true, end_date: true, start_date: true, rent_amount: true },
-                    orderBy: { start_date: 'desc' },
-                    take: 1
-                },
-                // Get room/building info
+                
+                // Direct Room Link (New Schema Feature)
                 rooms: {
                     select: {
                         room_id: true,
                         room_number: true,
                         buildings: {
-                            include: {
+                            select: {
+                                name: true,
+                                // Get managers for this specific building
                                 building_managers: {
                                     include: { users: { select: { full_name: true, phone: true } } }
                                 }
@@ -322,19 +313,43 @@ class TenantService {
                         }
                     }
                 },
-                // Get pending maintenance requests
+
+                // Bills (Payable Only)
+                bills: {
+                    where: { status: { in: ['issued', 'overdue'] } },
+                    select: { 
+                        bill_id: true, 
+                        bill_number: true, 
+                        due_date: true, 
+                        total_amount: true, 
+                        penalty_amount: true, 
+                        description: true 
+                    }
+                },
+
+                // Active Contract
+                contracts: {
+                    where: { status: 'active', deleted_at: null },
+                    select: { contract_id: true, end_date: true, start_date: true, rent_amount: true },
+                    orderBy: { start_date: 'desc' },
+                    take: 1
+                },
+
+                // Pending Maintenance
                 maintenance_requests: {
                     where: { status: { in: ['pending', 'in_progress'] } },
                     select: { request_id: true, title: true, status: true, created_at: true },
                     orderBy: { created_at: 'desc' }
                 },
-                // Get pending/rejected registrations
+
+                // Pending/Rejected Vehicle Registrations
                 vehicle_registration: {
                     where: { status: { in: ['requested', 'rejected'] } },
                     select: { assignment_id: true, status: true, reason: true, requested_at: true },
                     orderBy: { requested_at: 'desc' }
                 },
-                // Get active, approved vehicles
+
+                // Active Vehicles
                 vehicles: {
                     where: { deactivated_at: null, status: 'active' }, 
                     select: { vehicle_id: true, type: true, license_plate: true, brand: true, color: true, status: true },
@@ -349,31 +364,39 @@ class TenantService {
             throw error;
         }
 
-        // --- Format all data cleanly for the AI agent ---
+        // --- FORMAT DATA FOR AI ---
         
+        // 1. Unpaid Bills (Total + Penalty)
         const unpaid_bills = tenantInfo.bills.map(bill => ({
             bill_id: bill.bill_id,
-            bill_number: bill.bill_number,
+            bill_number: bill.bill_number || `ID: ${bill.bill_id}`,
             description: bill.description,
             total_due: (Number(bill.total_amount) || 0) + (Number(bill.penalty_amount) || 0),
             due_date: bill.due_date
         }));
 
+        // 2. Contract
         const active_contract = tenantInfo.contracts.length > 0 ? {
             contract_id: tenantInfo.contracts[0].contract_id,
             start_date: tenantInfo.contracts[0].start_date,
             end_date: tenantInfo.contracts[0].end_date,
-            rent_amount: tenantInfo.contracts[0].rent_amount
+            rent_amount: Number(tenantInfo.contracts[0].rent_amount)
         } : null;
 
+        // 3. Contacts (Building Managers + Owners)
         const contacts = [];
-        tenantInfo.rooms?.buildings?.building_managers.forEach(mgr => {
-            contacts.push({ role: 'Manager', name: mgr.users.full_name, phone: mgr.users.phone });
-        });
+        // Get managers from the tenant's assigned building
+        if (tenantInfo.rooms?.buildings?.building_managers) {
+            tenantInfo.rooms.buildings.building_managers.forEach(mgr => {
+                contacts.push({ role: 'Manager', name: mgr.users.full_name, phone: mgr.users.phone });
+            });
+        }
+        // Always add owners
         owners.forEach(owner => {
             contacts.push({ role: 'Owner', name: owner.full_name, phone: owner.phone });
         });
         
+        // 4. Maintenance
         const pending_maintenance = tenantInfo.maintenance_requests.map(req => ({
             request_id: req.request_id,
             title: req.title,
@@ -381,8 +404,14 @@ class TenantService {
             created_at: req.created_at
         }));
 
+        // 5. Pending Registrations (Parse JSON reason)
         const pending_registrations = tenantInfo.vehicle_registration.map(reg => {
-            const info = JSON.parse(reg.reason || '{}'); // Parse vehicle info
+            let info = {};
+            try {
+                info = JSON.parse(reg.reason || '{}');
+            } catch (e) {
+                info = { note: "Error parsing details" };
+            }
             return {
                 registration_id: reg.assignment_id,
                 status: reg.status,
@@ -394,6 +423,7 @@ class TenantService {
             };
         });
         
+        // 6. Active Vehicles
         const active_vehicles = tenantInfo.vehicles.map(v => ({
             vehicle_id: v.vehicle_id,
             type: v.type,
@@ -403,18 +433,19 @@ class TenantService {
             status: v.status
         }));
 
-        // This is the final JSON object Dify will receive
+        // --- FINAL JSON RESPONSE ---
         return {
             tenant_user_id: tenantInfo.users.user_id,
             tenant_name: tenantInfo.users.full_name,
             room_id: tenantInfo.room_id,
-            room_number: tenantInfo.rooms?.room_number,
+            room_number: tenantInfo.rooms?.room_number || "N/A",
+            building_name: tenantInfo.rooms?.buildings?.name || "N/A",
             current_date: new Date().toISOString(),
             unpaid_bills: unpaid_bills,
             active_contract: active_contract,
             contacts: contacts,
             pending_maintenance: pending_maintenance,
-            pending_registrations: pending_registrations,
+            pending_vehicle_registrations: pending_registrations,
             active_vehicles: active_vehicles
         };
     }

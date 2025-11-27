@@ -200,8 +200,10 @@ class PaymentController {
             let refDisplay = orderCode;
             
             if (orderCode) {
-                const payment = await prisma.bill_payments.findUnique({
-                    where: { payment_id: Number(orderCode) }
+                // Re-add prefix to find in DB
+                const dbReference = `PAYOS-${orderCode}`;
+                const payment = await prisma.bill_payments.findFirst({
+                    where: { reference: dbReference }
                 });
                 if (payment) {
                     amountDisplay = Number(payment.amount).toLocaleString('vi-VN') + " VND";
@@ -270,7 +272,8 @@ class PaymentController {
      */
     async renderCancelPage(req, res) {
         const { orderCode } = req.query;
-        
+        const dbReference = `PAYOS-${orderCode}`;
+
         const html = `
             <html>
                 <head>
@@ -293,7 +296,7 @@ class PaymentController {
                         <p>Bạn đã hủy giao dịch hoặc giao dịch thất bại.</p>
                         
                         <p style="background: #fff3f3; padding: 10px; border-radius: 5px; color: #dc3545; font-size: 14px;">
-                           Mã đơn: #${orderCode || 'Unknown'}
+                           Mã đơn: #${dbReference || 'Unknown'}
                         </p>
 
                         <button class="btn" onclick="window.close()">Đóng và quay lại App</button>

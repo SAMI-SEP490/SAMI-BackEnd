@@ -3,18 +3,29 @@
 
 const admin = require('firebase-admin');
 const prisma = require('../config/prisma');
+const fs = require('fs');
+const path = require('path');
+
+// --- SAFE INITIALIZATION ---
+let isFirebaseInitialized = false;
 
 // --- IMPORTANT ---
 // Make sure this path points to the key you just downloaded
-const serviceAccount = require('../../firebase-adminsdk.json'); 
+const serviceAccountPath = path.join(__dirname, '../../firebase-adminsdk.json');
 
-try {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
-  });
-  console.log('Firebase Admin SDK initialized successfully.');
-} catch (error) {
-  console.error('Firebase Admin SDK initialization error:', error);
+if (fs.existsSync(serviceAccountPath)) {
+    try {
+        const serviceAccount = require(serviceAccountPath);
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+        isFirebaseInitialized = true;
+        console.log('✅ Firebase Admin SDK initialized.');
+    } catch (error) {
+        console.warn('⚠️ Firebase init failed:', error.message);
+    }
+} else {
+    console.warn('⚠️ firebase-adminsdk.json not found. Push notifications will be disabled.');
 }
 
 class PushService {
@@ -26,6 +37,11 @@ class PushService {
      * @param {object} [data] - Optional data payload (e.g., { link: '/bills/123' }).
      */
     async sendPushToUser(userId, title, body, data = {}) {
+        if (!isFirebaseInitialized) {
+            console.log(`[Mock Push] To User ${userId}: ${title} - ${body}`);
+            return;
+        }
+
         console.log(`Attempting to send push notification to user ${userId}`);
 
         // 1. Find all device tokens for this user
@@ -100,6 +116,11 @@ class PushService {
      * @param {object} [data] - Optional data payload (e.g., { link: '/notifications' }).
      */
     async sendPushToUsers(userIds, title, body, data = {}) {
+        if (!isFirebaseInitialized) {
+            console.log(`[Mock Broadcast] To ${userIds.length} users: ${title}`);
+            return;
+        }
+
         console.log(`Attempting to broadcast to ${userIds.length} users...`);
 
         // 1. Find all device tokens for ALL these users
