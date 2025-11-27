@@ -154,6 +154,37 @@ class TenantController {
             next(error);
         }
     }
+    /**
+     * Same thing but using the API key auth
+     */
+    async getTenantContextByBot(req, res, next) {
+        try {
+            // 1. Extract user ID from Query Params
+            const { tenant_user_id } = req.query;
+
+            if (!tenant_user_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_user_id is required as query parameter'
+                });
+            }
+
+            // 2. Call the existing service
+            const context = await TenantService.getTenantChatbotContext(parseInt(tenant_user_id));
+
+            // 3. Return in standard Bot response format
+            res.json({
+                success: true,
+                data: context,
+                bot_info: {
+                    accessed_by: req.bot.name, // From bot.middleware
+                    timestamp: new Date()
+                }
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
 }
 
 module.exports = new TenantController();
