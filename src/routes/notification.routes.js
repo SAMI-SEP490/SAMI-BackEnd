@@ -49,4 +49,11 @@ router.post(
     notificationController.sendBuildingBroadcast
 );
 
+// Get list of sent notifications (Outbox)
+router.get(
+    '/sent',
+    requireRole(['owner', 'manager']),
+    notificationController.getSentNotifications
+);
+
 module.exports = router;
