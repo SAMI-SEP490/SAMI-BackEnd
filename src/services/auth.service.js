@@ -285,11 +285,9 @@ class AuthService {
         });
 
         if (!user) {
-            // Don't reveal if user exists for security reasons
-            // But still return success
             return {
-                success: true,
-                message: 'If an account exists with this email, an OTP has been sent'
+                success: false,
+                message: 'Email does not exist in our system'
             };
         }
 
@@ -536,7 +534,7 @@ class AuthService {
     }
 
     async updateProfile(userId, data) {
-        const { full_name, gender, birthday, avatar_url } = data;
+        const { full_name, gender, birthday, phone, avatar_url } = data;
 
         const user = await prisma.users.update({
             where: { user_id: userId },
@@ -544,6 +542,7 @@ class AuthService {
                 full_name,
                 gender,
                 birthday: birthday ? new Date(birthday) : undefined,
+                phone,
                 avatar_url,
                 updated_at: new Date()
             },
