@@ -297,7 +297,27 @@ class TenantService {
             include: {
                 users: { select: { full_name: true, user_id: true } },
                 
-                // Direct Room Link (New Schema Feature)
+                // --- UPDATED: Get Bill History (Last 12 items) ---
+                bills: {
+                    where: { 
+                        deleted_at: null,
+                        status: { not: 'draft' } // Exclude drafts, keep everything else
+                    },
+                    select: { 
+                        bill_id: true, 
+                        bill_number: true, 
+                        due_date: true, 
+                        total_amount: true, 
+                        penalty_amount: true, 
+                        description: true,
+                        status: true // Need status to tell Paid vs Unpaid
+                    },
+                    orderBy: { billing_period_start: 'desc' }, // Newest first
+                    take: 12 // Limit to last 1 year
+                },
+                // -------------------------------------------------
+
+                // Direct Room Link
                 rooms: {
                     select: {
                         room_id: true,
@@ -311,19 +331,6 @@ class TenantService {
                                 }
                             }
                         }
-                    }
-                },
-
-                // Bills (Payable Only)
-                bills: {
-                    where: { status: { in: ['issued', 'overdue'] } },
-                    select: { 
-                        bill_id: true, 
-                        bill_number: true, 
-                        due_date: true, 
-                        total_amount: true, 
-                        penalty_amount: true, 
-                        description: true 
                     }
                 },
 
@@ -366,12 +373,14 @@ class TenantService {
 
         // --- FORMAT DATA FOR AI ---
         
-        // 1. Unpaid Bills (Total + Penalty)
-        const unpaid_bills = tenantInfo.bills.map(bill => ({
+        // 1. Bill History (Renamed from unpaid_bills)
+        const bill_history = tenantInfo.bills.map(bill => ({
             bill_id: bill.bill_id,
             bill_number: bill.bill_number || `ID: ${bill.bill_id}`,
             description: bill.description,
+            // Calculate total including penalty
             total_due: (Number(bill.total_amount) || 0) + (Number(bill.penalty_amount) || 0),
+            status: bill.status, // 'paid', 'issued', 'overdue', 'cancelled'
             due_date: bill.due_date
         }));
 
@@ -407,11 +416,7 @@ class TenantService {
         // 5. Pending Registrations (Parse JSON reason)
         const pending_registrations = tenantInfo.vehicle_registration.map(reg => {
             let info = {};
-            try {
-                info = JSON.parse(reg.reason || '{}');
-            } catch (e) {
-                info = { note: "Error parsing details" };
-            }
+            try { info = JSON.parse(reg.reason || '{}'); } catch (e) { info = { note: "Error parsing" }; }
             return {
                 registration_id: reg.assignment_id,
                 status: reg.status,
@@ -441,7 +446,7 @@ class TenantService {
             room_number: tenantInfo.rooms?.room_number || "N/A",
             building_name: tenantInfo.rooms?.buildings?.name || "N/A",
             current_date: new Date().toISOString(),
-            unpaid_bills: unpaid_bills,
+            bill_history: bill_history,             
             active_contract: active_contract,
             contacts: contacts,
             pending_maintenance: pending_maintenance,
