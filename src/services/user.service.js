@@ -597,6 +597,8 @@ class UserService {
             if (data.gender) userDataToUpdate.gender = data.gender;
             if (data.birthday) userDataToUpdate.birthday = new Date(data.birthday);
             if (data.status) userDataToUpdate.status = data.status;
+            if (data.email) userDataToUpdate.email = data.email;
+            if (data.phone) userDataToUpdate.phone = data.phone;
 
             // 2. Prepare and execute role-specific table update
             if (targetUserRole === 'TENANT') {
