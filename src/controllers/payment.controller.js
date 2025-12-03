@@ -306,6 +306,38 @@ class PaymentController {
         `;
         res.send(html);
     }
+
+    /**
+     * Bot creates a PayOS Link
+     */
+    async createPayOSLinkByBot(req, res, next) {
+        try {
+            // 1. Get data from Bot request
+            // Note: Dify might send bill_id as a single number or string
+            const { tenant_user_id, bill_id } = req.body;
+
+            if (!tenant_user_id || !bill_id) {
+                return res.status(400).json({ success: false, message: "Missing required fields" });
+            }
+
+            // 2. Ensure billIds is an array (Bot might send just one ID)
+            const billIds = Array.isArray(bill_id) ? bill_id : [parseInt(bill_id)];
+
+            // 3. Call the existing service
+            const result = await PaymentService.createPayOSLink(tenant_user_id, billIds);
+
+            // 4. Return URL
+            res.json({
+                success: true,
+                data: {
+                    checkoutUrl: result.checkoutUrl,
+                    message: "Payment link created successfully."
+                }
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
 }
 
 module.exports = new PaymentController();

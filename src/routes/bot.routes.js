@@ -7,6 +7,7 @@ const maintenanceController = require('../controllers/maintenance.controller');
 const vehicleController = require('../controllers/vehicle.controller');
 const regulationController = require('../controllers/regulation.controller');
 const tenantController = require('../controllers/tenant.controller');
+const paymentController = require('../controllers/payment.controller'); // <-- Import this
 const { validateBotApiKey, botRateLimit } = require('../middlewares/bot.middleware');
 const {
     validateBotMaintenanceRequest,
@@ -190,6 +191,14 @@ router.get('/regulation/versions/:title',
  */
 router.get('/context', 
     tenantController.getTenantContextByBot
+);
+
+/**
+ * POST /api/bot/create-payment
+ * Bot tạo link thanh toán PayOS
+ */
+router.post('/create-payment', 
+    paymentController.createPayOSLinkByBot
 );
 
 /**
