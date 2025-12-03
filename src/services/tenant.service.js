@@ -295,7 +295,7 @@ class TenantService {
         const tenantInfo = await prisma.tenants.findUnique({
             where: { user_id: tenantUserId },
             include: {
-                users: { select: { full_name: true, user_id: true } },
+                users: { select: { full_name: true, user_id: true, gender: true, birthday: true } },
                 
                 // --- UPDATED: Get Bill History (Last 12 items) ---
                 bills: {
@@ -438,10 +438,16 @@ class TenantService {
             status: v.status
         }));
 
+        // Calculate age
+        const birthDate = new Date(tenantInfo.users.birthday);
+        const age = new Date().getFullYear() - birthDate.getFullYear();
+
         // --- FINAL JSON RESPONSE ---
         return {
             tenant_user_id: tenantInfo.users.user_id,
             tenant_name: tenantInfo.users.full_name,
+            tenant_gender: tenantInfo.users.gender,
+            tenant_age: age,
             room_id: tenantInfo.room_id,
             room_number: tenantInfo.rooms?.room_number || "N/A",
             building_name: tenantInfo.rooms?.buildings?.name || "N/A",
