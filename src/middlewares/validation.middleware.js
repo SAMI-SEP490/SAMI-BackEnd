@@ -56,7 +56,12 @@ const updateProfileSchema = z.object({
     full_name: z.string().min(1).optional(),
     gender: z.enum(['Male', 'Female', 'Other']).optional(),
     birthday: z.string().or(z.date()).optional(),
-    avatar_url: z.string().url().optional()
+    avatar_url: z.string().url().optional(),
+
+    phone: z
+        .string()
+        .regex(/^(0|\+84)[0-9]{9}$/, 'Số điện thoại không hợp lệ')
+        .optional()
 });
 
 // New OTP schemas (Zod)
