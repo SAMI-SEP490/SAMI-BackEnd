@@ -7,6 +7,7 @@ const { hashPassword, comparePassword } = require('../utils/password');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const { generateRandomToken } = require('../utils/tokens');
 const { sendPasswordResetEmail, sendOTPEmail } = require('../utils/email');
+const s3Service = require('./s3.service');
 const config = require('../config');
 
 class AuthService {
@@ -533,9 +534,46 @@ class AuthService {
         };
     }
 
-    async updateProfile(userId, data) {
-        const { full_name, gender, birthday, phone, avatar_url } = data;
+    async updateProfile(userId, data, avatarFile = null) {
+        const { full_name, gender, birthday, phone } = data;
 
+        let avatar_url = undefined;
+
+        // Nếu có file avatar được upload
+        if (avatarFile) {
+            try {
+                // Upload ảnh lên S3 sử dụng method uploadAvatar mới
+                const uploadResult = await s3Service.uploadAvatar(
+                    avatarFile.buffer,
+                    avatarFile.originalname
+                );
+
+                avatar_url = uploadResult.url;
+
+                // Xóa ảnh cũ nếu có (optional - để tránh rác trên S3)
+                const currentUser = await prisma.users.findUnique({
+                    where: { user_id: userId },
+                    select: { avatar_url: true }
+                });
+
+                if (currentUser.avatar_url) {
+                    // Extract s3_key from old URL
+                    const oldS3Key = s3Service.extractS3KeyFromUrl(currentUser.avatar_url);
+                    if (oldS3Key && oldS3Key.startsWith('avatars/')) {
+                        // Chỉ xóa nếu là avatar (safety check)
+                        await s3Service.deleteFile(oldS3Key).catch(err => {
+                            console.error('Failed to delete old avatar:', err);
+                            // Không throw error, tiếp tục update profile
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error uploading avatar:', error);
+                throw new Error('Failed to upload avatar image');
+            }
+        }
+
+        // Update user profile
         const user = await prisma.users.update({
             where: { user_id: userId },
             data: {
@@ -543,7 +581,7 @@ class AuthService {
                 gender,
                 birthday: birthday ? new Date(birthday) : undefined,
                 phone,
-                avatar_url,
+                ...(avatar_url !== undefined && { avatar_url }), // Chỉ update nếu có avatar mới
                 updated_at: new Date()
             },
             select: {
@@ -560,7 +598,6 @@ class AuthService {
 
         return user;
     }
-
 }
 
 module.exports = new AuthService();

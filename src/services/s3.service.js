@@ -1,4 +1,4 @@
-// Updated: 2025-17-10
+// Updated: 2025-3-12
 // By: DatNB
 
 const { s3, BUCKET_NAME } = require('../config/s3');
@@ -159,6 +159,72 @@ class S3Service {
             .digest('hex');
 
         return actualChecksum === expectedChecksum;
+    }
+
+    // ==================== METHODS MỚI CHO AVATAR ====================
+
+    /**
+     * Upload avatar lên S3 với ACL public-read
+     * @param {Buffer} fileBuffer - Buffer của ảnh
+     * @param {String} fileName - Tên file gốc
+     * @returns {Object} - Thông tin ảnh đã upload
+     */
+    async uploadAvatar(fileBuffer, fileName) {
+        try {
+            const fileExt = path.extname(fileName);
+            const timestamp = Date.now();
+            const randomString = crypto.randomBytes(8).toString('hex');
+            const s3Key = `avatars/${timestamp}-${randomString}${fileExt}`;
+
+            const contentType = mime.lookup(fileName) || 'image/jpeg';
+
+            const uploadParams = {
+                Bucket: BUCKET_NAME,
+                Key: s3Key,
+                Body: fileBuffer,
+                ContentType: contentType,
+                ACL: 'public-read', // Public để hiển thị ảnh
+                ServerSideEncryption: 'AES256',
+                CacheControl: 'max-age=31536000', // Cache 1 năm
+                Metadata: {
+                    'original-filename': fileName,
+                    'upload-timestamp': timestamp.toString(),
+                    'file-type': 'avatar'
+                }
+            };
+
+            const result = await s3.upload(uploadParams).promise();
+
+            return {
+                s3_key: s3Key,
+                file_name: fileName,
+                url: result.Location,
+                bucket: BUCKET_NAME,
+                size: fileBuffer.length,
+                content_type: contentType,
+                uploaded_at: new Date()
+            };
+        } catch (error) {
+            console.error('S3 Upload Avatar Error:', error);
+            throw new Error(`Failed to upload avatar to S3: ${error.message}`);
+        }
+    }
+
+    /**
+     * Extract S3 key từ full URL
+     * @param {String} url - Full S3 URL
+     * @returns {String|null} - S3 key hoặc null
+     */
+    extractS3KeyFromUrl(url) {
+        if (!url) return null;
+        try {
+            const urlObj = new URL(url);
+            // Remove leading slash
+            return urlObj.pathname.substring(1);
+        } catch (error) {
+            console.error('Invalid URL:', error);
+            return null;
+        }
     }
 }
 
