@@ -28,7 +28,7 @@ const validateBotMaintenanceRequest = (req, res, next) => {
             'plumbing',
             'electrical',
             'hvac',
-            'appliance',
+            'carpentry',
             'structural',
             'cleaning',
             'other'
