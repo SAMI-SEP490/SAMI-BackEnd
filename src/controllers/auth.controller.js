@@ -111,7 +111,8 @@ class AuthController {
             return res.status(200).json({
                 success: true,
                 message: result.message,
-                email: result.email || email
+                email: result.email || email,
+                userID: result.userID
             });
         } catch (error) {
             console.error('Forgot password error:', error);
@@ -210,7 +211,34 @@ class AuthController {
 
     async updateProfile(req, res, next) {
         try {
-            const updatedUser = await authService.updateProfile(req.user.user_id, req.body);
+            // Lấy file avatar từ request (nếu có)
+            const avatarFile = req.file || null;
+
+            // Validate file type nếu có upload
+            if (avatarFile) {
+                const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+                if (!allowedMimeTypes.includes(avatarFile.mimetype)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid file type. Only JPEG, PNG, and WebP images are allowed.'
+                    });
+                }
+
+                // Validate file size (max 5MB)
+                const maxSize = 5 * 1024 * 1024; // 5MB
+                if (avatarFile.size > maxSize) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'File size too large. Maximum size is 5MB.'
+                    });
+                }
+            }
+
+            const updatedUser = await authService.updateProfile(
+                req.user.user_id,
+                req.body,
+                avatarFile
+            );
 
             res.json({
                 success: true,

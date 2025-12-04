@@ -16,7 +16,8 @@ const {
     changePasswordSchema,
     updateProfileSchema,
     verifyOTPSchema,
-    resendOTPSchema
+    resendOTPSchema,
+    upload
 } = require('../middlewares/validation.middleware');
 
 // Public routes
@@ -36,7 +37,11 @@ router.post('/register', requireRole(['owner', 'manager']) , validate(registerSc
 router.post('/logout', authController.logout);
 router.post('/change-password', validate(changePasswordSchema), authController.changePassword);
 router.get('/profile', authController.getProfile);
-router.put('/profile', validate(updateProfileSchema), authController.updateProfile);
+router.put('/profile',
+    upload.single('avatar'),
+    validate(updateProfileSchema),
+    authController.updateProfile
+);
 
 
 module.exports = router;
