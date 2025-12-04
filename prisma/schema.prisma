@@ -466,6 +466,7 @@ enum maintenance_category {
   electrical
   hvac
   carpentry
+  structural
   cleaning
   other
 }
