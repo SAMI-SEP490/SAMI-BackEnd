@@ -183,7 +183,7 @@ class S3Service {
                 Key: s3Key,
                 Body: fileBuffer,
                 ContentType: contentType,
-                ACL: 'public-read', // Public để hiển thị ảnh
+            //   ACL: 'public-read', // Public để hiển thị ảnh
                 ServerSideEncryption: 'AES256',
                 CacheControl: 'max-age=31536000', // Cache 1 năm
                 Metadata: {

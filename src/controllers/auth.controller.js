@@ -1,4 +1,4 @@
-// Updated: 2025-15-10
+// Updated: 2025-05-12
 // by: DatNB
 
 
@@ -211,8 +211,11 @@ class AuthController {
 
     async updateProfile(req, res, next) {
         try {
+
             // Lấy file avatar từ request (nếu có)
             const avatarFile = req.file || null;
+
+
 
             // Validate file type nếu có upload
             if (avatarFile) {
@@ -240,12 +243,15 @@ class AuthController {
                 avatarFile
             );
 
+
+
             res.json({
                 success: true,
                 message: 'Profile updated successfully',
                 data: { user: updatedUser }
             });
         } catch (err) {
+            console.error('Update profile error:', err);
             next(err);
         }
     }
