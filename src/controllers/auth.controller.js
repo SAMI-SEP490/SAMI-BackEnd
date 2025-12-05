@@ -112,7 +112,7 @@ class AuthController {
                 success: true,
                 message: result.message,
                 email: result.email || email,
-                userID: result.userID
+                userId: result.userID
             });
         } catch (error) {
             console.error('Forgot password error:', error);
