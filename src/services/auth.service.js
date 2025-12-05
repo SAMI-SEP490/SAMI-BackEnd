@@ -1,4 +1,4 @@
-// Updated: 2025-15-10
+// Updated: 2025-05-12
 // by: DatNB
 
 const prisma = require('../config/prisma');
@@ -537,18 +537,37 @@ class AuthService {
     async updateProfile(userId, data, avatarFile = null) {
         const { full_name, gender, birthday, phone } = data;
 
+        // Validate phone nếu có thay đổi
+        if (phone) {
+            const existingUserWithPhone = await prisma.users.findFirst({
+                where: {
+                    phone: phone,
+                    user_id: { not: userId }, // Không phải chính user này
+                    deleted_at: null
+                }
+            });
+
+            if (existingUserWithPhone) {
+                throw new Error('Phone number is already in use by another account');
+            }
+        }
+
         let avatar_url = undefined;
 
         // Nếu có file avatar được upload
         if (avatarFile) {
             try {
+
+
                 // Upload ảnh lên S3 sử dụng method uploadAvatar mới
                 const uploadResult = await s3Service.uploadAvatar(
                     avatarFile.buffer,
                     avatarFile.originalname
                 );
 
+                console.log('S3 upload result:', uploadResult);
                 avatar_url = uploadResult.url;
+                console.log('Avatar URL to save:', avatar_url);
 
                 // Xóa ảnh cũ nếu có (optional - để tránh rác trên S3)
                 const currentUser = await prisma.users.findUnique({
@@ -556,7 +575,7 @@ class AuthService {
                     select: { avatar_url: true }
                 });
 
-                if (currentUser.avatar_url) {
+                if (currentUser && currentUser.avatar_url) {
                     // Extract s3_key from old URL
                     const oldS3Key = s3Service.extractS3KeyFromUrl(currentUser.avatar_url);
                     if (oldS3Key && oldS3Key.startsWith('avatars/')) {
@@ -573,17 +592,21 @@ class AuthService {
             }
         }
 
+        // Chuẩn bị data để update (chỉ update những field được gửi lên)
+        const updateData = {
+            updated_at: new Date()
+        };
+
+        if (full_name !== undefined) updateData.full_name = full_name;
+        if (gender !== undefined) updateData.gender = gender;
+        if (birthday !== undefined) updateData.birthday = birthday ? new Date(birthday) : null;
+        if (phone !== undefined) updateData.phone = phone;
+        if (avatar_url !== undefined) updateData.avatar_url = avatar_url;
+
         // Update user profile
         const user = await prisma.users.update({
             where: { user_id: userId },
-            data: {
-                full_name,
-                gender,
-                birthday: birthday ? new Date(birthday) : undefined,
-                phone,
-                ...(avatar_url !== undefined && { avatar_url }), // Chỉ update nếu có avatar mới
-                updated_at: new Date()
-            },
+            data: updateData,
             select: {
                 user_id: true,
                 email: true,

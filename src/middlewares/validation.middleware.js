@@ -321,7 +321,23 @@ const upload = multer({
         }
     }
 });
-
+// Middleware để log multer errors
+const handleMulterError = (err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+        console.error('Multer Error:', err);
+        return res.status(400).json({
+            success: false,
+            message: `Upload error: ${err.message}`
+        });
+    } else if (err) {
+        console.error('Upload Error:', err);
+        return res.status(400).json({
+            success: false,
+            message: err.message
+        });
+    }
+    next();
+};
 module.exports = {
     validate,
     registerSchema,
@@ -344,5 +360,6 @@ module.exports = {
     sendNotificationSchema,
     sendBroadcastSchema,
     registerDeviceSchema,
-    upload
+    upload,
+    handleMulterError
 };
