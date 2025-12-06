@@ -909,10 +909,7 @@ class MaintenanceService {
 
         // Tạo description với thông tin bot
         const botDescription = [
-            `🤖 Request created by Bot`,
-            `Bot: ${botInfo.name}`,
-            `Created at: ${new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}`,
-            '',
+            ` Yêu cầu tạo bởi trợ lý ảo SAMI `,
             description || ''
         ].join('\n');
 
@@ -926,7 +923,7 @@ class MaintenanceService {
                 category: category || null,
                 priority: priority || 'normal',
                 status: 'pending',
-                note: note || 'Created by bot service',
+                note: note || 'Tạo bởi trợ lý ảo SAMI  ',
                 created_at: new Date(),
                 updated_at: new Date()
             },
