@@ -82,7 +82,7 @@ const validateUpdateMaintenanceRequest = [
 
     body('category')
         .optional()
-        .isIn(['plumbing', 'electrical', 'hvac', 'carpentry', 'cleaning', 'other'])
+        .isIn(['plumbing', 'electrical', 'hvac', 'carpentry', 'cleaning', 'structural', 'other'])
         .withMessage('Invalid category'),
 
     body('priority')
