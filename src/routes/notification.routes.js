@@ -20,6 +20,9 @@ router.post(
     notificationController.registerDevice
 );
 
+// Unregister my device token
+router.post('/unregister-device', notificationController.unregisterDevice);
+
 // Mark a notification as read
 router.post('/:id/read', notificationController.markAsRead);
 

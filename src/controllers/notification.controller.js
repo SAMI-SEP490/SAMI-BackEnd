@@ -57,6 +57,19 @@ class NotificationController {
         }
     }
 
+    // Unregister the device from FCM
+    async unregisterDevice(req, res, next) {
+        try {
+            const { token } = req.body;
+            // Validate that we are only deleting the token if it belongs to this user
+            // (Security check to prevent deleting other people's tokens)
+            await NotificationService.removeDeviceToken(req.user.user_id, token);
+            res.status(200).json({ success: true, message: "Device unregistered" });
+        } catch (err) {
+            next(err);
+        }
+    }
+
     async sendBroadcast(req, res, next) {
         try {
             // Data is already validated

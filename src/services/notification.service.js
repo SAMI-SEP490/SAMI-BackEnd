@@ -112,6 +112,19 @@ class NotificationService {
         });
     }
 
+     /**
+     * Remove a device token from FCM.
+     */
+    async removeDeviceToken(userId, token) {
+        // Only delete if the token actually matches the user
+        return prisma.device_tokens.deleteMany({
+            where: {
+                token: token,
+                user_id: userId 
+            }
+        });
+    }
+
     /**
      * Creates a broadcast notification for ALL tenants.
      * @param {number} senderId - The manager/owner sending the message.
