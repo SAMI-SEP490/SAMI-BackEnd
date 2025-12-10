@@ -13,6 +13,9 @@ router.use(authenticate);
 // Get my notification inbox
 router.get('/', notificationController.getMyNotifications);
 
+// Mark all as read
+router.put('/read-all', notificationController.markAllAsRead);
+
 // Register my device token
 router.post(
     '/register-device',

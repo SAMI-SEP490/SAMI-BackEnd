@@ -6,6 +6,7 @@ const { generateVnpayUrl, verifyVnpaySignature } = require('../utils/vnpay');
 const excelJS = require('exceljs');
 const fastcsv = require('fast-csv');
 const { PayOS } = require("@payos/node");
+const NotificationService = require('./notification.service');
 
 // Initialize PayOS
 // --- SAFE INITIALIZATION ---
@@ -89,7 +90,7 @@ async function _markPayOSPaymentAsCompleted(payment, payosReference) {
     });
 
     // 3. Send Notifications (Optional but recommended)
-    // await NotificationService.sendPaymentSuccessNotification(payment);
+    await NotificationService.sendPaymentSuccessNotification(payment);
 }
 
 // Helper function to mark any payment as failed
