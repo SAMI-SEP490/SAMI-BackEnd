@@ -112,7 +112,7 @@ class AuthService {
             throw new Error('OTP has expired or does not exist');
         }
 
-        if (storedOTP !== otp) {
+        if (String(storedOTP).trim() !== String(otp).trim()) {
             throw new Error('Invalid OTP');
         }
 
@@ -336,7 +336,7 @@ class AuthService {
             throw new Error('OTP has expired or does not exist');
         }
 
-        if (storedOTP !== otp) {
+        if (String(storedOTP).trim() !== String(otp).trim()) {
             throw new Error('Invalid OTP');
         }
 
