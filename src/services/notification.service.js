@@ -257,6 +257,24 @@ class NotificationService {
             }
         });
     }
+
+    /**
+     * Marks ALL notifications for a user as read.
+     */
+    async markAllAsRead(userId) {
+        const updated = await prisma.user_notifications.updateMany({
+            where: {
+                user_id: userId,
+                is_read: false // Only update unread ones
+            },
+            data: {
+                is_read: true,
+                read_at: new Date()
+            }
+        });
+        
+        return updated;
+    }
 }
 
 module.exports = new NotificationService();

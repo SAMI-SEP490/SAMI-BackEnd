@@ -111,6 +111,21 @@ class NotificationController {
             next(err); 
         }
     }
+
+    // For Tenant & Manager: Mark ALL as read
+    async markAllAsRead(req, res, next) {
+        try {
+            const userId = req.user.user_id;
+            
+            const result = await NotificationService.markAllAsRead(userId);
+            
+            res.status(200).json({ 
+                success: true, 
+                message: "All notifications marked as read",
+                count: result.count 
+            });
+        } catch (err) { next(err); }
+    }
 }
 
 module.exports = new NotificationController();
