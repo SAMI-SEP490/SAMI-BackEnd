@@ -249,7 +249,10 @@ class NotificationService {
     async getSentNotifications(senderId) {
         return prisma.notifications.findMany({
             where: {
-                created_by: senderId
+                OR: [
+                    { created_by: Number(senderId) }, // 1. Sent by this Manager
+                    { created_by: null }               // 2. Sent by System (Auto)
+                ]
             },
             orderBy: {
                 created_at: 'desc' // Newest first
