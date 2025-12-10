@@ -1,5 +1,6 @@
-// Updated: 2025-11-06
-// by: DatNB
+// Updated: 2025-12-08
+// by: Assistant
+// Modified: Added userRole parameter to approve/reject methods
 
 const vehicleRegistrationService = require('../services/vehicle.service');
 
@@ -97,7 +98,8 @@ class VehicleRegistrationController {
 
             const approved = await vehicleRegistrationService.approveVehicleRegistration(
                 parseInt(id),
-                req.user.user_id
+                req.user.user_id,
+                req.user.role // Thêm userRole
             );
 
             res.json({
@@ -110,16 +112,17 @@ class VehicleRegistrationController {
         }
     }
 
-// Reject vehicle registration (Manager/Owner only)
+    // Reject vehicle registration (Manager/Owner only)
     async rejectVehicleRegistration(req, res, next) {
         try {
             const { id } = req.params;
-            const { rejection_reason } = req.body; // Thêm lý do từ chối
+            const { rejection_reason } = req.body;
 
             const rejected = await vehicleRegistrationService.rejectVehicleRegistration(
                 parseInt(id),
                 req.user.user_id,
-                rejection_reason // Thêm tham số này
+                rejection_reason,
+                req.user.role // Thêm userRole
             );
 
             res.json({
@@ -239,10 +242,8 @@ class VehicleRegistrationController {
     }
 
     // ============ BOT ENDPOINTS ============
+    // (Giữ nguyên các bot endpoints như cũ)
 
-    /**
-     * Bot tạo vehicle registration thay mặt tenant
-     */
     async createVehicleRegistrationByBot(req, res, next) {
         try {
             const { tenant_user_id, ...registrationData } = req.body;
@@ -269,9 +270,6 @@ class VehicleRegistrationController {
         }
     }
 
-    /**
-     * Bot cập nhật vehicle registration thay mặt tenant
-     */
     async updateVehicleRegistrationByBot(req, res, next) {
         try {
             const { id } = req.params;
@@ -300,9 +298,6 @@ class VehicleRegistrationController {
         }
     }
 
-    /**
-     * Bot xóa vehicle registration thay mặt tenant
-     */
     async deleteVehicleRegistrationByBot(req, res, next) {
         try {
             const { id } = req.params;
@@ -330,9 +325,6 @@ class VehicleRegistrationController {
         }
     }
 
-    /**
-     * Bot cancel vehicle registration thay mặt tenant
-     */
     async cancelVehicleRegistrationByBot(req, res, next) {
         try {
             const { id } = req.params;
@@ -361,9 +353,6 @@ class VehicleRegistrationController {
         }
     }
 
-    /**
-     * Bot lấy thông tin vehicle registration
-     */
     async getVehicleRegistrationByBot(req, res, next) {
         try {
             const { id } = req.params;
@@ -391,9 +380,6 @@ class VehicleRegistrationController {
         }
     }
 
-    /**
-     * Bot lấy danh sách vehicle registrations của tenant
-     */
     async getVehicleRegistrationsByBot(req, res, next) {
         try {
             const { tenant_user_id } = req.query;
@@ -428,9 +414,6 @@ class VehicleRegistrationController {
         }
     }
 
-    /**
-     * Bot lấy danh sách vehicles của tenant
-     */
     async getVehiclesByBot(req, res, next) {
         try {
             const { tenant_user_id } = req.query;
@@ -465,9 +448,6 @@ class VehicleRegistrationController {
         }
     }
 
-    /**
-     * Bot lấy thông tin vehicle
-     */
     async getVehicleByBot(req, res, next) {
         try {
             const { id } = req.params;
@@ -495,9 +475,6 @@ class VehicleRegistrationController {
         }
     }
 
-    /**
-     * Bot lấy thống kê vehicle của tenant
-     */
     async getVehicleStatsByBot(req, res, next) {
         try {
             const { tenant_user_id } = req.query;
@@ -522,7 +499,6 @@ class VehicleRegistrationController {
             next(err);
         }
     }
-
 }
 
 module.exports = new VehicleRegistrationController();
