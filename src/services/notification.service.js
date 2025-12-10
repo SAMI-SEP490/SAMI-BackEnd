@@ -4,6 +4,17 @@
 const prisma = require('../config/prisma');
 const PushService = require('./push.service');
 
+// Helper to format currency (1.000.000 đ)
+const VND = new Intl.NumberFormat('vi-VN', {
+  style: 'currency',
+  currency: 'VND',
+});
+
+const formatCurrency = (amount) => {
+  if (amount === undefined || amount === null) return "0 ₫";
+  return VND.format(amount);
+};
+
 class NotificationService {
     
     /**
@@ -274,6 +285,51 @@ class NotificationService {
         });
         
         return updated;
+    }
+
+    /**
+     * Sends a success notification for a specific payment.
+     * @param {object} payment - The bill_payments record.
+     */
+    async sendPaymentSuccessNotification(payment) {
+        try {
+            // 1. Find a bill linked to this payment to identify the tenant
+            // (We assume all bills in one payment belong to the same tenant)
+            const linkedBill = await prisma.bills.findFirst({
+                where: { payment_id: payment.payment_id },
+                include: {
+                    tenants: { select: { user_id: true } }
+                }
+            });
+
+            if (!linkedBill || !linkedBill.tenants?.user_id) {
+                console.warn(`[Notification] Could not find tenant for payment #${payment.payment_id}`);
+                return;
+            }
+
+            const recipientId = linkedBill.tenants.user_id;
+            const amountFormatted = formatCurrency(Number(payment.amount));
+
+            // 2. Send the message
+            await this.createNotification(
+                null, // System Sender
+                recipientId,
+                "Thanh toán thành công ✅",
+                // "Hệ thống đã nhận được 500.000 ₫ thanh toán..."
+                `Hệ thống đã nhận được ${amountFormatted} thanh toán qua PayOS. Cảm ơn bạn!`,
+                {
+                    type: "payment_success",
+                    payment_id: String(payment.payment_id),
+                    amount: String(payment.amount)
+                }
+            );
+            
+            console.log(`[Notification] Payment success sent to user ${recipientId}`);
+
+        } catch (error) {
+            // We catch errors here so the payment flow doesn't crash just because of a notification failure
+            console.error("[Notification] Failed to send payment success msg:", error);
+        }
     }
 }
 
