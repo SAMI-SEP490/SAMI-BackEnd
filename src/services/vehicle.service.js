@@ -1,11 +1,44 @@
-// Updated: 2025-11-06
-// by: DatNB
-// Modified: Added notifications for approve/reject
+// Updated: 2025-12-08
+// by: Assistant
+// Modified: Added building-based filtering for Manager role
 
 const prisma = require('../config/prisma');
 const NotificationService = require('./notification.service');
 
 class VehicleRegistrationService {
+    // Helper function to get manager's building IDs
+    async getManagerBuildingIds(userId) {
+        const manager = await prisma.building_managers.findUnique({
+            where: { user_id: userId },
+            select: { building_id: true }
+        });
+
+        return manager ? [manager.building_id] : [];
+    }
+
+    // Helper function to check if registration is in manager's building
+    async isRegistrationInManagerBuilding(registrationId, managerId) {
+        const registration = await prisma.vehicle_registration.findUnique({
+            where: { assignment_id: registrationId },
+            include: {
+                tenants: {
+                    include: {
+                        rooms: {
+                            select: { building_id: true }
+                        }
+                    }
+                }
+            }
+        });
+
+        if (!registration) return false;
+
+        const managerBuildingIds = await this.getManagerBuildingIds(managerId);
+        const tenantBuildingId = registration.tenants?.rooms?.building_id;
+
+        return managerBuildingIds.includes(tenantBuildingId);
+    }
+
     // Tenant creates a vehicle registration request
     async createVehicleRegistration(tenantUserId, data) {
         const {
@@ -57,7 +90,6 @@ class VehicleRegistrationService {
                 end_date: end_date ? new Date(end_date) : null,
                 note,
                 requested_at: new Date(),
-                // Store vehicle info in note or create a JSON field
                 reason: JSON.stringify({
                     type,
                     license_plate,
@@ -152,6 +184,14 @@ class VehicleRegistrationService {
             throw new Error('Unauthorized to view this registration');
         }
 
+        // Manager can only view registrations in their building
+        if (userRole === 'MANAGER') {
+            const isInBuilding = await this.isRegistrationInManagerBuilding(registrationId, userId);
+            if (!isInBuilding) {
+                throw new Error('Unauthorized to view this registration');
+            }
+        }
+
         return registration;
     }
 
@@ -171,8 +211,40 @@ class VehicleRegistrationService {
         // Apply role-based filtering
         if (userRole === 'TENANT') {
             where.requested_by = userId;
-        } else if (requested_by) {
-            where.requested_by = requested_by;
+        } else if (userRole === 'MANAGER') {
+            // Manager chỉ xem registrations trong tòa nhà của mình
+            const managerBuildingIds = await this.getManagerBuildingIds(userId);
+
+            if (managerBuildingIds.length === 0) {
+                // Manager không có tòa nhà nào
+                return {
+                    registrations: [],
+                    pagination: {
+                        total: 0,
+                        page: parseInt(page),
+                        limit: parseInt(limit),
+                        totalPages: 0
+                    }
+                };
+            }
+
+            where.tenants = {
+                rooms: {
+                    building_id: {
+                        in: managerBuildingIds
+                    }
+                }
+            };
+        } else if (userRole === 'OWNER') {
+            // Owner xem được tất cả
+            if (requested_by) {
+                where.requested_by = requested_by;
+            }
+        } else {
+            // Các role khác
+            if (requested_by) {
+                where.requested_by = requested_by;
+            }
         }
 
         if (status) {
@@ -362,13 +434,30 @@ class VehicleRegistrationService {
     }
 
     // Approve vehicle registration and create vehicle (Manager/Owner only)
-    async approveVehicleRegistration(registrationId, approvedBy) {
+    async approveVehicleRegistration(registrationId, approvedBy, userRole) {
         const registration = await prisma.vehicle_registration.findUnique({
-            where: { assignment_id: registrationId }
+            where: { assignment_id: registrationId },
+            include: {
+                tenants: {
+                    include: {
+                        rooms: {
+                            select: { building_id: true }
+                        }
+                    }
+                }
+            }
         });
 
         if (!registration) {
             throw new Error('Vehicle registration not found');
+        }
+
+        // Manager can only approve registrations in their building
+        if (userRole === 'MANAGER') {
+            const isInBuilding = await this.isRegistrationInManagerBuilding(registrationId, approvedBy);
+            if (!isInBuilding) {
+                throw new Error('Unauthorized to approve this registration');
+            }
         }
 
         if (registration.status !== 'requested') {
@@ -392,7 +481,7 @@ class VehicleRegistrationService {
         // Use transaction to approve registration and create vehicle
         const result = await prisma.$transaction(async (tx) => {
             // Approve registration
-            const approved = await tx.vehicle_registration.update({
+            await tx.vehicle_registration.update({
                 where: { assignment_id: registrationId },
                 data: {
                     status: 'approved',
@@ -402,7 +491,7 @@ class VehicleRegistrationService {
             });
 
             // Create vehicle
-            const vehicle = await tx.vehicles.create({
+            await tx.vehicles.create({
                 data: {
                     tenant_user_id: registration.requested_by,
                     registration_id: registrationId,
@@ -456,8 +545,8 @@ class VehicleRegistrationService {
             const vehicleDesc = `${vehicleInfo.type || 'xe'} ${vehicleInfo.brand || ''} (${vehicleInfo.license_plate || 'N/A'})`.trim();
 
             await NotificationService.createNotification(
-                approvedBy, // sender (manager/owner)
-                registration.requested_by, // recipient (tenant)
+                approvedBy,
+                registration.requested_by,
                 'Đăng ký xe đã được phê duyệt',
                 `Đăng ký ${vehicleDesc} của bạn đã được chấp nhận. Xe đã được kích hoạt trong hệ thống.`,
                 {
@@ -475,13 +564,30 @@ class VehicleRegistrationService {
     }
 
     // Reject vehicle registration (Manager/Owner only)
-    async rejectVehicleRegistration(registrationId, rejectedBy, rejectionReason) {
+    async rejectVehicleRegistration(registrationId, rejectedBy, rejectionReason, userRole) {
         const registration = await prisma.vehicle_registration.findUnique({
-            where: { assignment_id: registrationId }
+            where: { assignment_id: registrationId },
+            include: {
+                tenants: {
+                    include: {
+                        rooms: {
+                            select: { building_id: true }
+                        }
+                    }
+                }
+            }
         });
 
         if (!registration) {
             throw new Error('Vehicle registration not found');
+        }
+
+        // Manager can only reject registrations in their building
+        if (userRole === 'MANAGER') {
+            const isInBuilding = await this.isRegistrationInManagerBuilding(registrationId, rejectedBy);
+            if (!isInBuilding) {
+                throw new Error('Unauthorized to reject this registration');
+            }
         }
 
         if (registration.status !== 'requested') {
@@ -535,8 +641,8 @@ class VehicleRegistrationService {
             const reasonText = rejectionReason ? ` Lý do: ${rejectionReason}` : '';
 
             await NotificationService.createNotification(
-                rejectedBy, // sender (manager/owner)
-                registration.requested_by, // recipient (tenant)
+                rejectedBy,
+                registration.requested_by,
                 'Đăng ký xe đã bị từ chối',
                 `Đăng ký ${vehicleDesc} của bạn đã bị từ chối.${reasonText}`,
                 {
@@ -563,6 +669,13 @@ class VehicleRegistrationService {
                     where: {
                         deactivated_at: null
                     }
+                },
+                tenants: {
+                    include: {
+                        rooms: {
+                            select: { building_id: true }
+                        }
+                    }
                 }
             }
         });
@@ -581,8 +694,19 @@ class VehicleRegistrationService {
             }
         }
 
-        // Manager/Owner can cancel any registration except already cancelled ones
-        if (['MANAGER', 'OWNER'].includes(userRole)) {
+        // Manager can cancel registrations in their building
+        if (userRole === 'MANAGER') {
+            const isInBuilding = await this.isRegistrationInManagerBuilding(registrationId, userId);
+            if (!isInBuilding) {
+                throw new Error('Unauthorized to cancel this registration');
+            }
+            if (registration.status === 'cancelled') {
+                throw new Error('Registration is already cancelled');
+            }
+        }
+
+        // Owner can cancel any registration except already cancelled ones
+        if (userRole === 'OWNER') {
             if (registration.status === 'cancelled') {
                 throw new Error('Registration is already cancelled');
             }
@@ -688,7 +812,21 @@ class VehicleRegistrationService {
         // Filter by tenant if role is TENANT
         if (userRole === 'TENANT') {
             where.requested_by = userId;
+        } else if (userRole === 'MANAGER') {
+            // Manager chỉ thống kê registrations trong tòa nhà của mình
+            const managerBuildingIds = await this.getManagerBuildingIds(userId);
+
+            if (managerBuildingIds.length > 0) {
+                where.tenants = {
+                    rooms: {
+                        building_id: {
+                            in: managerBuildingIds
+                        }
+                    }
+                };
+            }
         }
+        // Owner xem tất cả (không filter)
 
         const [total, requested, approved, rejected, cancelled] = await Promise.all([
             prisma.vehicle_registration.count({ where }),
@@ -705,7 +843,20 @@ class VehicleRegistrationService {
 
         if (userRole === 'TENANT') {
             vehicleWhere.tenant_user_id = userId;
+        } else if (userRole === 'MANAGER') {
+            const managerBuildingIds = await this.getManagerBuildingIds(userId);
+
+            if (managerBuildingIds.length > 0) {
+                vehicleWhere.tenants = {
+                    rooms: {
+                        building_id: {
+                            in: managerBuildingIds
+                        }
+                    }
+                };
+            }
         }
+        // Owner xem tất cả
 
         const [totalVehicles, activeVehicles] = await Promise.all([
             prisma.vehicles.count({ where: vehicleWhere }),
@@ -745,8 +896,38 @@ class VehicleRegistrationService {
         // Apply role-based filtering
         if (userRole === 'TENANT') {
             where.tenant_user_id = userId;
-        } else if (tenant_user_id) {
-            where.tenant_user_id = tenant_user_id;
+        } else if (userRole === 'MANAGER') {
+            // Manager chỉ xem vehicles trong tòa nhà của mình
+            const managerBuildingIds = await this.getManagerBuildingIds(userId);
+
+            if (managerBuildingIds.length === 0) {
+                return {
+                    vehicles: [],
+                    pagination: {
+                        total: 0,
+                        page: parseInt(page),
+                        limit: parseInt(limit),
+                        totalPages: 0
+                    }
+                };
+            }
+
+            where.tenants = {
+                rooms: {
+                    building_id: {
+                        in: managerBuildingIds
+                    }
+                }
+            };
+        } else if (userRole === 'OWNER') {
+            // Owner xem được tất cả
+            if (tenant_user_id) {
+                where.tenant_user_id = tenant_user_id;
+            }
+        } else {
+            if (tenant_user_id) {
+                where.tenant_user_id = tenant_user_id;
+            }
         }
 
         if (status) {
@@ -883,6 +1064,16 @@ class VehicleRegistrationService {
         // Check authorization
         if (userRole === 'TENANT' && vehicle.tenant_user_id !== userId) {
             throw new Error('Unauthorized to view this vehicle');
+        }
+
+        // THÊM ĐOẠN NÀY - Manager chỉ xem vehicle trong building của mình
+        if (userRole === 'MANAGER') {
+            const managerBuildingIds = await this.getManagerBuildingIds(userId);
+            const vehicleBuildingId = vehicle.tenants?.rooms?.buildings?.building_id;
+
+            if (!managerBuildingIds.includes(vehicleBuildingId)) {
+                throw new Error('Unauthorized to view this vehicle');
+            }
         }
 
         return vehicle;
