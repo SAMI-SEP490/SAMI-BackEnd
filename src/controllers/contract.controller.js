@@ -1,5 +1,4 @@
-
-// Updated: 2025-17-10
+// Updated: 2025-10-12
 // By: DatNB
 
 const contractService = require('../services/contract.service');
@@ -27,7 +26,7 @@ class ContractController {
             const { id } = req.params;
             const contract = await contractService.getContractById(
                 parseInt(id),
-                req.user  // Truyền thông tin user hiện tại
+                req.user  // ✅ Truyền currentUser để check permission
             );
 
             res.json({
@@ -42,12 +41,10 @@ class ContractController {
     // Lấy danh sách hợp đồng
     async getContracts(req, res, next) {
         try {
-
             const contracts = await contractService.getContracts(
                 req.query,
-                req.user  // Truyền thông tin user hiện tại
+                req.user  // ✅ Truyền currentUser để filter theo role
             );
-
 
             res.json({
                 success: true,
@@ -64,7 +61,12 @@ class ContractController {
         try {
             const { id } = req.params;
             const file = req.file;
-            const contract = await contractService.updateContract(parseInt(id), req.body, file);
+            const contract = await contractService.updateContract(
+                parseInt(id),
+                req.body,
+                file,
+                req.user  // ✅ Truyền currentUser để check permission
+            );
 
             res.json({
                 success: true,
@@ -80,7 +82,10 @@ class ContractController {
     async deleteContract(req, res, next) {
         try {
             const { id } = req.params;
-            const result = await contractService.deleteContract(parseInt(id));
+            const result = await contractService.deleteContract(
+                parseInt(id),
+                req.user  // ✅ Truyền currentUser để check permission
+            );
 
             res.json({
                 success: true,
@@ -91,10 +96,19 @@ class ContractController {
         }
     }
 
-    // Xóa vĩnh viễn hợp đồng
+    // Xóa vĩnh viễn hợp đồng (chỉ OWNER)
     async hardDeleteContract(req, res, next) {
         try {
             const { id } = req.params;
+
+            // ✅ Check role trước khi xóa vĩnh viễn
+            if (req.user.role !== 'OWNER') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Only OWNER can permanently delete contracts'
+                });
+            }
+
             const result = await contractService.hardDeleteContract(parseInt(id));
 
             res.json({
@@ -106,10 +120,19 @@ class ContractController {
         }
     }
 
-    // Khôi phục hợp đồng
+    // Khôi phục hợp đồng (chỉ OWNER/MANAGER)
     async restoreContract(req, res, next) {
         try {
             const { id } = req.params;
+
+            // ✅ Check role trước khi restore
+            if (req.user.role === 'TENANT') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You do not have permission to restore contracts'
+                });
+            }
+
             const contract = await contractService.restoreContract(parseInt(id));
 
             res.json({
@@ -122,13 +145,44 @@ class ContractController {
         }
     }
 
+    // Terminate hợp đồng (chỉ OWNER/MANAGER)
+    async terminateContract(req, res, next) {
+        try {
+            const { id } = req.params;
+            const { reason } = req.body;
+
+            // ✅ Check role trước khi terminate
+            if (req.user.role === 'TENANT') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You do not have permission to terminate contracts'
+                });
+            }
+
+            const contract = await contractService.terminateContract(
+                parseInt(id),
+                reason
+            );
+
+            res.json({
+                success: true,
+                message: 'Contract terminated successfully',
+                data: contract
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    // Download contract - Trả về URL presigned
     async downloadContract(req, res, next) {
         try {
             const { id } = req.params;
             const result = await contractService.downloadContract(
                 parseInt(id),
-                req.user  //
+                req.user  // ✅ Truyền currentUser để check permission
             );
+
             res.json({
                 success: true,
                 message: 'Download URL generated successfully',
@@ -139,13 +193,15 @@ class ContractController {
         }
     }
 
+    // Download contract trực tiếp - Stream file
     async downloadContractDirect(req, res, next) {
         try {
             const { id } = req.params;
             const result = await contractService.downloadContractDirect(
                 parseInt(id),
-                req.user  //
+                req.user  // ✅ Truyền currentUser để check permission
             );
+
             res.setHeader('Content-Type', result.content_type);
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(result.file_name)}"`);
             res.send(result.buffer);
@@ -153,11 +209,25 @@ class ContractController {
             next(err);
         }
     }
+
+    // Upload ảnh và chuyển thành PDF
     async uploadContractImages(req, res, next) {
         try {
             const { id } = req.params; // contract_id
+
             if (!req.files || req.files.length === 0) {
-                return res.status(400).json({ message: 'Không có ảnh nào được upload!' });
+                return res.status(400).json({
+                    success: false,
+                    message: 'Không có ảnh nào được upload!'
+                });
+            }
+
+            // ✅ Check permission trước khi upload
+            if (req.user.role === 'TENANT') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You do not have permission to upload contract files'
+                });
             }
 
             // Gửi toàn bộ file (buffer + thông tin) cho service
@@ -172,6 +242,8 @@ class ContractController {
             next(err);
         }
     }
+
+    // Xử lý hợp đồng bằng AI
     async processContractWithAI(req, res, next) {
         try {
             const file = req.file; // File từ multer
@@ -188,6 +260,14 @@ class ContractController {
                 return res.status(400).json({
                     success: false,
                     message: 'Chỉ chấp nhận file PDF'
+                });
+            }
+
+            // ✅ Check permission - chỉ OWNER/MANAGER được dùng AI
+            if (req.user.role === 'TENANT') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You do not have permission to use AI processing'
                 });
             }
 
@@ -235,6 +315,28 @@ class ContractController {
         }
     }
 
+    // ✅ [NEW] Endpoint để force update tất cả hợp đồng hết hạn
+    async updateExpiredContracts(req, res, next) {
+        try {
+            // Chỉ OWNER/MANAGER được gọi endpoint này
+            if (req.user.role === 'TENANT') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You do not have permission to update expired contracts'
+                });
+            }
+
+            const count = await contractService.autoUpdateExpiredContracts();
+
+            res.json({
+                success: true,
+                message: `Updated ${count} expired contracts`,
+                data: { updated_count: count }
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
 }
 
 module.exports = new ContractController();
