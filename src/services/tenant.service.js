@@ -384,6 +384,25 @@ class TenantService {
             }
         });
 
+        // 3. Time Calculation (Vietnam Time)
+        const now = new Date();
+        const vnTimeFormatter = new Intl.DateTimeFormat('vi-VN', {
+            timeZone: 'Asia/Ho_Chi_Minh',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hour12: false
+        });
+        
+        // Example: "05:30:00 12/12/2025"
+        const currentTimeStr = vnTimeFormatter.format(now);
+        
+        // Get just the hour (0-23) for logic checks
+        const currentHour = parseInt(new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Asia/Ho_Chi_Minh',
+            hour: 'numeric',
+            hour12: false
+        }).format(now));
+
         if (!tenantInfo) {
             const error = new Error('Tenant not found');
             error.statusCode = 404;
@@ -475,6 +494,9 @@ class TenantService {
 
         // --- FINAL JSON RESPONSE ---
         return {
+            current_time_str: currentTimeStr, // Human readable for Bot to speak
+            current_hour: currentHour,        // Number for Bot to do logic (e.g. if hour > 22)
+            time_zone: "Asia/Ho_Chi_Minh (GMT+7)",
             tenant_user_id: tenantInfo.users.user_id,
             tenant_name: tenantInfo.users.full_name,
             tenant_gender: tenantInfo.users.gender,
