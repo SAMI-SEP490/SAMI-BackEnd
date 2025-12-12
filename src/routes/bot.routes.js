@@ -7,7 +7,8 @@ const maintenanceController = require('../controllers/maintenance.controller');
 const vehicleController = require('../controllers/vehicle.controller');
 const regulationController = require('../controllers/regulation.controller');
 const tenantController = require('../controllers/tenant.controller');
-const paymentController = require('../controllers/payment.controller'); // <-- Import this
+const paymentController = require('../controllers/payment.controller');
+const contractController = require('../controllers/contract.controller');
 const { validateBotApiKey, botRateLimit } = require('../middlewares/bot.middleware');
 const {
     validateBotMaintenanceRequest,
@@ -199,6 +200,14 @@ router.get('/context',
  */
 router.post('/create-payment', 
     paymentController.createPayOSLinkByBot
+);
+
+/**
+ * POST /api/bot/contract/download
+ * Contract Download for Bot
+ */
+router.post('/contract/download', 
+    contractController.getMyContractFileForBot
 );
 
 /**

@@ -297,7 +297,7 @@ class TenantService {
             include: {
                 users: { select: { full_name: true, user_id: true, gender: true, birthday: true } },
                 
-                // --- UPDATED: Get Bill History (Last 12 items) ---
+                // --- Bill History (Last 12 items) ---
                 bills: {
                     where: { 
                         deleted_at: null,
@@ -334,13 +334,32 @@ class TenantService {
                     }
                 },
 
-                // Active Contract
+                // --- Active Contract with Addendums ---
                 contracts: {
-                    where: { status: 'active', deleted_at: null },
-                    select: { contract_id: true, end_date: true, start_date: true, rent_amount: true },
-                    orderBy: { start_date: 'desc' },
+                    where: { 
+                        // Fetch 'active' OR 'pending' (e.g. renewal pending)
+                        status: { in: ['active', 'pending'] }, 
+                        deleted_at: null 
+                    },
+                    // We need 'include' (or select) to get addendums + s3_key
+                    select: {
+                        contract_id: true,
+                        start_date: true,
+                        end_date: true,
+                        rent_amount: true,
+                        deposit_amount: true,
+                        status: true,
+                        s3_key: true, // Need this to check if PDF exists
+                        contract_addendums: {
+                            orderBy: { version: 'desc' },
+                            take: 1,
+                            select: { summary: true, changes: true }
+                        }
+                    },
+                    orderBy: { created_at: 'desc' },
                     take: 1
                 },
+                // ------------------------------------------------
 
                 // Pending Maintenance
                 maintenance_requests: {
@@ -349,7 +368,7 @@ class TenantService {
                     orderBy: { created_at: 'desc' }
                 },
 
-                // Pending/Rejected Vehicle Registrations
+                // Vehicle Registrations
                 vehicle_registration: {
                     where: { status: { in: ['requested', 'rejected'] } },
                     select: { assignment_id: true, status: true, reason: true, requested_at: true },
@@ -365,6 +384,25 @@ class TenantService {
             }
         });
 
+        // 3. Time Calculation (Vietnam Time)
+        const now = new Date();
+        const vnTimeFormatter = new Intl.DateTimeFormat('vi-VN', {
+            timeZone: 'Asia/Ho_Chi_Minh',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hour12: false
+        });
+        
+        // Example: "05:30:00 12/12/2025"
+        const currentTimeStr = vnTimeFormatter.format(now);
+        
+        // Get just the hour (0-23) for logic checks
+        const currentHour = parseInt(new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Asia/Ho_Chi_Minh',
+            hour: 'numeric',
+            hour12: false
+        }).format(now));
+
         if (!tenantInfo) {
             const error = new Error('Tenant not found');
             error.statusCode = 404;
@@ -373,34 +411,46 @@ class TenantService {
 
         // --- FORMAT DATA FOR AI ---
         
-        // 1. Bill History (Renamed from unpaid_bills)
+        // 1. Bill History
         const bill_history = tenantInfo.bills.map(bill => ({
             bill_id: bill.bill_id,
             bill_number: bill.bill_number || `ID: ${bill.bill_id}`,
             description: bill.description,
-            // Calculate total including penalty
             total_due: (Number(bill.total_amount) || 0) + (Number(bill.penalty_amount) || 0),
-            status: bill.status, // 'paid', 'issued', 'overdue', 'cancelled'
+            status: bill.status, 
             due_date: bill.due_date
         }));
 
-        // 2. Contract
-        const active_contract = tenantInfo.contracts.length > 0 ? {
-            contract_id: tenantInfo.contracts[0].contract_id,
-            start_date: tenantInfo.contracts[0].start_date,
-            end_date: tenantInfo.contracts[0].end_date,
-            rent_amount: Number(tenantInfo.contracts[0].rent_amount)
-        } : null;
+        // 2. UPDATED: Contract Info
+        let active_contract = null;
+        if (tenantInfo.contracts.length > 0) {
+            const c = tenantInfo.contracts[0];
+            const latestAddendum = c.contract_addendums[0];
 
-        // 3. Contacts (Building Managers + Owners)
+            // Calculate effective end date if addendum changed it
+            // Assuming 'changes' JSON might contain { new_end_date: "..." }
+            const addendumEndDate = latestAddendum?.changes?.new_end_date;
+
+            active_contract = {
+                contract_id: c.contract_id,
+                start_date: c.start_date,
+                original_end_date: c.end_date,
+                current_end_date: addendumEndDate ? new Date(addendumEndDate) : c.end_date,
+                rent_amount: Number(c.rent_amount),
+                deposit_amount: Number(c.deposit_amount),
+                status: c.status,
+                has_file: !!c.s3_key, // True if PDF exists
+                addendum_note: latestAddendum ? `Có phụ lục: ${latestAddendum.summary}` : null
+            };
+        }
+
+        // 3. Contacts
         const contacts = [];
-        // Get managers from the tenant's assigned building
         if (tenantInfo.rooms?.buildings?.building_managers) {
             tenantInfo.rooms.buildings.building_managers.forEach(mgr => {
                 contacts.push({ role: 'Manager', name: mgr.users.full_name, phone: mgr.users.phone });
             });
         }
-        // Always add owners
         owners.forEach(owner => {
             contacts.push({ role: 'Owner', name: owner.full_name, phone: owner.phone });
         });
@@ -413,7 +463,7 @@ class TenantService {
             created_at: req.created_at
         }));
 
-        // 5. Pending Registrations (Parse JSON reason)
+        // 5. Pending Registrations
         const pending_registrations = tenantInfo.vehicle_registration.map(reg => {
             let info = {};
             try { info = JSON.parse(reg.reason || '{}'); } catch (e) { info = { note: "Error parsing" }; }
@@ -439,11 +489,14 @@ class TenantService {
         }));
 
         // Calculate age
-        const birthDate = new Date(tenantInfo.users.birthday);
+        const birthDate = tenantInfo.users.birthday ? new Date(tenantInfo.users.birthday) : new Date();
         const age = new Date().getFullYear() - birthDate.getFullYear();
 
         // --- FINAL JSON RESPONSE ---
         return {
+            current_time_str: currentTimeStr, // Human readable for Bot to speak
+            current_hour: currentHour,        // Number for Bot to do logic (e.g. if hour > 22)
+            time_zone: "Asia/Ho_Chi_Minh (GMT+7)",
             tenant_user_id: tenantInfo.users.user_id,
             tenant_name: tenantInfo.users.full_name,
             tenant_gender: tenantInfo.users.gender,
@@ -453,7 +506,7 @@ class TenantService {
             building_name: tenantInfo.rooms?.buildings?.name || "N/A",
             current_date: new Date().toISOString(),
             bill_history: bill_history,             
-            active_contract: active_contract,
+            contract_info: active_contract, // Renamed to match Dify Schema
             contacts: contacts,
             pending_maintenance: pending_maintenance,
             pending_vehicle_registrations: pending_registrations,
@@ -688,6 +741,6 @@ class TenantService {
                 floor: tenant.rooms.floor
             } : null
         };
-}
+    }
 }
 module.exports = new TenantService();

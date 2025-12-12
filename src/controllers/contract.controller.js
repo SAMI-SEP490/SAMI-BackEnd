@@ -337,6 +337,73 @@ class ContractController {
             next(err);
         }
     }
+
+    // [BOT] Lấy link download hợp đồng cho Chatbot
+    // Endpoint: POST /api/bot/contract/download
+    async getMyContractFileForBot(req, res, next) {
+        try {
+            const { tenant_user_id } = req.body;
+            
+            if (!tenant_user_id) {
+                return res.json({ url: null, message: "Lỗi: Không tìm thấy ID người dùng." });
+            }
+
+            // 1. Giả lập user object để reuse service logic
+            const mockUser = { role: 'TENANT', user_id: parseInt(tenant_user_id) };
+
+            // 2. Tìm hợp đồng đang Active của user này
+            // Ta dùng hàm getContracts có sẵn để lọc
+            const result = await contractService.getContracts({
+                status: 'active',
+                page: 1,
+                limit: 1
+            }, mockUser);
+
+            const activeContract = result.data?.[0];
+
+            // 3. Kiểm tra file
+            if (!activeContract || !activeContract.s3_key) {
+                // Thử tìm hợp đồng Pending nếu không có Active
+                const pendingResult = await contractService.getContracts({
+                    status: 'pending',
+                    page: 1,
+                    limit: 1
+                }, mockUser);
+                
+                const pendingContract = pendingResult.data?.[0];
+                
+                if (pendingContract && pendingContract.s3_key) {
+                     // Found pending file
+                     const downloadData = await contractService.downloadContract(pendingContract.contract_id, mockUser);
+                     return res.json({
+                        url: downloadData.download_url,
+                        message: "Đây là bản nháp hợp đồng đang chờ duyệt (Link hết hạn trong 1 giờ)."
+                     });
+                }
+
+                return res.json({
+                    url: null,
+                    message: "Hiện chưa có bản mềm hợp đồng (PDF) trên hệ thống."
+                });
+            }
+
+            // 4. Generate URL (Active Contract)
+            const downloadData = await contractService.downloadContract(activeContract.contract_id, mockUser);
+
+            return res.json({
+                url: downloadData.download_url,
+                message: "Đây là link tải hợp đồng của bạn (Link hết hạn trong 1 giờ)."
+            });
+
+        } catch (err) {
+            console.error("Bot Contract Download Error:", err.message);
+            // Trả về JSON 200 thay vì lỗi 500 để Bot không bị crash
+            res.json({ 
+                url: null, 
+                message: "Không thể lấy file hợp đồng lúc này. Vui lòng thử lại sau." 
+            });
+        }
+    }
 }
 
 module.exports = new ContractController();
