@@ -1,237 +1,96 @@
-// Updated: 2025-01-11
+// Updated: 2025-12-12
 // By: DatNB
+// Added: Pass user role and id to service for RBAC
 
-const floorPlanService = require('../services/floor-plan.service');
+const roomService = require('../services/room.service');
 
-class FloorPlanController {
-    // Tạo floor plan mới
-    async createFloorPlan(req, res, next) {
+class RoomController {
+    // Tạo phòng mới
+    async createRoom(req, res, next) {
         try {
-            const userId = req.user.user_id;
-            const userRole = req.user.role;
-
-            // Chỉ OWNER và MANAGER mới có quyền tạo floor plan
-            if (userRole !== 'OWNER' && userRole !== 'MANAGER') {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Access denied: Only owners and managers can create floor plans'
-                });
-            }
-
-            const floorPlan = await floorPlanService.createFloorPlan(
-                req.body,
-                userId,
-                userRole
-            );
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const room = await roomService.createRoom(req.body, role, userId);
 
             res.status(201).json({
                 success: true,
-                message: 'Floor plan created successfully',
-                data: floorPlan
+                message: 'Room created successfully',
+                data: room
             });
         } catch (err) {
             next(err);
         }
     }
 
-    // Lấy thông tin floor plan theo ID
-    async getFloorPlanById(req, res, next) {
+    // Lấy thông tin phòng theo ID
+    async getRoomById(req, res, next) {
         try {
             const { id } = req.params;
-            const floorPlan = await floorPlanService.getFloorPlanById(parseInt(id));
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const room = await roomService.getRoomById(parseInt(id), role, userId);
 
             res.json({
                 success: true,
-                data: floorPlan
+                data: room
             });
         } catch (err) {
             next(err);
         }
     }
 
-    // Lấy danh sách floor plans
-    async getFloorPlans(req, res, next) {
+    // Lấy danh sách phòng
+    async getRooms(req, res, next) {
         try {
-            const userId = req.user.user_id;
-            const userRole = req.user.role;
-
-            const floorPlans = await floorPlanService.getFloorPlans(
-                req.query,
-                userId,
-                userRole
-            );
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const rooms = await roomService.getRooms(req.query, role, userId);
 
             res.json({
                 success: true,
-                data: floorPlans.data,
-                pagination: floorPlans.pagination
+                data: rooms.data,
+                pagination: rooms.pagination
             });
         } catch (err) {
             next(err);
         }
     }
 
-    // Lấy floor plans theo building
-    async getFloorPlansByBuilding(req, res, next) {
+    // Lấy thông tin phòng theo user_id (tenant)
+    async getRoomsByUserId(req, res, next) {
         try {
-            const { buildingId } = req.params;
-            const userId = req.user.user_id;
-            const userRole = req.user.role;
-
-            const floorPlans = await floorPlanService.getFloorPlansByBuilding(
-                parseInt(buildingId),
-                req.query,
-                userId,
-                userRole
-            );
+            const { userId } = req.params;
+            const rooms = await roomService.getRoomsByUserId(parseInt(userId));
 
             res.json({
                 success: true,
-                data: floorPlans.data,
-                pagination: floorPlans.pagination
+                data: rooms
             });
         } catch (err) {
             next(err);
         }
     }
 
-    // Lấy tất cả versions của một floor
-    async getFloorPlanVersions(req, res, next) {
-        try {
-            const { buildingId, floorNumber } = req.params;
-            const userId = req.user.user_id;
-            const userRole = req.user.role;
-
-            const versions = await floorPlanService.getFloorPlanVersions(
-                buildingId,
-                floorNumber,
-                userId,
-                userRole
-            );
-
-            res.json({
-                success: true,
-                data: versions
-            });
-        } catch (err) {
-            next(err);
-        }
-    }
-
-    // Cập nhật floor plan
-    async updateFloorPlan(req, res, next) {
+    // Cập nhật phòng
+    async updateRoom(req, res, next) {
         try {
             const { id } = req.params;
-            const userId = req.user.user_id;
-            const userRole = req.user.role;
-
-            // Chỉ OWNER và MANAGER mới có quyền cập nhật floor plan
-            if (userRole !== 'OWNER' && userRole !== 'MANAGER') {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Access denied: Only owners and managers can update floor plans'
-                });
-            }
-
-            const floorPlan = await floorPlanService.updateFloorPlan(
-                parseInt(id),
-                req.body,
-                userId,
-                userRole
-            );
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const room = await roomService.updateRoom(parseInt(id), req.body, role, userId);
 
             res.json({
                 success: true,
-                message: 'Floor plan updated successfully',
-                data: floorPlan
+                message: 'Room updated successfully',
+                data: room
             });
         } catch (err) {
             next(err);
         }
     }
 
-    // Publish floor plan
-    async publishFloorPlan(req, res, next) {
+    // Vô hiệu hóa phòng
+    async deactivateRoom(req, res, next) {
         try {
             const { id } = req.params;
-            const userId = req.user.user_id;
-            const userRole = req.user.role;
-
-            // Chỉ OWNER và MANAGER mới có quyền publish floor plan
-            if (userRole !== 'OWNER' && userRole !== 'MANAGER') {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Access denied: Only owners and managers can publish floor plans'
-                });
-            }
-
-            const floorPlan = await floorPlanService.publishFloorPlan(
-                parseInt(id),
-                userId,
-                userRole
-            );
-
-            res.json({
-                success: true,
-                message: 'Floor plan published successfully',
-                data: floorPlan
-            });
-        } catch (err) {
-            next(err);
-        }
-    }
-
-    // Unpublish floor plan
-    async unpublishFloorPlan(req, res, next) {
-        try {
-            const { id } = req.params;
-            const userId = req.user.user_id;
-            const userRole = req.user.role;
-
-            // Chỉ OWNER và MANAGER mới có quyền unpublish floor plan
-            if (userRole !== 'OWNER' && userRole !== 'MANAGER') {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Access denied: Only owners and managers can unpublish floor plans'
-                });
-            }
-
-            const floorPlan = await floorPlanService.unpublishFloorPlan(
-                parseInt(id),
-                userId,
-                userRole
-            );
-
-            res.json({
-                success: true,
-                message: 'Floor plan unpublished successfully',
-                data: floorPlan
-            });
-        } catch (err) {
-            next(err);
-        }
-    }
-
-    // Xóa floor plan
-    async deleteFloorPlan(req, res, next) {
-        try {
-            const { id } = req.params;
-            const userId = req.user.user_id;
-            const userRole = req.user.role;
-
-            // Chỉ OWNER và MANAGER mới có quyền xóa floor plan
-            if (userRole !== 'OWNER' && userRole !== 'MANAGER') {
-                return res.status(403).json({
-                    success: false,
-                    message: 'Access denied: Only owners and managers can delete floor plans'
-                });
-            }
-
-            const result = await floorPlanService.deleteFloorPlan(
-                parseInt(id),
-                userId,
-                userRole
-            );
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const result = await roomService.deactivateRoom(parseInt(id), role, userId);
 
             res.json({
                 success: true,
@@ -242,17 +101,48 @@ class FloorPlanController {
         }
     }
 
-    // Lấy thống kê floor plans
-    async getFloorPlanStatistics(req, res, next) {
+    // Kích hoạt lại phòng
+    async activateRoom(req, res, next) {
+        try {
+            const { id } = req.params;
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const room = await roomService.activateRoom(parseInt(id), role, userId);
+
+            res.json({
+                success: true,
+                message: 'Room activated successfully',
+                data: room
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    // Xóa vĩnh viễn phòng
+    async hardDeleteRoom(req, res, next) {
+        try {
+            const { id } = req.params;
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const result = await roomService.hardDeleteRoom(parseInt(id), role, userId);
+
+            res.json({
+                success: true,
+                message: result.message
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    // Lấy thống kê phòng theo building
+    async getRoomStatisticsByBuilding(req, res, next) {
         try {
             const { buildingId } = req.params;
-            const userId = req.user.user_id;
-            const userRole = req.user.role;
-
-            const statistics = await floorPlanService.getFloorPlanStatistics(
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const statistics = await roomService.getRoomStatisticsByBuilding(
                 parseInt(buildingId),
-                userId,
-                userRole
+                role,
+                userId
             );
 
             res.json({
@@ -265,4 +155,4 @@ class FloorPlanController {
     }
 }
 
-module.exports = new FloorPlanController();
+module.exports = new RoomController();
