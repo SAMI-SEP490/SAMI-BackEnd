@@ -3,8 +3,7 @@
 
 const prisma = require('../config/prisma');
 const { generateVnpayUrl, verifyVnpaySignature } = require('../utils/vnpay');
-const excelJS = require('exceljs');
-const fastcsv = require('fast-csv');
+const config = require('../config');
 const { PayOS } = require("@payos/node");
 const NotificationService = require('./notification.service');
 
@@ -12,28 +11,28 @@ const NotificationService = require('./notification.service');
 // --- SAFE INITIALIZATION ---
 let payos = null;
 
-if (process.env.PAYOS_CLIENT_ID && process.env.PAYOS_API_KEY && process.env.PAYOS_CHECKSUM_KEY) {
+if (config.payos.clientId && config.payos.apiKey && config.payos.checksumKey) {
     try {
         payos = new PayOS(
-            process.env.PAYOS_CLIENT_ID,
-            process.env.PAYOS_API_KEY,
-            process.env.PAYOS_CHECKSUM_KEY
+            config.payos.clientId,
+            config.payos.apiKey,
+            config.payos.checksumKey
         );
         console.log('✅ PayOS initialized.');
     } catch (e) {
         console.warn('⚠️ PayOS init error:', e.message);
     }
 } else {
-    console.warn('⚠️ PayOS credentials missing in .env. Payments will be disabled.');
+    console.warn('⚠️ PayOS credentials missing in config. Payments will be disabled.');
 }
 
 // --- SAFE INITIALIZATION: VNPay ---
 // Check if all required VNPay variables exist
 const isVnpayConfigured = 
-    process.env.VNP_TMNCODE && 
-    process.env.VNP_HASHSECRET && 
-    process.env.VNP_URL && 
-    process.env.VNP_RETURN_URL;
+    config.vnpay.tmnCode && 
+    config.vnpay.hashSecret && 
+    config.vnpay.url && 
+    config.vnpay.returnUrl;
 
 if (!isVnpayConfigured) {
     console.warn('⚠️ VNPay credentials missing. VNPay features disabled.');
@@ -495,8 +494,8 @@ class PaymentService {
             orderCode: orderCode, // Send PURE NUMBER to PayOS
             amount: Number(totalAmountDue),
             description: description,
-            cancelUrl: process.env.PAYOS_CANCEL_URL,
-            returnUrl: process.env.PAYOS_RETURN_URL
+            cancelUrl: config.payos.cancelUrl,
+            returnUrl: config.payos.returnUrl
         };
 
         const paymentLinkResponse = await payos.paymentRequests.create(paymentData);

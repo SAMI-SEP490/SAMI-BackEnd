@@ -1,4 +1,5 @@
 require('dotenv').config();
+const path = require('path');
 
 module.exports = {
     port: process.env.PORT || 3000,
@@ -53,6 +54,27 @@ module.exports = {
     gemini: {
         apiKey: process.env.GEMINI_API_KEY,
         modelName: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+    },
+    dify: {
+        apiKey: process.env.DIFY_API_KEY,
+        apiUrl: process.env.DIFY_API_URL
+    },
+    payos: {
+        clientId: process.env.PAYOS_CLIENT_ID,
+        apiKey: process.env.PAYOS_API_KEY,
+        checksumKey: process.env.PAYOS_CHECKSUM_KEY,
+        returnUrl: process.env.PAYOS_RETURN_URL,
+        cancelUrl: process.env.PAYOS_CANCEL_URL
+    },
+    vnpay: {
+        tmnCode: process.env.VNP_TMNCODE,
+        hashSecret: process.env.VNP_HASHSECRET,
+        url: process.env.VNP_URL,
+        returnUrl: process.env.VNP_RETURN_URL
+    },
+    firebase: {
+        // Resolves to root_folder/firebase-adminsdk.json by default
+        serviceAccountPath: path.resolve(process.cwd(), process.env.FIREBASE_SERVICE_ACCOUNT_PATH || 'firebase-adminsdk.json')
     },
     cors: {
         origins: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3001']
