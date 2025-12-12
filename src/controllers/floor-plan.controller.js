@@ -1,4 +1,4 @@
-// Updated: 2025-01-11
+// Updated: 2025-12-12
 // By: DatNB
 
 const floorPlanService = require('../services/floor-plan.service');
@@ -7,8 +7,22 @@ class FloorPlanController {
     // Tạo floor plan mới
     async createFloorPlan(req, res, next) {
         try {
-            const createdBy = req.user.user_id; // Lấy từ authentication middleware
-            const floorPlan = await floorPlanService.createFloorPlan(req.body, createdBy);
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
+
+            // Chỉ OWNER và MANAGER mới có quyền tạo floor plan
+            if (userRole !== 'OWNER' && userRole !== 'MANAGER') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Access denied: Only owners and managers can create floor plans'
+                });
+            }
+
+            const floorPlan = await floorPlanService.createFloorPlan(
+                req.body,
+                userId,
+                userRole
+            );
 
             res.status(201).json({
                 success: true,
@@ -38,7 +52,14 @@ class FloorPlanController {
     // Lấy danh sách floor plans
     async getFloorPlans(req, res, next) {
         try {
-            const floorPlans = await floorPlanService.getFloorPlans(req.query);
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
+
+            const floorPlans = await floorPlanService.getFloorPlans(
+                req.query,
+                userId,
+                userRole
+            );
 
             res.json({
                 success: true,
@@ -54,9 +75,14 @@ class FloorPlanController {
     async getFloorPlansByBuilding(req, res, next) {
         try {
             const { buildingId } = req.params;
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
+
             const floorPlans = await floorPlanService.getFloorPlansByBuilding(
                 parseInt(buildingId),
-                req.query
+                req.query,
+                userId,
+                userRole
             );
 
             res.json({
@@ -73,9 +99,14 @@ class FloorPlanController {
     async getFloorPlanVersions(req, res, next) {
         try {
             const { buildingId, floorNumber } = req.params;
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
+
             const versions = await floorPlanService.getFloorPlanVersions(
                 buildingId,
-                floorNumber
+                floorNumber,
+                userId,
+                userRole
             );
 
             res.json({
@@ -91,9 +122,22 @@ class FloorPlanController {
     async updateFloorPlan(req, res, next) {
         try {
             const { id } = req.params;
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
+
+            // Chỉ OWNER và MANAGER mới có quyền cập nhật floor plan
+            if (userRole !== 'OWNER' && userRole !== 'MANAGER') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Access denied: Only owners and managers can update floor plans'
+                });
+            }
+
             const floorPlan = await floorPlanService.updateFloorPlan(
                 parseInt(id),
-                req.body
+                req.body,
+                userId,
+                userRole
             );
 
             res.json({
@@ -110,7 +154,22 @@ class FloorPlanController {
     async publishFloorPlan(req, res, next) {
         try {
             const { id } = req.params;
-            const floorPlan = await floorPlanService.publishFloorPlan(parseInt(id));
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
+
+            // Chỉ OWNER và MANAGER mới có quyền publish floor plan
+            if (userRole !== 'OWNER' && userRole !== 'MANAGER') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Access denied: Only owners and managers can publish floor plans'
+                });
+            }
+
+            const floorPlan = await floorPlanService.publishFloorPlan(
+                parseInt(id),
+                userId,
+                userRole
+            );
 
             res.json({
                 success: true,
@@ -126,7 +185,22 @@ class FloorPlanController {
     async unpublishFloorPlan(req, res, next) {
         try {
             const { id } = req.params;
-            const floorPlan = await floorPlanService.unpublishFloorPlan(parseInt(id));
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
+
+            // Chỉ OWNER và MANAGER mới có quyền unpublish floor plan
+            if (userRole !== 'OWNER' && userRole !== 'MANAGER') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Access denied: Only owners and managers can unpublish floor plans'
+                });
+            }
+
+            const floorPlan = await floorPlanService.unpublishFloorPlan(
+                parseInt(id),
+                userId,
+                userRole
+            );
 
             res.json({
                 success: true,
@@ -142,7 +216,22 @@ class FloorPlanController {
     async deleteFloorPlan(req, res, next) {
         try {
             const { id } = req.params;
-            const result = await floorPlanService.deleteFloorPlan(parseInt(id));
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
+
+            // Chỉ OWNER và MANAGER mới có quyền xóa floor plan
+            if (userRole !== 'OWNER' && userRole !== 'MANAGER') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Access denied: Only owners and managers can delete floor plans'
+                });
+            }
+
+            const result = await floorPlanService.deleteFloorPlan(
+                parseInt(id),
+                userId,
+                userRole
+            );
 
             res.json({
                 success: true,
@@ -157,8 +246,13 @@ class FloorPlanController {
     async getFloorPlanStatistics(req, res, next) {
         try {
             const { buildingId } = req.params;
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
+
             const statistics = await floorPlanService.getFloorPlanStatistics(
-                parseInt(buildingId)
+                parseInt(buildingId),
+                userId,
+                userRole
             );
 
             res.json({

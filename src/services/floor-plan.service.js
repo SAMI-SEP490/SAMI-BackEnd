@@ -1,10 +1,46 @@
-// Updated: 2025-01-11
+// Updated: 2025-12-12
 // by: DatNB
 const prisma = require('../config/prisma');
 
 class FloorPlanService {
+    // Helper: Kiểm tra quyền truy cập building
+    async checkBuildingAccess(userId, userRole, buildingId) {
+        // Owner có toàn quyền
+        if (userRole === 'OWNER') {
+            return true;
+        }
+
+        // Manager chỉ có quyền với building họ quản lý
+        if (userRole === 'MANAGER') {
+            const manager = await prisma.building_managers.findFirst({
+                where: {
+                    user_id: userId,
+                    building_id: buildingId
+                }
+            });
+            return !!manager;
+        }
+
+        // Các role khác không có quyền
+        return false;
+    }
+
+    // Helper: Kiểm tra quyền với floor plan cụ thể
+    async checkFloorPlanAccess(userId, userRole, planId) {
+        const floorPlan = await prisma.floor_plans.findUnique({
+            where: { plan_id: planId },
+            select: { building_id: true }
+        });
+
+        if (!floorPlan) {
+            throw new Error('Floor plan not found');
+        }
+
+        return await this.checkBuildingAccess(userId, userRole, floorPlan.building_id);
+    }
+
     // CREATE - Tạo floor plan mới
-    async createFloorPlan(data, createdBy) {
+    async createFloorPlan(data, createdBy, userRole) {
         const { building_id, name, floor_number, layout, file_url, is_published, note } = data;
 
         // Validate required fields
@@ -19,6 +55,12 @@ class FloorPlanService {
         const buildingId = parseInt(building_id);
         if (isNaN(buildingId)) {
             throw new Error('building_id must be a valid number');
+        }
+
+        // Kiểm tra quyền truy cập
+        const hasAccess = await this.checkBuildingAccess(createdBy, userRole, buildingId);
+        if (!hasAccess) {
+            throw new Error('Access denied: You do not have permission to create floor plans for this building');
         }
 
         // Kiểm tra building tồn tại
@@ -61,7 +103,7 @@ class FloorPlanService {
                 version: newVersion,
                 layout: layout || null,
                 file_url: file_url?.trim() || null,
-                is_published: is_published === false || is_published === 'flase',
+                is_published: is_published === true || is_published === 'true',
                 created_by: createdBy,
                 note: note?.trim() || null,
                 created_at: new Date(),
@@ -119,7 +161,7 @@ class FloorPlanService {
     }
 
     // READ - Lấy danh sách floor plans (có phân trang và filter)
-    async getFloorPlans(filters = {}) {
+    async getFloorPlans(filters = {}, userId, userRole) {
         const {
             building_id,
             floor_number,
@@ -132,9 +174,38 @@ class FloorPlanService {
         const skip = (page - 1) * limit;
         const where = {};
 
+        // Nếu là Manager, chỉ lấy floor plans của các building họ quản lý
+        if (userRole === 'MANAGER') {
+            const managedBuildings = await prisma.building_managers.findMany({
+                where: { user_id: userId },
+                select: { building_id: true }
+            });
+
+            if (managedBuildings.length === 0) {
+                return {
+                    data: [],
+                    pagination: { total: 0, page, limit, pages: 0 }
+                };
+            }
+
+            where.building_id = {
+                in: managedBuildings.map(b => b.building_id)
+            };
+        }
+
         if (building_id) {
             const buildingId = parseInt(building_id);
             if (!isNaN(buildingId)) {
+                // Nếu đã có filter building_id từ where (Manager), merge với filter từ query
+                if (where.building_id && where.building_id.in) {
+                    if (!where.building_id.in.includes(buildingId)) {
+                        // Manager không quản lý building này
+                        return {
+                            data: [],
+                            pagination: { total: 0, page, limit, pages: 0 }
+                        };
+                    }
+                }
                 where.building_id = buildingId;
             }
         }
@@ -199,7 +270,7 @@ class FloorPlanService {
     }
 
     // READ - Lấy floor plans theo building
-    async getFloorPlansByBuilding(buildingId, filters = {}) {
+    async getFloorPlansByBuilding(buildingId, filters = {}, userId, userRole) {
         const {
             floor_number,
             is_published,
@@ -207,6 +278,14 @@ class FloorPlanService {
             page = 1,
             limit = 20
         } = filters;
+
+        // Kiểm tra quyền truy cập building
+        if (userRole === 'MANAGER') {
+            const hasAccess = await this.checkBuildingAccess(userId, userRole, buildingId);
+            if (!hasAccess) {
+                throw new Error('Access denied: You do not have permission to view floor plans for this building');
+            }
+        }
 
         // Verify building exists
         const building = await prisma.buildings.findUnique({
@@ -307,7 +386,7 @@ class FloorPlanService {
     }
 
     // UPDATE - Cập nhật floor plan
-    async updateFloorPlan(planId, data) {
+    async updateFloorPlan(planId, data, userId, userRole) {
         const { name, layout, file_url, is_published, note } = data;
 
         // Verify floor plan exists
@@ -317,6 +396,12 @@ class FloorPlanService {
 
         if (!existingPlan) {
             throw new Error('Floor plan not found');
+        }
+
+        // Kiểm tra quyền truy cập
+        const hasAccess = await this.checkFloorPlanAccess(userId, userRole, planId);
+        if (!hasAccess) {
+            throw new Error('Access denied: You do not have permission to update this floor plan');
         }
 
         // Prepare update data
@@ -369,13 +454,19 @@ class FloorPlanService {
     }
 
     // PUBLISH - Publish floor plan
-    async publishFloorPlan(planId) {
+    async publishFloorPlan(planId, userId, userRole) {
         const floorPlan = await prisma.floor_plans.findUnique({
             where: { plan_id: planId }
         });
 
         if (!floorPlan) {
             throw new Error('Floor plan not found');
+        }
+
+        // Kiểm tra quyền truy cập
+        const hasAccess = await this.checkFloorPlanAccess(userId, userRole, planId);
+        if (!hasAccess) {
+            throw new Error('Access denied: You do not have permission to publish this floor plan');
         }
 
         if (floorPlan.is_published) {
@@ -408,13 +499,19 @@ class FloorPlanService {
     }
 
     // UNPUBLISH - Unpublish floor plan
-    async unpublishFloorPlan(planId) {
+    async unpublishFloorPlan(planId, userId, userRole) {
         const floorPlan = await prisma.floor_plans.findUnique({
             where: { plan_id: planId }
         });
 
         if (!floorPlan) {
             throw new Error('Floor plan not found');
+        }
+
+        // Kiểm tra quyền truy cập
+        const hasAccess = await this.checkFloorPlanAccess(userId, userRole, planId);
+        if (!hasAccess) {
+            throw new Error('Access denied: You do not have permission to unpublish this floor plan');
         }
 
         if (!floorPlan.is_published) {
@@ -447,13 +544,19 @@ class FloorPlanService {
     }
 
     // DELETE - Xóa floor plan
-    async deleteFloorPlan(planId) {
+    async deleteFloorPlan(planId, userId, userRole) {
         const floorPlan = await prisma.floor_plans.findUnique({
             where: { plan_id: planId }
         });
 
         if (!floorPlan) {
             throw new Error('Floor plan not found');
+        }
+
+        // Kiểm tra quyền truy cập
+        const hasAccess = await this.checkFloorPlanAccess(userId, userRole, planId);
+        if (!hasAccess) {
+            throw new Error('Access denied: You do not have permission to delete this floor plan');
         }
 
         if (floorPlan.is_published) {
@@ -468,7 +571,7 @@ class FloorPlanService {
     }
 
     // GET VERSIONS - Lấy tất cả versions của một floor
-    async getFloorPlanVersions(buildingId, floorNumber) {
+    async getFloorPlanVersions(buildingId, floorNumber, userId, userRole) {
         const buildingIdInt = parseInt(buildingId);
         const floorNumberInt = parseInt(floorNumber);
 
@@ -478,6 +581,14 @@ class FloorPlanService {
 
         if (isNaN(floorNumberInt)) {
             throw new Error('floor_number must be a valid number');
+        }
+
+        // Kiểm tra quyền truy cập building
+        if (userRole === 'MANAGER') {
+            const hasAccess = await this.checkBuildingAccess(userId, userRole, buildingIdInt);
+            if (!hasAccess) {
+                throw new Error('Access denied: You do not have permission to view floor plans for this building');
+            }
         }
 
         // Verify building exists
@@ -510,7 +621,15 @@ class FloorPlanService {
     }
 
     // STATISTICS - Thống kê floor plans
-    async getFloorPlanStatistics(buildingId) {
+    async getFloorPlanStatistics(buildingId, userId, userRole) {
+        // Kiểm tra quyền truy cập building
+        if (userRole === 'MANAGER') {
+            const hasAccess = await this.checkBuildingAccess(userId, userRole, buildingId);
+            if (!hasAccess) {
+                throw new Error('Access denied: You do not have permission to view statistics for this building');
+            }
+        }
+
         const building = await prisma.buildings.findUnique({
             where: { building_id: buildingId }
         });
