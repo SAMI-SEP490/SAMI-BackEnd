@@ -4,14 +4,14 @@
 const admin = require('firebase-admin');
 const prisma = require('../config/prisma');
 const fs = require('fs');
-const path = require('path');
+const config = require('../config');
 
 // --- SAFE INITIALIZATION ---
 let isFirebaseInitialized = false;
 
 // --- IMPORTANT ---
 // Make sure this path points to the key you just downloaded
-const serviceAccountPath = path.join(__dirname, '../../firebase-adminsdk.json');
+const serviceAccountPath = config.firebase.serviceAccountPath;
 
 if (fs.existsSync(serviceAccountPath)) {
     try {
@@ -25,7 +25,9 @@ if (fs.existsSync(serviceAccountPath)) {
         console.warn('⚠️ Firebase init failed:', error.message);
     }
 } else {
-    console.warn('⚠️ firebase-adminsdk.json not found. Push notifications will be disabled.');
+    // This logs the path so you can debug where it looked
+    console.warn(`⚠️ firebase-adminsdk.json not found at: ${serviceAccountPath}`);
+    console.warn('Push notifications will be disabled.');
 }
 
 class PushService {

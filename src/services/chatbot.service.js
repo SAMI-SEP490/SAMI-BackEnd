@@ -2,6 +2,7 @@
 // by: MinhBH
 
 const axios = require('axios');
+const config = require('../config'); // Import Config
 
 class ChatbotService {
 
@@ -9,9 +10,9 @@ class ChatbotService {
      * Streams the user's prompt to Dify and returns the raw stream.
      */
     async getChatStream(userQuestion, tenantUserId, conversationId = null) {
-        // --- CHECK ENV ---
-        if (!process.env.DIFY_API_KEY || !process.env.DIFY_API_URL) {
-             console.warn("⚠️ Dify API keys missing.");
+        // --- CHECK ENV via Config ---
+        if (!config.dify.apiKey || !config.dify.apiUrl) {
+             console.warn("⚠️ Dify API keys missing in config.");
              throw new Error("AI Chatbot service is currently unavailable.");
         }
 
@@ -33,9 +34,10 @@ class ChatbotService {
         }
 
         try {
-            const response = await axios.post(process.env.DIFY_API_URL, payload, {
+            // Use config.dify.apiUrl and config.dify.apiKey
+            const response = await axios.post(config.dify.apiUrl, payload, {
                 headers: {
-                    'Authorization': `Bearer ${process.env.DIFY_API_KEY}`,
+                    'Authorization': `Bearer ${config.dify.apiKey}`,
                     'Content-Type': 'application/json'
                 },
                 responseType: 'stream' 
@@ -73,12 +75,13 @@ class ChatbotService {
      */
     async getChatbotParameters(tenantUserId) {
         try {
-            const response = await axios.get(`${process.env.DIFY_API_URL.replace('/chat-messages', '')}/parameters`, {
+            // Clean URL from config
+            const response = await axios.get(`${config.dify.apiUrl.replace('/chat-messages', '')}/parameters`, {
                 headers: {
-                    'Authorization': `Bearer ${process.env.DIFY_API_KEY}`
+                    'Authorization': `Bearer ${config.dify.apiKey}`
                 },
                 params: {
-                    user: `user-${tenantUserId}` // Consistency with chat user ID
+                    user: `user-${tenantUserId}` 
                 }
             });
             
@@ -96,13 +99,12 @@ class ChatbotService {
      */
     async getSuggestedQuestions(messageId, tenantUserId) {
         try {
-            // Dify API: GET /messages/{message_id}/suggested
-            const baseUrl = process.env.DIFY_API_URL.replace('/chat-messages', '');
+            const baseUrl = config.dify.apiUrl.replace('/chat-messages', '');
             const url = `${baseUrl}/messages/${messageId}/suggested`;
 
             const response = await axios.get(url, {
                 headers: {
-                    'Authorization': `Bearer ${process.env.DIFY_API_KEY}`
+                    'Authorization': `Bearer ${config.dify.apiKey}`
                 },
                 params: {
                     user: `user-${tenantUserId}`
