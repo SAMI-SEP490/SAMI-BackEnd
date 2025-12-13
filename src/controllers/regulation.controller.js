@@ -1,4 +1,4 @@
-// Updated: 2025-05-11
+// Updated: 2025-12-13
 // By: DatNB
 
 const regulationService = require('../services/regulation.service');
@@ -7,8 +7,14 @@ class RegulationController {
     // Tạo regulation mới
     async createRegulation(req, res, next) {
         try {
-            const createdBy = req.user.user_id; // Lấy từ authentication middleware
-            const regulation = await regulationService.createRegulation(req.body, createdBy);
+            const createdBy = req.user.user_id;
+            const userRole = req.user.role;
+
+            const regulation = await regulationService.createRegulation(
+                req.body,
+                createdBy,
+                userRole
+            );
 
             res.status(201).json({
                 success: true,
@@ -24,7 +30,14 @@ class RegulationController {
     async getRegulationById(req, res, next) {
         try {
             const { id } = req.params;
-            const regulation = await regulationService.getRegulationById(parseInt(id));
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
+
+            const regulation = await regulationService.getRegulationById(
+                parseInt(id),
+                userId,
+                userRole
+            );
 
             res.json({
                 success: true,
@@ -38,7 +51,14 @@ class RegulationController {
     // Lấy danh sách regulations
     async getRegulations(req, res, next) {
         try {
-            const regulations = await regulationService.getRegulations(req.query);
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
+
+            const regulations = await regulationService.getRegulations(
+                req.query,
+                userId,
+                userRole
+            );
 
             res.json({
                 success: true,
@@ -55,10 +75,14 @@ class RegulationController {
         try {
             const { buildingId } = req.params;
             const buildingIdInt = buildingId === 'null' ? null : parseInt(buildingId);
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
 
             const regulations = await regulationService.getRegulationsByBuilding(
                 buildingIdInt,
-                req.query
+                req.query,
+                userId,
+                userRole
             );
 
             res.json({
@@ -76,10 +100,14 @@ class RegulationController {
         try {
             const { title } = req.params;
             const { building_id } = req.query;
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
 
             const versions = await regulationService.getRegulationVersions(
                 title,
-                building_id
+                building_id,
+                userId,
+                userRole
             );
 
             res.json({
@@ -95,9 +123,14 @@ class RegulationController {
     async updateRegulation(req, res, next) {
         try {
             const { id } = req.params;
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
+
             const regulation = await regulationService.updateRegulation(
                 parseInt(id),
-                req.body
+                req.body,
+                userId,
+                userRole
             );
 
             res.json({
@@ -114,7 +147,14 @@ class RegulationController {
     async publishRegulation(req, res, next) {
         try {
             const { id } = req.params;
-            const regulation = await regulationService.publishRegulation(parseInt(id));
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
+
+            const regulation = await regulationService.publishRegulation(
+                parseInt(id),
+                userId,
+                userRole
+            );
 
             res.json({
                 success: true,
@@ -125,11 +165,19 @@ class RegulationController {
             next(err);
         }
     }
+
     // Unpublish regulation
     async unpublishRegulation(req, res, next) {
         try {
             const { id } = req.params;
-            const regulation = await regulationService.unpublishRegulation(parseInt(id));
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
+
+            const regulation = await regulationService.unpublishRegulation(
+                parseInt(id),
+                userId,
+                userRole
+            );
 
             res.json({
                 success: true,
@@ -145,7 +193,14 @@ class RegulationController {
     async deleteRegulation(req, res, next) {
         try {
             const { id } = req.params;
-            const result = await regulationService.deleteRegulation(parseInt(id));
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
+
+            const result = await regulationService.deleteRegulation(
+                parseInt(id),
+                userId,
+                userRole
+            );
 
             res.json({
                 success: true,
@@ -203,8 +258,14 @@ class RegulationController {
         try {
             const { buildingId } = req.params;
             const buildingIdInt = buildingId ? parseInt(buildingId) : null;
+            const userId = req.user.user_id;
+            const userRole = req.user.role;
 
-            const statistics = await regulationService.getRegulationStatistics(buildingIdInt);
+            const statistics = await regulationService.getRegulationStatistics(
+                buildingIdInt,
+                userId,
+                userRole
+            );
 
             res.json({
                 success: true,
@@ -306,8 +367,6 @@ class RegulationController {
         }
     }
 
-
-
     /**
      * Bot thêm feedback cho regulation thay mặt tenant
      */
@@ -388,8 +447,6 @@ class RegulationController {
             next(err);
         }
     }
-
-
 }
 
 module.exports = new RegulationController();

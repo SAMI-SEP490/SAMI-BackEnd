@@ -1,5 +1,6 @@
-// Updated: 2025-11-06
+// Updated: 2025-12-12
 // By: DatNB
+// Added: Pass user role and id to service for RBAC
 
 const roomService = require('../services/room.service');
 
@@ -7,7 +8,8 @@ class RoomController {
     // Tạo phòng mới
     async createRoom(req, res, next) {
         try {
-            const room = await roomService.createRoom(req.body);
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const room = await roomService.createRoom(req.body, role, userId);
 
             res.status(201).json({
                 success: true,
@@ -23,7 +25,8 @@ class RoomController {
     async getRoomById(req, res, next) {
         try {
             const { id } = req.params;
-            const room = await roomService.getRoomById(parseInt(id));
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const room = await roomService.getRoomById(parseInt(id), role, userId);
 
             res.json({
                 success: true,
@@ -37,7 +40,8 @@ class RoomController {
     // Lấy danh sách phòng
     async getRooms(req, res, next) {
         try {
-            const rooms = await roomService.getRooms(req.query);
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const rooms = await roomService.getRooms(req.query, role, userId);
 
             res.json({
                 success: true,
@@ -68,7 +72,8 @@ class RoomController {
     async updateRoom(req, res, next) {
         try {
             const { id } = req.params;
-            const room = await roomService.updateRoom(parseInt(id), req.body);
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const room = await roomService.updateRoom(parseInt(id), req.body, role, userId);
 
             res.json({
                 success: true,
@@ -84,7 +89,8 @@ class RoomController {
     async deactivateRoom(req, res, next) {
         try {
             const { id } = req.params;
-            const result = await roomService.deactivateRoom(parseInt(id));
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const result = await roomService.deactivateRoom(parseInt(id), role, userId);
 
             res.json({
                 success: true,
@@ -99,7 +105,8 @@ class RoomController {
     async activateRoom(req, res, next) {
         try {
             const { id } = req.params;
-            const room = await roomService.activateRoom(parseInt(id));
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const room = await roomService.activateRoom(parseInt(id), role, userId);
 
             res.json({
                 success: true,
@@ -115,7 +122,8 @@ class RoomController {
     async hardDeleteRoom(req, res, next) {
         try {
             const { id } = req.params;
-            const result = await roomService.hardDeleteRoom(parseInt(id));
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const result = await roomService.hardDeleteRoom(parseInt(id), role, userId);
 
             res.json({
                 success: true,
@@ -130,7 +138,12 @@ class RoomController {
     async getRoomStatisticsByBuilding(req, res, next) {
         try {
             const { buildingId } = req.params;
-            const statistics = await roomService.getRoomStatisticsByBuilding(parseInt(buildingId));
+            const { role, userId } = req.user; // Lấy từ middleware auth
+            const statistics = await roomService.getRoomStatisticsByBuilding(
+                parseInt(buildingId),
+                role,
+                userId
+            );
 
             res.json({
                 success: true,
