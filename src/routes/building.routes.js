@@ -78,7 +78,7 @@ router.delete('/:id/managers/:userId',
 
 // UPDATE - Cập nhật tòa nhà
 router.put('/:id',
-    requireRole(['owner', 'manager']),
+    requireRole(['owner']),
     validateBuildingId,
     validateUpdateBuilding,
     buildingController.updateBuilding
