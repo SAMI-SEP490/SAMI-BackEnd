@@ -303,7 +303,7 @@ class UserService {
             where: { user_id: targetUserId },
             data: {
                 deleted_at: new Date(),
-                status: 'Deleted',
+                status: 'Inactive',
             },
             select: { user_id: true, deleted_at: true, status: true },
         });

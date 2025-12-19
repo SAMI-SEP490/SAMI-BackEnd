@@ -139,7 +139,6 @@ model floor_plans {
   building_id  Int
   name         String?   @db.VarChar(200)
   floor_number Int?
-  version      Int?      @default(1)
   layout       Json?
   file_url     String?   @db.VarChar(1000)
   is_published Boolean?  @default(false)
@@ -150,7 +149,7 @@ model floor_plans {
   buildings    buildings @relation(fields: [building_id], references: [building_id], onDelete: Cascade, map: "fk_floor_plans_building")
   users        users     @relation(fields: [created_by], references: [user_id], onDelete: SetNull, map: "fk_floor_plans_created_by")
 
-  @@unique([building_id, floor_number, version], map: "floor_plans_unique_building_floor_version")
+  @@unique([building_id, floor_number], map: "floor_plans_unique_building_floor_version")
   @@index([building_id], map: "idx_floor_plans_building_id")
 }
 

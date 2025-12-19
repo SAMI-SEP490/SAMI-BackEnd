@@ -1,18 +1,19 @@
-// Updated: 2025-12-12
+// Updated: 2025-12-17
 // by: DatNB
-// Added: Role-based access control for manager and owner
+// Changed: Updated to use Role enum (TENANT, MANAGER, OWNER, USER)
 
 const prisma = require('../config/prisma');
 
 class RoomService {
     // Helper: Kiểm tra quyền truy cập building
     async checkBuildingAccess(buildingId, userRole, userId) {
-        if (userRole === 'owner') {
-            return true; // Owner có toàn quyền
+        // OWNER có toàn quyền truy cập
+        if (userRole === 'OWNER') {
+            return true;
         }
 
-        if (userRole === 'manager') {
-            // Kiểm tra manager có quản lý building này không
+        // MANAGER chỉ truy cập building họ quản lý
+        if (userRole === 'MANAGER') {
             const manager = await prisma.building_managers.findFirst({
                 where: {
                     user_id: userId,
@@ -28,6 +29,7 @@ class RoomService {
             return true;
         }
 
+        // TENANT và USER không có quyền truy cập quản lý
         throw new Error('Unauthorized access');
     }
 
@@ -46,8 +48,18 @@ class RoomService {
         return managedBuildings.map(mb => mb.building_id);
     }
 
-    // CREATE - Tạo phòng mới
+    // Helper: Kiểm tra role có quyền quản lý không
+    isManagementRole(userRole) {
+        return ['OWNER', 'MANAGER'].includes(userRole);
+    }
+
+    // CREATE - Tạo phòng mới (chỉ OWNER và MANAGER)
     async createRoom(data, userRole, userId) {
+        // Kiểm tra quyền: chỉ OWNER và MANAGER
+        if (!this.isManagementRole(userRole)) {
+            throw new Error('Only OWNER and MANAGER can create rooms');
+        }
+
         const { building_id, room_number, floor, size, description, status } = data;
 
         // Validate required fields
@@ -190,8 +202,22 @@ class RoomService {
             throw new Error('Room not found');
         }
 
-        // Kiểm tra quyền truy cập
-        await this.checkBuildingAccess(room.building_id, userRole, userId);
+        // Kiểm tra quyền:
+        // - OWNER và MANAGER: kiểm tra quyền building
+        // - TENANT: chỉ xem phòng của mình
+        // - USER: không có quyền
+        if (this.isManagementRole(userRole)) {
+            await this.checkBuildingAccess(room.building_id, userRole, userId);
+        } else if (userRole === 'TENANT') {
+            const tenant = await prisma.tenants.findUnique({
+                where: { user_id: userId }
+            });
+            if (!tenant || tenant.room_id !== roomId) {
+                throw new Error('You can only view your own room');
+            }
+        } else {
+            throw new Error('Unauthorized access');
+        }
 
         return this.formatRoomDetailResponse(room);
     }
@@ -211,8 +237,8 @@ class RoomService {
         const skip = (page - 1) * limit;
         const where = {};
 
-        // Nếu là manager, chỉ lấy phòng của building họ quản lý
-        if (userRole === 'manager') {
+        // Xử lý theo role
+        if (userRole === 'MANAGER') {
             const managedBuildingIds = await this.getManagedBuildingIds(userId);
 
             if (managedBuildingIds.length === 0) {
@@ -237,7 +263,7 @@ class RoomService {
             } else {
                 where.building_id = { in: managedBuildingIds };
             }
-        } else if (userRole === 'owner') {
+        } else if (userRole === 'OWNER') {
             // Owner có thể xem tất cả hoặc filter theo building_id
             if (building_id) {
                 const buildingIdInt = parseInt(building_id);
@@ -245,6 +271,26 @@ class RoomService {
                     where.building_id = buildingIdInt;
                 }
             }
+        } else if (userRole === 'TENANT') {
+            // Tenant chỉ xem phòng của mình
+            const tenant = await prisma.tenants.findUnique({
+                where: { user_id: userId }
+            });
+            if (!tenant || !tenant.room_id) {
+                return {
+                    data: [],
+                    pagination: {
+                        total: 0,
+                        page,
+                        limit,
+                        pages: 0
+                    }
+                };
+            }
+            where.room_id = tenant.room_id;
+        } else {
+            // USER không có quyền xem danh sách phòng
+            throw new Error('Unauthorized access');
         }
 
         if (room_number) {
@@ -331,8 +377,13 @@ class RoomService {
         };
     }
 
-    // UPDATE - Cập nhật thông tin phòng
+    // UPDATE - Cập nhật thông tin phòng (chỉ OWNER và MANAGER)
     async updateRoom(roomId, data, userRole, userId) {
+        // Kiểm tra quyền: chỉ OWNER và MANAGER
+        if (!this.isManagementRole(userRole)) {
+            throw new Error('Only OWNER and MANAGER can update rooms');
+        }
+
         const { room_number, floor, size, description, status, is_active } = data;
 
         // Verify room exists
@@ -379,7 +430,7 @@ class RoomService {
             }
         }
 
-        // Kiểm tra nếu thay đổi status sang maintenance/unavailable khi có tenant
+        // Kiểm tra nếu thay đổi status sang maintenance/available khi có tenant
         if (status && status !== existingRoom.status) {
             if ((status === 'maintenance' || status === 'available') && existingRoom.tenants.length > 0) {
                 console.log(`Warning: Changing status of occupied room ${roomId} to ${status}`);
@@ -431,8 +482,13 @@ class RoomService {
         return this.formatRoomResponse(room);
     }
 
-    // DELETE - Vô hiệu hóa phòng (soft delete)
+    // DELETE - Vô hiệu hóa phòng (soft delete) - chỉ OWNER và MANAGER
     async deactivateRoom(roomId, userRole, userId) {
+        // Kiểm tra quyền: chỉ OWNER và MANAGER
+        if (!this.isManagementRole(userRole)) {
+            throw new Error('Only OWNER and MANAGER can deactivate rooms');
+        }
+
         const room = await prisma.rooms.findUnique({
             where: { room_id: roomId },
             include: {
@@ -478,8 +534,13 @@ class RoomService {
         return { success: true, message: 'Room deactivated successfully' };
     }
 
-    // ACTIVATE - Kích hoạt lại phòng
+    // ACTIVATE - Kích hoạt lại phòng - chỉ OWNER và MANAGER
     async activateRoom(roomId, userRole, userId) {
+        // Kiểm tra quyền: chỉ OWNER và MANAGER
+        if (!this.isManagementRole(userRole)) {
+            throw new Error('Only OWNER and MANAGER can activate rooms');
+        }
+
         const room = await prisma.rooms.findUnique({
             where: { room_id: roomId },
             include: {
@@ -522,8 +583,13 @@ class RoomService {
         return this.formatRoomResponse(activated);
     }
 
-    // DELETE - Xóa vĩnh viễn phòng
+    // DELETE - Xóa vĩnh viễn phòng - chỉ OWNER
     async hardDeleteRoom(roomId, userRole, userId) {
+        // Kiểm tra quyền: chỉ OWNER
+        if (userRole !== 'OWNER') {
+            throw new Error('Only OWNER can permanently delete rooms');
+        }
+
         const room = await prisma.rooms.findUnique({
             where: { room_id: roomId },
             include: {
@@ -566,11 +632,19 @@ class RoomService {
         return { success: true, message: 'Room permanently deleted' };
     }
 
-    // READ - Tìm phòng theo user_id (tenant)
-    async getRoomsByUserId(userId) {
+    // READ - Tìm phòng theo user_id (dành cho TENANT)
+    async getRoomsByUserId(userId, requestUserRole, requestUserId) {
         const userIdInt = parseInt(userId);
         if (isNaN(userIdInt)) {
             throw new Error('user_id must be a valid number');
+        }
+
+        // Kiểm tra quyền: OWNER và MANAGER có thể xem bất kỳ user nào
+        // TENANT chỉ xem được thông tin của chính mình
+        if (requestUserRole === 'TENANT' && requestUserId !== userIdInt) {
+            throw new Error('You can only view your own room information');
+        } else if (requestUserRole === 'USER') {
+            throw new Error('Unauthorized access');
         }
 
         // Kiểm tra user có tồn tại không
@@ -741,8 +815,13 @@ class RoomService {
         };
     }
 
-    // STATISTICS - Thống kê phòng theo building
+    // STATISTICS - Thống kê phòng theo building (chỉ OWNER và MANAGER)
     async getRoomStatisticsByBuilding(buildingId, userRole, userId) {
+        // Kiểm tra quyền: chỉ OWNER và MANAGER
+        if (!this.isManagementRole(userRole)) {
+            throw new Error('Only OWNER and MANAGER can view room statistics');
+        }
+
         // Kiểm tra quyền truy cập
         await this.checkBuildingAccess(buildingId, userRole, userId);
 

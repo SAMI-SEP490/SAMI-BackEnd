@@ -74,7 +74,8 @@ module.exports = {
     },
     firebase: {
         // Resolves to root_folder/firebase-adminsdk.json by default
-        serviceAccountPath: path.resolve(process.cwd(), process.env.FIREBASE_SERVICE_ACCOUNT_PATH || 'firebase-adminsdk.json')
+        serviceAccountPath: path.resolve(process.cwd(), process.env.FIREBASE_SERVICE_ACCOUNT_PATH
+            || 'firebase-adminsdk.json')
     },
     cors: {
         origins: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3001']

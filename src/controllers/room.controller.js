@@ -57,7 +57,8 @@ class RoomController {
     async getRoomsByUserId(req, res, next) {
         try {
             const { userId } = req.params;
-            const rooms = await roomService.getRoomsByUserId(parseInt(userId));
+            const { role, userIdrq } = req.user;
+            const rooms = await roomService.getRoomsByUserId(parseInt(userId), role, userIdrq);
 
             res.json({
                 success: true,
