@@ -1,26 +1,33 @@
-// Updated: 2025-12-13
+// Updated: 2025-12-19
 // by: DatNB
+// Changed: TENANT can now view all regulations (published only)
+
 const prisma = require('../config/prisma');
 const NotificationService = require('./notification.service');
 
 class RegulationService {
     // Helper: Kiểm tra quyền truy cập regulation
     async checkRegulationAccess(regulationId, userId, userRole) {
-        // Owner có toàn quyền
+        // OWNER có toàn quyền
         if (userRole === 'OWNER') {
             return true;
         }
 
-        // Manager chỉ có quyền với regulation của tòa nhà họ quản lý
+        const regulation = await prisma.regulations.findUnique({
+            where: { regulation_id: regulationId }
+        });
+
+        if (!regulation) {
+            throw new Error('Regulation not found');
+        }
+
+        // TENANT chỉ xem được regulation đã published
+        if (userRole === 'TENANT') {
+            return regulation.status === 'published';
+        }
+
+        // MANAGER chỉ có quyền với regulation của tòa nhà họ quản lý
         if (userRole === 'MANAGER') {
-            const regulation = await prisma.regulations.findUnique({
-                where: { regulation_id: regulationId }
-            });
-
-            if (!regulation) {
-                throw new Error('Regulation not found');
-            }
-
             // Nếu regulation không thuộc building nào (general regulation), manager không có quyền
             if (!regulation.building_id) {
                 return false;
@@ -30,7 +37,8 @@ class RegulationService {
             const isManager = await prisma.building_managers.findFirst({
                 where: {
                     user_id: userId,
-                    building_id: regulation.building_id
+                    building_id: regulation.building_id,
+                    is_active: true
                 }
             });
 
@@ -43,15 +51,40 @@ class RegulationService {
     // Helper: Lấy danh sách building_ids mà manager quản lý
     async getManagerBuildingIds(userId) {
         const managedBuildings = await prisma.building_managers.findMany({
-            where: { user_id: userId },
+            where: {
+                user_id: userId,
+                is_active: true
+            },
             select: { building_id: true }
         });
 
         return managedBuildings.map(b => b.building_id);
     }
 
-    // CREATE - Tạo regulation mới
+    // Helper: Lấy building_id của tenant
+    async getTenantBuildingId(userId) {
+        const tenant = await prisma.tenants.findUnique({
+            where: { user_id: userId },
+            select: {
+                room_id: true,
+                rooms: {
+                    select: {
+                        building_id: true
+                    }
+                }
+            }
+        });
+
+        return tenant?.rooms?.building_id || null;
+    }
+
+    // CREATE - Tạo regulation mới (chỉ OWNER và MANAGER)
     async createRegulation(data, createdBy, userRole) {
+        // Kiểm tra quyền: chỉ OWNER và MANAGER
+        if (!['OWNER', 'MANAGER'].includes(userRole)) {
+            throw new Error('Only OWNER and MANAGER can create regulations');
+        }
+
         const {
             title,
             content,
@@ -90,12 +123,13 @@ class RegulationService {
                 throw new Error('Cannot create regulation for inactive building');
             }
 
-            // Manager chỉ có thể tạo regulation cho building họ quản lý
+            // MANAGER chỉ có thể tạo regulation cho building họ quản lý
             if (userRole === 'MANAGER') {
                 const isManager = await prisma.building_managers.findFirst({
                     where: {
                         user_id: createdBy,
-                        building_id: buildingIdInt
+                        building_id: buildingIdInt,
+                        is_active: true
                     }
                 });
 
@@ -104,9 +138,9 @@ class RegulationService {
                 }
             }
         } else {
-            // Chỉ owner mới có thể tạo general regulation (building_id = null)
+            // Chỉ OWNER mới có thể tạo general regulation (building_id = null)
             if (userRole !== 'OWNER') {
-                throw new Error('Only owners can create general regulations');
+                throw new Error('Only OWNER can create general regulations');
             }
         }
 
@@ -218,12 +252,27 @@ class RegulationService {
         const skip = (page - 1) * limit;
         const where = {};
 
-        // Manager chỉ xem được regulations của building họ quản lý
-        if (userRole === 'MANAGER') {
+        // Xử lý theo role
+        if (userRole === 'TENANT') {
+            // TENANT chỉ xem được regulations đã published
+            where.status = 'published';
+
+            // Có thể filter theo building nếu muốn
+            if (building_id !== undefined) {
+                if (building_id === 'null' || building_id === null) {
+                    where.building_id = null;
+                } else {
+                    const buildingId = parseInt(building_id);
+                    if (!isNaN(buildingId)) {
+                        where.building_id = buildingId;
+                    }
+                }
+            }
+        } else if (userRole === 'MANAGER') {
+            // MANAGER chỉ xem được regulations của building họ quản lý
             const managedBuildingIds = await this.getManagerBuildingIds(userId);
 
             if (managedBuildingIds.length === 0) {
-                // Manager không quản lý building nào
                 return {
                     data: [],
                     pagination: {
@@ -236,15 +285,10 @@ class RegulationService {
             }
 
             where.building_id = { in: managedBuildingIds };
-        }
 
-        // Apply filters
-        if (building_id !== undefined) {
-            if (building_id === 'null' || building_id === null) {
-                // Chỉ owner mới xem được general regulations
-                if (userRole === 'OWNER') {
-                    where.building_id = null;
-                } else {
+            // Nếu có building_id filter, kiểm tra quyền
+            if (building_id !== undefined) {
+                if (building_id === 'null' || building_id === null) {
                     // Manager không được xem general regulations
                     return {
                         data: [],
@@ -255,42 +299,57 @@ class RegulationService {
                             pages: 0
                         }
                     };
-                }
-            } else {
-                const buildingId = parseInt(building_id);
-                if (!isNaN(buildingId)) {
-                    // Manager chỉ xem được nếu họ quản lý building này
-                    if (userRole === 'MANAGER') {
-                        const managedBuildingIds = await this.getManagerBuildingIds(userId);
-                        if (!managedBuildingIds.includes(buildingId)) {
-                            throw new Error('You do not have permission to access regulations for this building');
-                        }
+                } else {
+                    const buildingId = parseInt(building_id);
+                    if (!managedBuildingIds.includes(buildingId)) {
+                        throw new Error('You do not have permission to access regulations for this building');
                     }
                     where.building_id = buildingId;
                 }
             }
+
+            // Manager có thể filter theo status
+            if (status) {
+                where.status = status;
+            } else {
+                // Không hiển thị regulations đã deleted
+                where.status = { not: 'deleted' };
+            }
+        } else if (userRole === 'OWNER') {
+            // OWNER có thể xem tất cả
+            if (building_id !== undefined) {
+                if (building_id === 'null' || building_id === null) {
+                    where.building_id = null;
+                } else {
+                    const buildingId = parseInt(building_id);
+                    if (!isNaN(buildingId)) {
+                        where.building_id = buildingId;
+                    }
+                }
+            }
+
+            // OWNER có thể filter theo status
+            if (status) {
+                where.status = status;
+            } else {
+                // Không hiển thị regulations đã deleted
+                where.status = { not: 'deleted' };
+            }
+        } else {
+            // USER không có quyền
+            throw new Error('Unauthorized access');
         }
 
-        if (status) {
-            where.status = status;
-        }
-
-        if (target) {
+        // Apply common filters (nếu role cho phép)
+        if (target && userRole !== 'TENANT') {
             where.target = target;
         }
 
-        if (version !== undefined && version !== '') {
+        if (version !== undefined && version !== '' && userRole !== 'TENANT') {
             const ver = parseInt(version);
             if (!isNaN(ver)) {
                 where.version = ver;
             }
-        }
-
-        // Không hiển thị regulations đã bị xóa
-        if (!filters.include_deleted) {
-            where.status = {
-                not: 'deleted'
-            };
         }
 
         const [regulations, total] = await Promise.all([
@@ -342,7 +401,7 @@ class RegulationService {
             limit = 20
         } = filters;
 
-        // Verify building exists
+        // Verify building exists (nếu không phải general regulation)
         if (buildingId !== null) {
             const building = await prisma.buildings.findUnique({
                 where: { building_id: buildingId }
@@ -352,12 +411,13 @@ class RegulationService {
                 throw new Error('Building not found');
             }
 
-            // Manager chỉ xem được regulations của building họ quản lý
+            // MANAGER chỉ xem được regulations của building họ quản lý
             if (userRole === 'MANAGER') {
                 const isManager = await prisma.building_managers.findFirst({
                     where: {
                         user_id: userId,
-                        building_id: buildingId
+                        building_id: buildingId,
+                        is_active: true
                     }
                 });
 
@@ -366,23 +426,31 @@ class RegulationService {
                 }
             }
         } else {
-            // General regulations - chỉ owner
-            if (userRole !== 'OWNER') {
+            // General regulations
+            if (userRole === 'MANAGER') {
                 throw new Error('You do not have permission to access general regulations');
             }
+            // TENANT và OWNER có thể xem general regulations
         }
 
         const skip = (page - 1) * limit;
         const where = {
-            building_id: buildingId,
-            status: { not: 'deleted' }
+            building_id: buildingId
         };
 
-        if (status) {
-            where.status = status;
+        // TENANT chỉ xem published regulations
+        if (userRole === 'TENANT') {
+            where.status = 'published';
+        } else {
+            // OWNER và MANAGER
+            if (status) {
+                where.status = status;
+            } else {
+                where.status = { not: 'deleted' };
+            }
         }
 
-        if (target) {
+        if (target && userRole !== 'TENANT') {
             where.target = target;
         }
 
@@ -395,6 +463,12 @@ class RegulationService {
                     { version: 'desc' }
                 ],
                 include: {
+                    buildings: {
+                        select: {
+                            building_id: true,
+                            name: true
+                        }
+                    },
                     users: {
                         select: {
                             user_id: true,
@@ -431,6 +505,12 @@ class RegulationService {
             prisma.regulations.findMany({
                 where,
                 include: {
+                    buildings: {
+                        select: {
+                            building_id: true,
+                            name: true
+                        }
+                    },
                     users: {
                         select: {
                             user_id: true,
@@ -459,8 +539,13 @@ class RegulationService {
         };
     }
 
-    // UPDATE - Cập nhật regulation
+    // UPDATE - Cập nhật regulation (chỉ OWNER và MANAGER)
     async updateRegulation(regulationId, data, userId, userRole) {
+        // Kiểm tra quyền: chỉ OWNER và MANAGER
+        if (!['OWNER', 'MANAGER'].includes(userRole)) {
+            throw new Error('Only OWNER and MANAGER can update regulations');
+        }
+
         const { title, content, effective_date, status, target, note } = data;
 
         // Kiểm tra quyền truy cập
@@ -562,8 +647,13 @@ class RegulationService {
         return this.formatRegulationResponse(regulation);
     }
 
-    // PUBLISH - Publish regulation
+    // PUBLISH - Publish regulation (chỉ OWNER và MANAGER)
     async publishRegulation(regulationId, userId, userRole) {
+        // Kiểm tra quyền: chỉ OWNER và MANAGER
+        if (!['OWNER', 'MANAGER'].includes(userRole)) {
+            throw new Error('Only OWNER and MANAGER can publish regulations');
+        }
+
         // Kiểm tra quyền truy cập
         const hasAccess = await this.checkRegulationAccess(regulationId, userId, userRole);
         if (!hasAccess) {
@@ -652,8 +742,13 @@ class RegulationService {
         return this.formatRegulationResponse(published);
     }
 
-    // UNPUBLISH - Chuyển regulation từ published về draft
+    // UNPUBLISH - Chuyển regulation từ published về draft (chỉ OWNER và MANAGER)
     async unpublishRegulation(regulationId, userId, userRole) {
+        // Kiểm tra quyền: chỉ OWNER và MANAGER
+        if (!['OWNER', 'MANAGER'].includes(userRole)) {
+            throw new Error('Only OWNER and MANAGER can unpublish regulations');
+        }
+
         // Kiểm tra quyền truy cập
         const hasAccess = await this.checkRegulationAccess(regulationId, userId, userRole);
         if (!hasAccess) {
@@ -748,8 +843,13 @@ class RegulationService {
         return this.formatRegulationResponse(unpublished);
     }
 
-    // DELETE - Xóa regulation (soft delete)
+    // DELETE - Xóa regulation (soft delete) - chỉ OWNER và MANAGER
     async deleteRegulation(regulationId, userId, userRole) {
+        // Kiểm tra quyền: chỉ OWNER và MANAGER
+        if (!['OWNER', 'MANAGER'].includes(userRole)) {
+            throw new Error('Only OWNER and MANAGER can delete regulations');
+        }
+
         // Kiểm tra quyền truy cập
         const hasAccess = await this.checkRegulationAccess(regulationId, userId, userRole);
         if (!hasAccess) {
@@ -773,7 +873,7 @@ class RegulationService {
         }
 
         if (regulation.status === 'published') {
-            throw new Error('Cannot delete published regulation. Change status to draft first');
+            throw new Error('Cannot delete published regulation. Unpublish it first');
         }
 
         if (regulation.status === 'deleted') {
@@ -788,31 +888,12 @@ class RegulationService {
             }
         });
 
-        // GỬI THÔNG BÁO KHI XÓA (nếu regulation là draft nhưng có thể đã được share)
-        if (regulation.building_id && regulation.status === 'draft') {
-            const notificationTitle = `Quy định đã bị xóa: ${regulation.title}`;
-            const notificationBody = `Quy định "${regulation.title}" (bản nháp) đã bị xóa.`;
-            const payload = {
-                type: 'regulation_deleted',
-                regulation_id: regulation.regulation_id,
-                building_id: regulation.building_id
-            };
-
-            await NotificationService.createBuildingBroadcast(
-                regulation.created_by,
-                regulation.building_id,
-                notificationTitle,
-                notificationBody,
-                payload
-            );
-        }
-
         return { success: true, message: 'Regulation deleted successfully' };
     }
 
     // GET VERSIONS - Lấy tất cả versions của một regulation
     async getRegulationVersions(title, buildingId = null, userId, userRole) {
-        // Manager chỉ xem được versions của building họ quản lý
+        // MANAGER chỉ xem được versions của building họ quản lý
         if (userRole === 'MANAGER') {
             if (buildingId === null) {
                 throw new Error('You do not have permission to access general regulations');
@@ -821,7 +902,8 @@ class RegulationService {
             const isManager = await prisma.building_managers.findFirst({
                 where: {
                     user_id: userId,
-                    building_id: parseInt(buildingId)
+                    building_id: parseInt(buildingId),
+                    is_active: true
                 }
             });
 
@@ -832,13 +914,26 @@ class RegulationService {
 
         const whereClause = {
             title: title.trim(),
-            building_id: buildingId ? parseInt(buildingId) : null,
-            status: { not: 'deleted' }
+            building_id: buildingId ? parseInt(buildingId) : null
         };
+
+        // TENANT chỉ xem published versions
+        if (userRole === 'TENANT') {
+            whereClause.status = 'published';
+        } else {
+            // OWNER và MANAGER xem tất cả trừ deleted
+            whereClause.status = { not: 'deleted' };
+        }
 
         const versions = await prisma.regulations.findMany({
             where: whereClause,
             include: {
+                buildings: {
+                    select: {
+                        building_id: true,
+                        name: true
+                    }
+                },
                 users: {
                     select: {
                         user_id: true,
@@ -857,8 +952,8 @@ class RegulationService {
         return versions.map(v => this.formatRegulationListResponse(v));
     }
 
-    // FEEDBACK - Thêm feedback cho regulation
-    async addFeedback(regulationId, userId, comment) {
+    // FEEDBACK - Thêm feedback cho regulation (tất cả roles có thể feedback)
+    async addFeedback(regulationId, userId, comment, userRole) {
         const regulation = await prisma.regulations.findUnique({
             where: { regulation_id: regulationId }
         });
@@ -869,6 +964,12 @@ class RegulationService {
 
         if (regulation.status !== 'published') {
             throw new Error('Can only add feedback to published regulations');
+        }
+
+        // Kiểm tra quyền xem regulation này
+        const hasAccess = await this.checkRegulationAccess(regulationId, userId, userRole);
+        if (!hasAccess) {
+            throw new Error('You do not have permission to provide feedback on this regulation');
         }
 
         const feedback = await prisma.regulation_feedbacks.create({
@@ -901,7 +1002,6 @@ class RegulationService {
             created_at: feedback.created_at
         };
     }
-
     // GET FEEDBACKS - Lấy feedbacks của regulation
     async getFeedbacks(regulationId, filters = {}) {
         const { page = 1, limit = 20 } = filters;
