@@ -131,11 +131,6 @@ const changeToManagerSchema = z.object({
 const updateUserSchema = z.object({
     // User fields
     full_name: z.string().min(1, 'Full name is required'),
-    gender: z.enum(['Male', 'Female', 'Other']),
-    birthday: z.string().or(z.date()),
-    status: z.string().min(1, 'Status cannot be empty'),
-    email: z.string().email('Invalid email format').optional(),
-    phone: z.string().min(10, 'Phone must be at least 10 digits').optional(),
 
     // Role-specific fields (all optional)
     
