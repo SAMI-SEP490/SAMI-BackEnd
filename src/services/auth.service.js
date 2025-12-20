@@ -483,6 +483,20 @@ class AuthService {
                         emergency_contact_phone: true,
                         id_number: true,
                         note: true,
+                        rooms: {
+                            select: {
+                                room_id: true,
+                                room_number: true,
+                                floor: true,
+                                buildings: {
+                                    select: {
+                                        building_id: true,
+                                        name: true,
+                                        address: true
+                                    }
+                                }
+                            }
+                        }
                     }
                 });
                 break;
