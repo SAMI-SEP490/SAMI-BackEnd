@@ -192,8 +192,8 @@ class PaymentController {
     async renderSuccessPage(req, res) {
         try {
             // 1. Extract data from PayOS params
-            const { orderCode, status } = req.query;
-            
+            const { orderCode } = req.query;
+
             // 2. Fetch details from DB (Optional, but looks professional)
             // We use orderCode because we mapped it to payment_id
             let amountDisplay = "";
@@ -210,24 +210,40 @@ class PaymentController {
                 }
             }
 
-            // 3. Render HTML
+            // DEEP LINK: sami://dashboard
+            // Ensure you configured 'scheme': 'sami' in your app.json
+            const deepLink = "sami://dashboard";
+
             const html = `
                 <html>
                     <head>
                         <title>Thanh toán thành công</title>
                         <meta name="viewport" content="width=device-width, initial-scale=1">
                         <style>
-                            body { font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                            body { font-family: -apple-system, system-ui, sans-serif; background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
                             .card { background: white; padding: 40px 30px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 90%; }
                             .icon { font-size: 64px; margin-bottom: 20px; display: block; }
                             h1 { color: #28a745; margin: 0 0 10px; font-size: 24px; }
-                            p { color: #6c757d; font-size: 16px; line-height: 1.5; margin: 10px 0; }
+                            p { color: #6c757d; font-size: 16px; margin: 10px 0; }
                             .details { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; text-align: left; }
                             .details-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; }
-                            .details-row:last-child { margin-bottom: 0; }
                             .label { color: #6c757d; }
                             .value { font-weight: 600; color: #343a40; }
-                            .btn { display: block; background: #28a745; color: white; padding: 12px; border-radius: 8px; text-decoration: none; font-weight: 600; margin-top: 20px; cursor: pointer; border: none; width: 100%; font-size: 16px;}
+                            
+                            /* Button Style */
+                            .btn { 
+                                display: block; 
+                                background: #28a745; 
+                                color: white; 
+                                padding: 14px; 
+                                border-radius: 12px; 
+                                text-decoration: none; 
+                                font-weight: 700; 
+                                margin-top: 20px; 
+                                text-align: center;
+                                font-size: 16px;
+                                box-shadow: 0 4px 6px rgba(40, 167, 69, 0.2);
+                            }
                             .btn:hover { background: #218838; }
                         </style>
                     </head>
@@ -248,15 +264,20 @@ class PaymentController {
                                     <span class="value">${amountDisplay}</span>
                                 </div>
                                 ` : ''}
-                                <div class="details-row">
-                                    <span class="label">Trạng thái:</span>
-                                    <span class="value" style="color:#28a745">Thành công</span>
-                                </div>
                             </div>
 
-                            <button class="btn" onclick="window.close()">Đóng và quay lại App</button>
-                            <p style="font-size: 12px; margin-top: 15px;">Nếu cửa sổ không tự đóng, bạn vui lòng đóng nó thủ công.</p>
+                            <a href="${deepLink}" class="btn">Quay lại Ứng dụng</a>
+                            
+                            <p style="font-size: 12px; margin-top: 15px; color: #999">
+                                Nếu ứng dụng không tự mở, hãy nhấn nút trên.
+                            </p>
                         </div>
+                        <script>
+                            // Auto-redirect after 1 second
+                            setTimeout(function() {
+                                window.location.href = "${deepLink}";
+                            }, 1000);
+                        </script>
                     </body>
                 </html>
             `;
@@ -273,6 +294,7 @@ class PaymentController {
     async renderCancelPage(req, res) {
         const { orderCode } = req.query;
         const dbReference = `PAYOS-${orderCode}`;
+        const deepLink = "sami://dashboard";
 
         const html = `
             <html>
@@ -280,26 +302,34 @@ class PaymentController {
                     <title>Đã hủy thanh toán</title>
                     <meta name="viewport" content="width=device-width, initial-scale=1">
                     <style>
-                        body { font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                        body { font-family: -apple-system, system-ui, sans-serif; background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
                         .card { background: white; padding: 40px 30px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 90%; }
                         .icon { font-size: 64px; margin-bottom: 20px; display: block; }
                         h1 { color: #dc3545; margin: 0 0 10px; font-size: 24px; }
-                        p { color: #6c757d; font-size: 16px; line-height: 1.5; margin: 10px 0; }
-                        .btn { display: block; background: #6c757d; color: white; padding: 12px; border-radius: 8px; text-decoration: none; font-weight: 600; margin-top: 20px; cursor: pointer; border: none; width: 100%; font-size: 16px;}
-                        .btn:hover { background: #5a6268; }
+                        p { color: #6c757d; font-size: 16px; margin: 10px 0; }
+                        
+                        /* Button Style */
+                        .btn { 
+                            display: block; 
+                            background: #6c757d; 
+                            color: white; 
+                            padding: 14px; 
+                            border-radius: 12px; 
+                            text-decoration: none; 
+                            font-weight: 700; 
+                            margin-top: 20px; 
+                            text-align: center;
+                            font-size: 16px;
+                        }
                     </style>
                 </head>
                 <body>
                     <div class="card">
                         <span class="icon">❌</span>
                         <h1>Thanh toán đã hủy</h1>
-                        <p>Bạn đã hủy giao dịch hoặc giao dịch thất bại.</p>
+                        <p>Giao dịch chưa hoàn tất.</p>
                         
-                        <p style="background: #fff3f3; padding: 10px; border-radius: 5px; color: #dc3545; font-size: 14px;">
-                           Mã đơn: #${dbReference || 'Unknown'}
-                        </p>
-
-                        <button class="btn" onclick="window.close()">Đóng và quay lại App</button>
+                        <a href="${deepLink}" class="btn">Quay lại Ứng dụng</a>
                     </div>
                 </body>
             </html>
