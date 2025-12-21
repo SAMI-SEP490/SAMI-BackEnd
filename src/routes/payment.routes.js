@@ -78,4 +78,12 @@ router.post('/payos-webhook', paymentController.handlePayOSWebhook);
 router.get('/success', paymentController.renderSuccessPage);
 router.get('/cancel', paymentController.renderCancelPage);
 
+// Cash Payment (Manager/Owner only)
+router.post(
+    '/cash', 
+    authenticate, 
+    requireRole(['MANAGER', 'OWNER']), 
+    paymentController.createCashPayment
+);
+
 module.exports = router;
