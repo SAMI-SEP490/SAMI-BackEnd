@@ -338,6 +338,41 @@ class PaymentController {
             next(err);
         }
     }
+
+    /**
+     * Paid as cash
+     */
+    async createCashPayment(req, res, next) {
+        try {
+            const { bill_ids, note } = req.body;
+
+            if (!bill_ids || !Array.isArray(bill_ids) || bill_ids.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Please provide a list of bill_ids to pay.'
+                });
+            }
+
+            // req.user.user_id is the Manager/Owner calling the API
+            const result = await PaymentService.createCashPayment(
+                req.user.user_id, 
+                bill_ids, 
+                note
+            );
+            
+            // Optional: Send Push Notification to Tenant
+            const NotificationService = require('../services/notification.service');
+            await NotificationService.sendPaymentSuccessNotification(result);
+
+            res.status(201).json({
+                success: true,
+                message: 'Cash payment recorded successfully',
+                data: result
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
 }
 
 module.exports = new PaymentController();

@@ -310,7 +310,6 @@ class NotificationService {
     async sendPaymentSuccessNotification(payment) {
         try {
             // 1. Find a bill linked to this payment to identify the tenant
-            // (We assume all bills in one payment belong to the same tenant)
             const linkedBill = await prisma.bills.findFirst({
                 where: { payment_id: payment.payment_id },
                 include: {
@@ -326,13 +325,26 @@ class NotificationService {
             const recipientId = linkedBill.tenants.user_id;
             const amountFormatted = formatCurrency(Number(payment.amount));
 
+            // --- Determine Payment Method Name ---
+            let methodLabel = "online"; // Default
+
+            if (payment.method === 'cash') {
+                methodLabel = "tiền mặt";
+            } else if (payment.online_type === 'PAYOS') {
+                methodLabel = "cổng PayOS";
+            } else if (payment.online_type === 'VNPAY') {
+                methodLabel = "cổng VNPay";
+            } else if (payment.method === 'bank_transfer') {
+                methodLabel = "chuyển khoản";
+            }
+            // ------------------------------------------
+
             // 2. Send the message
             await this.createNotification(
                 null, // System Sender
                 recipientId,
                 "Thanh toán thành công ✅",
-                // "Hệ thống đã nhận được 500.000 ₫ thanh toán..."
-                `Hệ thống đã nhận được ${amountFormatted} thanh toán qua PayOS. Cảm ơn bạn!`,
+                `Hệ thống đã nhận được ${amountFormatted} thanh toán qua ${methodLabel}. Cảm ơn bạn!`,
                 {
                     type: "payment_success",
                     payment_id: String(payment.payment_id),

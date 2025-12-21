@@ -565,6 +565,91 @@ class PaymentService {
         
         return webhookData.data;
     }
+
+    /**
+     * Create a Cash Payment (Manager/Owner only)
+     * Records a payment collected physically.
+     */
+    async createCashPayment(collectedByUserId, billIds, note) {
+        return prisma.$transaction(async (tx) => {
+            // 1. Fetch bills to validate
+            const bills = await tx.bills.findMany({
+                where: {
+                    bill_id: { in: billIds },
+                    status: { in: ['issued', 'overdue', 'partially_paid'] }
+                },
+                select: {
+                    bill_id: true,
+                    total_amount: true,
+                    penalty_amount: true,
+                    tenant_user_id: true,
+                    status: true,
+                    bill_number: true
+                }
+            });
+
+            if (bills.length === 0) {
+                const error = new Error('No valid unpaid bills found for the provided IDs.');
+                error.statusCode = 404;
+                throw error;
+            }
+
+            if (bills.length !== billIds.length) {
+                const error = new Error('One or more bills are already paid or invalid.');
+                error.statusCode = 400;
+                throw error;
+            }
+
+            // 2. Ensure all bills belong to the same tenant
+            // (You usually don't pay bills for different people in one cash receipt)
+            const firstTenantId = bills[0].tenant_user_id;
+            const isSameTenant = bills.every(b => b.tenant_user_id === firstTenantId);
+            if (!isSameTenant) {
+                const error = new Error('Cannot process bulk payment for different tenants at once.');
+                error.statusCode = 400;
+                throw error;
+            }
+
+            // 3. Calculate total
+            const totalAmount = bills.reduce((sum, bill) => {
+                const amount = Number(bill.total_amount || 0);
+                const penalty = bill.status === 'overdue' ? Number(bill.penalty_amount || 0) : 0;
+                return sum + amount + penalty;
+            }, 0);
+
+            // 4. Create "Completed" Payment Record
+            // Reference: Generate a unique cash ref e.g. "CASH-{timestamp}"
+            const reference = `CASH-${Date.now()}`;
+
+            const payment = await tx.bill_payments.create({
+                data: {
+                    amount: totalAmount,
+                    payment_date: new Date(),
+                    method: 'cash',
+                    status: 'completed', // Cash is instant
+                    paid_by: firstTenantId,
+                    reference: reference,
+                    note: note || `Collected by Manager (ID: ${collectedByUserId})`
+                }
+            });
+
+            // 5. Update Bills (Individual updates for correct paid_amount)
+            await Promise.all(bills.map(bill => {
+                const finalAmount = Number(bill.total_amount || 0) + (bill.status === 'overdue' ? Number(bill.penalty_amount || 0) : 0);
+                
+                return tx.bills.update({
+                    where: { bill_id: bill.bill_id },
+                    data: {
+                        status: 'paid',
+                        paid_amount: finalAmount, // Mark this specific bill as fully paid
+                        payment_id: payment.payment_id
+                    }
+                });
+            }));
+
+            return payment;
+        });
+    }
 }
 
 module.exports = new PaymentService();
