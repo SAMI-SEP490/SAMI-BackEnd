@@ -142,6 +142,7 @@ class UserService {
                         emergency_contact_phone: true,
                         tenant_since: true,
                         id_number: true,
+                        room_id : true
                     },
                 },
             },
