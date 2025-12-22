@@ -32,12 +32,14 @@ class RoomService {
         throw new Error('Unauthorized access');
     }
 
-    // Helper: Lấy danh sách building_ids mà manager quản lý
     async getManagedBuildingIds(userId) {
+        // FIX: Kiểm tra chặt chẽ userId
+        if (!userId) return [];
+
         const managedBuildings = await prisma.building_managers.findMany({
             where: {
-                user_id: userId,
-                    },
+                user_id: userId, // Prisma sẽ throw lỗi nếu userId là undefined tại đây, nhưng ta đã check ở trên
+            },
             select: {
                 building_id: true
             }
@@ -233,7 +235,7 @@ class RoomService {
             limit = 20
         } = filters;
 
-        const normalizedRole = (userRole || '').toUpperCase();
+        const normalizedRole = (userRole || '').trim().toUpperCase();
         const skip = (page - 1) * limit;
         const where = {};
 

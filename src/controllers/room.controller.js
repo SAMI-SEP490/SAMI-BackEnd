@@ -40,7 +40,18 @@ class RoomController {
     // Lấy danh sách phòng
     async getRooms(req, res, next) {
         try {
-            const { role, userId } = req.user; // Lấy từ middleware auth
+            // DEBUG: Bật dòng này lên để kiểm tra nếu vẫn lỗi
+            // console.log('Current User in Request:', req.user);
+
+            const { role } = req.user;
+            // Đảm bảo lấy đúng trường ID và convert sang Int/Number
+            const userId = req.user.userId || req.user.id || req.user.user_id;
+
+            if (!userId && role === 'manager') {
+                // Nếu là manager mà không có ID thì không thể lọc building -> Lỗi
+                throw new Error('User ID is missing for Manager role');
+            }
+
             const rooms = await roomService.getRooms(req.query, role, userId);
 
             res.json({
