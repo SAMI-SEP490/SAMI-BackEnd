@@ -53,7 +53,7 @@ class FloorPlanService {
             .map((node) => ({
                 building_id,
                 floor: floor_number,
-                room_number: String(node.data.room_number),
+                room_number: String(node.data.room_number).replace(/\D/g, ""),
                 size: node.data.size || null,
                 description: node.data.description || null,
                 status: "available",
