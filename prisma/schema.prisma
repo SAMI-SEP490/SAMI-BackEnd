@@ -149,7 +149,8 @@ model floor_plans {
   buildings    buildings @relation(fields: [building_id], references: [building_id], onDelete: Cascade, map: "fk_floor_plans_building")
   users        users     @relation(fields: [created_by], references: [user_id], onDelete: SetNull, map: "fk_floor_plans_created_by")
 
-  @@unique([building_id, floor_number], map: "floor_plans_unique_building_floor_version")
+  // Unique constraint: Mỗi building chỉ có 1 floor plan cho 1 floor
+  @@unique([building_id, floor_number], map: "floor_plans_unique_building_floor")
   @@index([building_id], map: "idx_floor_plans_building_id")
 }
 

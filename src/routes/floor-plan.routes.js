@@ -43,13 +43,6 @@ router.get('/building/:buildingId',
     floorPlanController.getFloorPlansByBuilding
 );
 
-// READ - Lấy tất cả versions của một floor
-router.get('/building/:buildingId/floor/:floorNumber/versions',
-    requireRole(['owner', 'manager']),
-    validateBuildingId,
-    validateFloorNumber,
-    floorPlanController.getFloorPlanVersions
-);
 
 // READ - Lấy thống kê floor plans của building
 router.get('/building/:buildingId/statistics',

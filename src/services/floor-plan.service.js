@@ -1,4 +1,4 @@
-// Updated: 2025-12-12
+// Updated: 2025-12-22
 // by: DatNB
 const prisma = require('../config/prisma');
 
@@ -39,6 +39,28 @@ class FloorPlanService {
         return await this.checkBuildingAccess(userId, userRole, floorPlan.building_id);
     }
 
+    // Helper: Trích xuất rooms từ layout
+    extractRoomsFromLayout(layout, building_id, floor_number) {
+        if (!layout || !Array.isArray(layout.nodes)) return [];
+
+        return layout.nodes
+            .filter(
+                (node) =>
+                    node.type === "roomNode" &&
+                    node.data &&
+                    node.data.room_number
+            )
+            .map((node) => ({
+                building_id,
+                floor: floor_number,
+                room_number: String(node.data.room_number),
+                size: node.data.size || null,
+                description: node.data.description || null,
+                status: "available",
+                is_active: true,
+            }));
+    }
+
     // CREATE - Tạo floor plan mới
     async createFloorPlan(data, createdBy, userRole) {
         const { building_id, name, floor_number, layout, file_url, is_published, note } = data;
@@ -77,57 +99,78 @@ class FloorPlanService {
         }
 
         // Validate floor_number
+        let floorNum = null;
         if (floor_number !== undefined && floor_number !== null) {
             const floor = parseInt(floor_number);
             if (isNaN(floor)) {
                 throw new Error('floor_number must be a valid number');
             }
+            floorNum = floor;
         }
 
-        // Tìm version cao nhất cho building và floor này
-        const latestPlan = await prisma.floor_plans.findFirst({
+        // Kiểm tra xem đã có floor plan cho building và floor này chưa
+        const existingPlan = await prisma.floor_plans.findFirst({
             where: {
                 building_id: buildingId,
-                floor_number: floor_number ? parseInt(floor_number) : null
-            },
-            orderBy: { version: 'desc' }
-        });
-
-        const newVersion = latestPlan ? latestPlan.version + 1 : 1;
-
-        const floorPlan = await prisma.floor_plans.create({
-            data: {
-                building_id: buildingId,
-                name: name?.trim() || null,
-                floor_number: floor_number ? parseInt(floor_number) : null,
-                version: newVersion,
-                layout: layout || null,
-                file_url: file_url?.trim() || null,
-                is_published: is_published === true || is_published === 'true',
-                created_by: createdBy,
-                note: note?.trim() || null,
-                created_at: new Date(),
-                updated_at: new Date()
-            },
-            include: {
-                buildings: {
-                    select: {
-                        building_id: true,
-                        name: true,
-                        address: true
-                    }
-                },
-                users: {
-                    select: {
-                        user_id: true,
-                        full_name: true,
-                        email: true
-                    }
-                }
+                floor_number: floorNum
             }
         });
 
-        return this.formatFloorPlanResponse(floorPlan);
+        if (existingPlan) {
+            throw new Error(`Floor plan already exists for building ${buildingId}, floor ${floorNum}`);
+        }
+
+        // Sử dụng transaction để tạo floor plan và rooms
+        return await prisma.$transaction(async (tx) => {
+            // 1️⃣ Tạo floor plan
+            const floorPlan = await tx.floor_plans.create({
+                data: {
+                    building_id: buildingId,
+                    name: name?.trim() || null,
+                    floor_number: floorNum,
+                    layout: layout || null,
+                    file_url: file_url?.trim() || null,
+                    is_published: is_published === true || is_published === 'true',
+                    created_by: createdBy,
+                    note: note?.trim() || null,
+                    created_at: new Date(),
+                    updated_at: new Date()
+                },
+                include: {
+                    buildings: {
+                        select: {
+                            building_id: true,
+                            name: true,
+                            address: true
+                        }
+                    },
+                    users: {
+                        select: {
+                            user_id: true,
+                            full_name: true,
+                            email: true
+                        }
+                    }
+                }
+            });
+
+            // 2️⃣ Trích xuất rooms từ layout
+            const roomsToCreate = this.extractRoomsFromLayout(
+                layout,
+                buildingId,
+                floorNum
+            );
+
+            // 3️⃣ Tạo rooms (nếu có)
+            if (roomsToCreate.length > 0) {
+                await tx.rooms.createMany({
+                    data: roomsToCreate,
+                    skipDuplicates: true
+                });
+            }
+
+            return this.formatFloorPlanResponse(floorPlan);
+        });
     }
 
     // READ - Lấy thông tin floor plan theo ID
@@ -166,7 +209,6 @@ class FloorPlanService {
             building_id,
             floor_number,
             is_published,
-            version,
             page = 1,
             limit = 20
         } = filters;
@@ -221,13 +263,6 @@ class FloorPlanService {
             where.is_published = is_published === 'true' || is_published === true;
         }
 
-        if (version !== undefined && version !== '') {
-            const ver = parseInt(version);
-            if (!isNaN(ver)) {
-                where.version = ver;
-            }
-        }
-
         const [floorPlans, total] = await Promise.all([
             prisma.floor_plans.findMany({
                 where,
@@ -251,8 +286,7 @@ class FloorPlanService {
                 take: limit,
                 orderBy: [
                     { building_id: 'asc' },
-                    { floor_number: 'asc' },
-                    { version: 'desc' }
+                    { floor_number: 'asc' }
                 ]
             }),
             prisma.floor_plans.count({ where })
@@ -274,7 +308,6 @@ class FloorPlanService {
         const {
             floor_number,
             is_published,
-            latest_only = false,
             page = 1,
             limit = 20
         } = filters;
@@ -310,48 +343,6 @@ class FloorPlanService {
             where.is_published = is_published === 'true' || is_published === true;
         }
 
-        // Nếu chỉ lấy version mới nhất
-        if (latest_only === true || latest_only === 'true') {
-            const allPlans = await prisma.floor_plans.findMany({
-                where,
-                orderBy: [
-                    { floor_number: 'asc' },
-                    { version: 'desc' }
-                ],
-                include: {
-                    users: {
-                        select: {
-                            user_id: true,
-                            full_name: true,
-                            email: true
-                        }
-                    }
-                }
-            });
-
-            // Lọc lấy version cao nhất cho mỗi floor
-            const latestPlans = [];
-            const seenFloors = new Set();
-
-            for (const plan of allPlans) {
-                const floorKey = plan.floor_number?.toString() || 'null';
-                if (!seenFloors.has(floorKey)) {
-                    latestPlans.push(plan);
-                    seenFloors.add(floorKey);
-                }
-            }
-
-            return {
-                data: latestPlans.map(fp => this.formatFloorPlanListResponse(fp)),
-                pagination: {
-                    total: latestPlans.length,
-                    page: 1,
-                    limit: latestPlans.length,
-                    pages: 1
-                }
-            };
-        }
-
         const [floorPlans, total] = await Promise.all([
             prisma.floor_plans.findMany({
                 where,
@@ -367,8 +358,7 @@ class FloorPlanService {
                 skip,
                 take: limit,
                 orderBy: [
-                    { floor_number: 'asc' },
-                    { version: 'desc' }
+                    { floor_number: 'asc' }
                 ]
             }),
             prisma.floor_plans.count({ where })
@@ -404,53 +394,73 @@ class FloorPlanService {
             throw new Error('Access denied: You do not have permission to update this floor plan');
         }
 
-        // Prepare update data
-        const updateData = {
-            updated_at: new Date()
-        };
+        // Sử dụng transaction để update floor plan và sync rooms
+        return await prisma.$transaction(async (tx) => {
+            // Prepare update data
+            const updateData = {
+                updated_at: new Date()
+            };
 
-        if (name !== undefined) {
-            updateData.name = name?.trim() || null;
-        }
+            if (name !== undefined) {
+                updateData.name = name?.trim() || null;
+            }
 
-        if (layout !== undefined) {
-            updateData.layout = layout || null;
-        }
+            if (layout !== undefined) {
+                updateData.layout = layout || null;
+            }
 
-        if (file_url !== undefined) {
-            updateData.file_url = file_url?.trim() || null;
-        }
+            if (file_url !== undefined) {
+                updateData.file_url = file_url?.trim() || null;
+            }
 
-        if (is_published !== undefined) {
-            updateData.is_published = is_published === 'true' || is_published === true;
-        }
+            if (is_published !== undefined) {
+                updateData.is_published = is_published === 'true' || is_published === true;
+            }
 
-        if (note !== undefined) {
-            updateData.note = note?.trim() || null;
-        }
+            if (note !== undefined) {
+                updateData.note = note?.trim() || null;
+            }
 
-        const floorPlan = await prisma.floor_plans.update({
-            where: { plan_id: planId },
-            data: updateData,
-            include: {
-                buildings: {
-                    select: {
-                        building_id: true,
-                        name: true,
-                        address: true
-                    }
-                },
-                users: {
-                    select: {
-                        user_id: true,
-                        full_name: true,
-                        email: true
+            // 1️⃣ Update floor plan
+            const floorPlan = await tx.floor_plans.update({
+                where: { plan_id: planId },
+                data: updateData,
+                include: {
+                    buildings: {
+                        select: {
+                            building_id: true,
+                            name: true,
+                            address: true
+                        }
+                    },
+                    users: {
+                        select: {
+                            user_id: true,
+                            full_name: true,
+                            email: true
+                        }
                     }
                 }
-            }
-        });
+            });
 
-        return this.formatFloorPlanResponse(floorPlan);
+            // 2️⃣ Nếu layout được update, sync rooms
+            if (layout !== undefined) {
+                const roomsToCreate = this.extractRoomsFromLayout(
+                    layout,
+                    existingPlan.building_id,
+                    existingPlan.floor_number
+                );
+
+                if (roomsToCreate.length > 0) {
+                    await tx.rooms.createMany({
+                        data: roomsToCreate,
+                        skipDuplicates: true
+                    });
+                }
+            }
+
+            return this.formatFloorPlanResponse(floorPlan);
+        });
     }
 
     // PUBLISH - Publish floor plan
@@ -570,56 +580,6 @@ class FloorPlanService {
         return { success: true, message: 'Floor plan deleted successfully' };
     }
 
-    // GET VERSIONS - Lấy tất cả versions của một floor
-    async getFloorPlanVersions(buildingId, floorNumber, userId, userRole) {
-        const buildingIdInt = parseInt(buildingId);
-        const floorNumberInt = parseInt(floorNumber);
-
-        if (isNaN(buildingIdInt)) {
-            throw new Error('building_id must be a valid number');
-        }
-
-        if (isNaN(floorNumberInt)) {
-            throw new Error('floor_number must be a valid number');
-        }
-
-        // Kiểm tra quyền truy cập building
-        if (userRole === 'MANAGER') {
-            const hasAccess = await this.checkBuildingAccess(userId, userRole, buildingIdInt);
-            if (!hasAccess) {
-                throw new Error('Access denied: You do not have permission to view floor plans for this building');
-            }
-        }
-
-        // Verify building exists
-        const building = await prisma.buildings.findUnique({
-            where: { building_id: buildingIdInt }
-        });
-
-        if (!building) {
-            throw new Error('Building not found');
-        }
-
-        const versions = await prisma.floor_plans.findMany({
-            where: {
-                building_id: buildingIdInt,
-                floor_number: floorNumberInt
-            },
-            include: {
-                users: {
-                    select: {
-                        user_id: true,
-                        full_name: true,
-                        email: true
-                    }
-                }
-            },
-            orderBy: { version: 'desc' }
-        });
-
-        return versions.map(v => this.formatFloorPlanListResponse(v));
-    }
-
     // STATISTICS - Thống kê floor plans
     async getFloorPlanStatistics(buildingId, userId, userRole) {
         // Kiểm tra quyền truy cập building
@@ -680,7 +640,6 @@ class FloorPlanService {
             building_address: floorPlan.buildings?.address,
             name: floorPlan.name,
             floor_number: floorPlan.floor_number,
-            version: floorPlan.version,
             layout: floorPlan.layout,
             file_url: floorPlan.file_url,
             is_published: floorPlan.is_published,
@@ -702,7 +661,6 @@ class FloorPlanService {
             building_name: floorPlan.buildings?.name,
             name: floorPlan.name,
             floor_number: floorPlan.floor_number,
-            version: floorPlan.version,
             is_published: floorPlan.is_published,
             created_by: {
                 user_id: floorPlan.users?.user_id,
@@ -724,7 +682,6 @@ class FloorPlanService {
             },
             name: floorPlan.name,
             floor_number: floorPlan.floor_number,
-            version: floorPlan.version,
             layout: floorPlan.layout,
             file_url: floorPlan.file_url,
             is_published: floorPlan.is_published,
