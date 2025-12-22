@@ -18,7 +18,6 @@ class RoomService {
                 where: {
                     user_id: userId,
                     building_id: buildingId,
-                    is_active: true
                 }
             });
 
@@ -38,8 +37,7 @@ class RoomService {
         const managedBuildings = await prisma.building_managers.findMany({
             where: {
                 user_id: userId,
-                is_active: true
-            },
+                    },
             select: {
                 building_id: true
             }
