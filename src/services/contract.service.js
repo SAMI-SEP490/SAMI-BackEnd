@@ -1,5 +1,6 @@
-// Updated: 2025-18-10
+// Updated: 2025-22-12
 // by: DatNB
+// Fixed: Manager permission - only access contracts in their managed buildings
 
 const prisma = require('../config/prisma');
 const s3Service = require('./s3.service');
@@ -12,7 +13,7 @@ const documentAIService = require('./document-ai.service');
 
 class ContractService {
     // CREATE - Tạo hợp đồng mới với file PDF
-    async createContract(data, file = null) {
+    async createContract(data, file = null, currentUser = null) {
         const { room_id, tenant_user_id, start_date, end_date, rent_amount, deposit_amount, status, note } = data;
 
         // Validate required fields
@@ -30,11 +31,24 @@ class ContractService {
 
         // Check if room exists and is active
         const room = await prisma.rooms.findUnique({
-            where: { room_id: roomId }
+            where: { room_id: roomId },
+            include: { buildings: true }
         });
 
         if (!room || !room.is_active) {
             throw new Error('Room not found or is inactive');
+        }
+
+        // ✅ CHECK PERMISSION: Manager chỉ tạo hợp đồng trong tòa nhà họ quản lý
+        if (currentUser && currentUser.role === 'MANAGER') {
+            const hasAccess = await this.checkManagerBuildingAccess(
+                currentUser.user_id,
+                room.building_id
+            );
+
+            if (!hasAccess) {
+                throw new Error('You do not have permission to create contracts in this building');
+            }
         }
 
         // Check if tenant exists
@@ -214,7 +228,7 @@ class ContractService {
             }
         }
 
-        // TỰ ĐỘNG CÂP NHẬT STATUS CỦA CÁC HỢP ĐỒNG HẾT HẠN
+        // Tự động cập nhật status của các hợp đồng hết hạn
         await this.autoUpdateExpiredContracts();
 
         const [contracts, total] = await Promise.all([
@@ -380,13 +394,25 @@ class ContractService {
     }
 
     // HARD DELETE - Xóa vĩnh viễn hợp đồng và file trên S3
-    async hardDeleteContract(contractId) {
+    async hardDeleteContract(contractId, currentUser = null) {
         const contract = await prisma.contracts.findUnique({
-            where: { contract_id: contractId }
+            where: { contract_id: contractId },
+            include: {
+                rooms: {
+                    include: {
+                        buildings: true
+                    }
+                }
+            }
         });
 
         if (!contract) {
             throw new Error('Contract not found');
+        }
+
+        // ✅ CHECK PERMISSION: Chỉ OWNER được hard delete
+        if (currentUser && currentUser.role !== 'OWNER') {
+            throw new Error('Only OWNER can permanently delete contracts');
         }
 
         // Delete file from S3 if exists
@@ -408,9 +434,16 @@ class ContractService {
     }
 
     // RESTORE - Khôi phục hợp đồng đã xóa
-    async restoreContract(contractId) {
+    async restoreContract(contractId, currentUser = null) {
         const contract = await prisma.contracts.findUnique({
-            where: { contract_id: contractId }
+            where: { contract_id: contractId },
+            include: {
+                rooms: {
+                    include: {
+                        buildings: true
+                    }
+                }
+            }
         });
 
         if (!contract) {
@@ -419,6 +452,18 @@ class ContractService {
 
         if (!contract.deleted_at) {
             throw new Error('Contract is not deleted');
+        }
+
+        // ✅ CHECK PERMISSION: Manager chỉ restore hợp đồng trong tòa nhà họ quản lý
+        if (currentUser && currentUser.role === 'MANAGER') {
+            const hasAccess = await this.checkManagerBuildingAccess(
+                currentUser.user_id,
+                contract.rooms.building_id
+            );
+
+            if (!hasAccess) {
+                throw new Error('You do not have permission to restore contracts in this building');
+            }
         }
 
         const restored = await prisma.contracts.update({
@@ -434,9 +479,16 @@ class ContractService {
     }
 
     // TERMINATE - Kết thúc hợp đồng
-    async terminateContract(contractId, reason = null) {
+    async terminateContract(contractId, reason = null, currentUser = null) {
         const contract = await prisma.contracts.findUnique({
-            where: { contract_id: contractId }
+            where: { contract_id: contractId },
+            include: {
+                rooms: {
+                    include: {
+                        buildings: true
+                    }
+                }
+            }
         });
 
         if (!contract || contract.deleted_at) {
@@ -445,6 +497,11 @@ class ContractService {
 
         if (contract.status === 'terminated') {
             throw new Error('Contract is already terminated');
+        }
+
+        // ✅ CHECK PERMISSION
+        if (currentUser) {
+            await this.checkContractPermission(contract, currentUser);
         }
 
         const terminated = await prisma.contracts.update({
@@ -548,9 +605,30 @@ class ContractService {
         }
     }
 
-    async convertAndUpload(contractId, files) {
+    async convertAndUpload(contractId, files, currentUser = null) {
         if (!files || files.length === 0) {
             throw new Error('Không có ảnh nào để chuyển đổi.');
+        }
+
+        // ✅ Verify contract exists và check permission
+        const contract = await prisma.contracts.findUnique({
+            where: { contract_id: parseInt(contractId) },
+            include: {
+                rooms: {
+                    include: {
+                        buildings: true
+                    }
+                }
+            }
+        });
+
+        if (!contract) {
+            throw new Error('Contract not found');
+        }
+
+        // Check permission
+        if (currentUser) {
+            await this.checkContractPermission(contract, currentUser);
         }
 
         // Tạo thư mục tạm
@@ -736,13 +814,27 @@ class ContractService {
             };
 
         } catch (error) {
-            console.error('❌ Error in AI contract processing:', error.message);
+            console.error('✖ Error in AI contract processing:', error.message);
             throw new Error(`AI contract processing failed: ${error.message}`);
         }
     }
 
     /**
-     * [NEW] Kiểm tra quyền truy cập hợp đồng
+     * ✅ [NEW] Kiểm tra Manager có quyền truy cập building không
+     */
+    async checkManagerBuildingAccess(userId, buildingId) {
+        const managerBuilding = await prisma.building_managers.findFirst({
+            where: {
+                user_id: userId,
+                building_id: buildingId
+            }
+        });
+
+        return !!managerBuilding;
+    }
+
+    /**
+     * Kiểm tra quyền truy cập hợp đồng
      */
     async checkContractPermission(contract, currentUser) {
         if (currentUser.role === 'TENANT') {
@@ -752,14 +844,12 @@ class ContractService {
             }
         } else if (currentUser.role === 'MANAGER') {
             // Manager chỉ xem được hợp đồng trong tòa nhà mình quản lý
-            const managedBuildings = await prisma.building_managers.findMany({
-                where: { user_id: currentUser.user_id },
-                select: { building_id: true }
-            });
+            const hasAccess = await this.checkManagerBuildingAccess(
+                currentUser.user_id,
+                contract.rooms.building_id
+            );
 
-            const buildingIds = managedBuildings.map(b => b.building_id);
-
-            if (!buildingIds.includes(contract.rooms.building_id)) {
+            if (!hasAccess) {
                 throw new Error('You do not have permission to access this contract');
             }
         }
@@ -767,7 +857,7 @@ class ContractService {
     }
 
     /**
-     * [NEW] Tự động cập nhật status của 1 hợp đồng nếu đã hết hạn
+     * Tự động cập nhật status của 1 hợp đồng nếu đã hết hạn
      */
     async autoUpdateExpiredStatus(contract) {
         if (!contract || contract.deleted_at) {
@@ -800,7 +890,7 @@ class ContractService {
     }
 
     /**
-     * [NEW] Tự động cập nhật tất cả hợp đồng hết hạn
+     * Tự động cập nhật tất cả hợp đồng hết hạn
      */
     async autoUpdateExpiredContracts() {
         try {
