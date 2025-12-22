@@ -127,13 +127,18 @@ class UserService {
                 created_at: true,
                 updated_at: true,
                 deleted_at: true,
-                // Relations still needed for note/emergency contact
                 building_managers: {
                     select: {
                         note: true,
                         building_id: true,
                         assigned_from: true,
                         assigned_to: true,
+                        buildings: {
+                            select: {
+                                building_id: true,
+                                name: true,
+                            },
+                        },
                     },
                 },
                 tenants: {
@@ -142,7 +147,20 @@ class UserService {
                         emergency_contact_phone: true,
                         tenant_since: true,
                         id_number: true,
-                        room_id : true
+                        room_id: true,
+                        rooms: {
+                            select: {
+                                room_id: true,
+                                room_number: true,
+                                building_id: true,
+                                buildings: {
+                                    select: {
+                                        building_id: true,
+                                        name: true,
+                                    },
+                                },
+                            },
+                        },
                     },
                 },
             },
@@ -152,7 +170,6 @@ class UserService {
             throw new Error('User not found');
         }
 
-        // Block access to OWNER
         if (user.role === 'OWNER') {
             const error = new Error('Access to owner accounts is not allowed');
             error.statusCode = 403;
@@ -177,17 +194,23 @@ class UserService {
             tenant_since: null,
             id_number: null,
             building_id: null,
+            building_name: null,
+            room_id: null,
+            room_name: null,
             assigned_from: null,
             assigned_to: null,
         };
 
-        // Add role-specific info
         if (user.role === 'TENANT' && user.tenants) {
             userObject.emergency_contact_phone = user.tenants.emergency_contact_phone;
             userObject.tenant_since = user.tenants.tenant_since;
             userObject.id_number = user.tenants.id_number;
+            userObject.room_id = user.tenants.room_id;
+            userObject.room_name = user.tenants.rooms?.room_number || null;
+            userObject.building_name = user.tenants.rooms?.buildings?.name || null;
         } else if (user.role === 'MANAGER' && user.building_managers) {
             userObject.building_id = user.building_managers.building_id;
+            userObject.building_name = user.building_managers.buildings?.name || null;
             userObject.assigned_from = user.building_managers.assigned_from;
             userObject.assigned_to = user.building_managers.assigned_to;
         }
