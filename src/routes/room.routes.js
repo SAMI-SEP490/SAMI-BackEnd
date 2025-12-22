@@ -29,18 +29,20 @@ router.get('/',
     roomController.getRooms
 );
 
-// READ - Lấy thông tin phòng theo ID
-router.get('/:id',
-    requireRole(['owner', 'manager', 'tenant']),
-    validateRoomId,
-    roomController.getRoomById
-);
 // READ - Lấy thông tin phòng theo userID
 router.get('/user/:userId',
     requireRole(['owner', 'manager', 'tenant']),
     validateUserID,
     roomController.getRoomsByUserId
 );
+
+// READ - Lấy thông tin phòng theo ID
+router.get('/:id',
+    requireRole(['owner', 'manager', 'tenant']),
+    validateRoomId,
+    roomController.getRoomById
+);
+
 
 // READ - Lấy thống kê phòng theo building
 router.get('/statistics/building/:buildingId',
