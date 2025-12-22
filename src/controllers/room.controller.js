@@ -65,8 +65,17 @@ class RoomController {
     async getRoomsByUserId(req, res, next) {
         try {
             const { userId } = req.params;
-            const { role, userId: reqUserId } = req.user;
-            const rooms = await roomService.getRoomsByUserId(parseInt(userId), role, reqUserId);
+            const { role, userId: authenticatedUserId } = req.user;
+
+            if (!authenticatedUserId) {
+                throw new Error('User ID is missing from authentication context');
+            }
+
+            const rooms = await roomService.getRoomsByUserId(
+                parseInt(userId),
+                role,
+                authenticatedUserId
+            );
 
             res.json({
                 success: true,
