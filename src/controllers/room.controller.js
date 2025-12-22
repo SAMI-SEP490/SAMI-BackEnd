@@ -40,8 +40,6 @@ class RoomController {
     // Lấy danh sách phòng
     async getRooms(req, res, next) {
         try {
-            // DEBUG: Bật dòng này lên để kiểm tra nếu vẫn lỗi
-            // console.log('Current User in Request:', req.user);
 
             const { role } = req.user;
             // Đảm bảo lấy đúng trường ID và convert sang Int/Number

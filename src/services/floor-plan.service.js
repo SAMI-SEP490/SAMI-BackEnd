@@ -46,9 +46,9 @@ class FloorPlanService {
         return layout.nodes
             .filter(
                 (node) =>
-                    node.type === "roomNode" &&
-                    node.data &&
-                    node.data.room_number
+                    node.type === "block" &&
+                    node.data?.icon === "room" &&
+                    node.data?.room_number
             )
             .map((node) => ({
                 building_id,
