@@ -25,11 +25,11 @@ router.post('/',
     contractController.createContract
 );
 
-// READ - Lấy danh sách hợp đồng
-router.get('/',
-    requireRole(['owner', 'manager','tenant']),
-    contractController.getContracts
-);
+    // READ - Lấy danh sách hợp đồng
+    router.get('/',
+        requireRole(['owner', 'manager','tenant']),
+        contractController.getContracts
+    );
 
 // READ - Lấy hợp đồng theo ID
 router.get('/:id',

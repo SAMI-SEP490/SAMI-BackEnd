@@ -3,7 +3,7 @@
 // Changed: Auto-update room status based on maintenance requests and contracts
 
 const prisma = require('../config/prisma');
-
+import { room_status, contract_status, maintenance_status } from '@prisma/client';
 class RoomService {
     // Helper: Tính toán status động của phòng
     async calculateRoomStatus(roomId) {
@@ -917,49 +917,62 @@ class RoomService {
             prisma.rooms.count({
                 where: { building_id: buildingId }
             }),
+
             prisma.rooms.count({
                 where: {
                     building_id: buildingId,
                     is_active: true
                 }
             }),
+
             prisma.rooms.count({
                 where: {
                     building_id: buildingId,
                     is_active: true,
-                    status: 'OCCUPIED'
+                    status: room_status.OCCUPIED
                 }
             }),
+
             prisma.rooms.count({
                 where: {
                     building_id: buildingId,
                     is_active: true,
-                    status: 'AVAILABLE'
+                    status: room_status.AVAILABLE
                 }
             }),
+
             prisma.rooms.count({
                 where: {
                     building_id: buildingId,
                     is_active: true,
-                    status: 'MAINTENANCE'
+                    status: room_status.MAINTENANCE
                 }
             }),
+
+            prisma.rooms.count({
+                where: {
+                    building_id: buildingId,
+                    is_active: true,
+                    status: room_status.RESERVED
+                }
+            }),
+
             prisma.contracts.count({
                 where: {
-                    rooms: {
-                        building_id: buildingId
-                    },
-                    status: 'ACTIVE',
+                    rooms: { building_id: buildingId },
+                    status: contract_status.ACTIVE,
                     deleted_at: null
                 }
             }),
+
             prisma.maintenance_requests.count({
                 where: {
-                    rooms: {
-                        building_id: buildingId
-                    },
+                    rooms: { building_id: buildingId },
                     status: {
-                        in: ['PENDING', 'IN_PROGRESS']
+                        in: [
+                            maintenance_status.PENDING,
+                            maintenance_status.IN_PROGRESS
+                        ]
                     }
                 }
             })

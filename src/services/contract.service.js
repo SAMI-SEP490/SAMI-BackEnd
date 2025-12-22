@@ -164,15 +164,19 @@ class ContractService {
 
     // READ - Lấy danh sách hợp đồng (có phân trang và filter)
     async getContracts(filters = {}, currentUser) {
-        const {
+        let {
             room_id,
             tenant_user_id,
             status,
             page = 1,
-            limit = 20,
+            limit = 20, // <--- Giá trị này có thể đang là string từ query params
             start_date,
             end_date
         } = filters;
+
+        // ✅ FIX: Ép kiểu sang số nguyên (Integer)
+        page = parseInt(page);
+        limit = parseInt(limit);
 
         const skip = (page - 1) * limit;
         const where = { deleted_at: null };
