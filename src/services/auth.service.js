@@ -178,7 +178,7 @@ class AuthService {
 
     generateLoginResponse(user) {
         // Generate tokens
-        const accessToken = generateAccessToken(user.user_id);
+        const accessToken = generateAccessToken(user.user_id, user.role);
         const refreshToken = generateRefreshToken(user.user_id);
 
         return {
@@ -224,7 +224,7 @@ class AuthService {
         }
 
         // Generate new access token
-        const accessToken = generateAccessToken(user.user_id);
+        const accessToken = generateAccessToken(user.user_id, user.role);
 
         return {
             accessToken,
