@@ -65,10 +65,16 @@ class RoomController {
     async getRoomsByUserId(req, res, next) {
         try {
             const { userId } = req.params;
-            const { role, userId: authenticatedUserId } = req.user;
+            const { role } = req.user;
+
+            // Extract user ID with proper fallbacks based on your auth middleware
+            const authenticatedUserId = req.user.userId || req.user.user_id || req.user.id;
 
             if (!authenticatedUserId) {
-                throw new Error('User ID is missing from authentication context');
+                return res.status(401).json({
+                    success: false,
+                    message: 'User ID is missing from authentication context'
+                });
             }
 
             const rooms = await roomService.getRoomsByUserId(
@@ -85,6 +91,7 @@ class RoomController {
             next(err);
         }
     }
+
 
     // Cập nhật phòng
     async updateRoom(req, res, next) {
