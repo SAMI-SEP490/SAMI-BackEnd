@@ -53,7 +53,6 @@ class RegulationService {
         const managedBuildings = await prisma.building_managers.findMany({
             where: {
                 user_id: userId,
-                is_active: true
             },
             select: { building_id: true }
         });
