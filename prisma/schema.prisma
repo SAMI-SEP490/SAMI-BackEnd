@@ -575,7 +575,6 @@ enum room_status {
   available
   occupied
   maintenance
-  reserved
 }
 
 enum regulation_target {
