@@ -5,7 +5,7 @@
 const jwt = require('jsonwebtoken');
 const config = require('../config');
 
-const generateAccessToken = (userId) => {
+const generateAccessToken = (userId, role) => {
     return jwt.sign(
         { userId, role, type: 'access' },
         config.jwt.accessSecret,
