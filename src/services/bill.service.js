@@ -246,7 +246,6 @@ class BillService {
             // Generate bill number on publish
             const periodStart = new Date(finalData.billing_period_start);
             updateData.bill_number = generateBillNumber(
-                finalData.description,
                 periodStart.getFullYear(),
                 periodStart.getMonth() + 1
             );
