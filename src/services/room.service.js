@@ -878,7 +878,6 @@ class RoomService {
         };
     }
 
-    // STATISTICS - Thống kê phòng theo building (chỉ OWNER và MANAGER)
     async getRoomStatisticsByBuilding(buildingId, userRole, userId) {
         const normalizedRole = (userRole || '').toUpperCase();
         if (!this.isManagementRole(normalizedRole)) {
@@ -928,28 +927,21 @@ class RoomService {
                 where: {
                     building_id: buildingId,
                     is_active: true,
-                    status: 'occupied'
+                    status: 'OCCUPIED'
                 }
             }),
             prisma.rooms.count({
                 where: {
                     building_id: buildingId,
                     is_active: true,
-                    status: 'available'
+                    status: 'AVAILABLE'
                 }
             }),
             prisma.rooms.count({
                 where: {
                     building_id: buildingId,
                     is_active: true,
-                    status: 'maintenance'
-                }
-            }),
-            prisma.rooms.count({
-                where: {
-                    building_id: buildingId,
-                    is_active: true,
-                    status: 'reserved'
+                    status: 'MAINTENANCE'
                 }
             }),
             prisma.contracts.count({
@@ -957,7 +949,7 @@ class RoomService {
                     rooms: {
                         building_id: buildingId
                     },
-                    status: 'active',
+                    status: 'ACTIVE',
                     deleted_at: null
                 }
             }),
@@ -967,11 +959,12 @@ class RoomService {
                         building_id: buildingId
                     },
                     status: {
-                        in: ['pending', 'in_progress']
+                        in: ['PENDING', 'IN_PROGRESS']
                     }
                 }
             })
         ]);
+
 
         return {
             building_id: buildingId,
@@ -987,6 +980,7 @@ class RoomService {
             pending_maintenance: pendingMaintenance
         };
     }
+
 
     // Helper functions - Format response
     formatRoomResponse(room) {
