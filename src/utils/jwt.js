@@ -7,7 +7,7 @@ const config = require('../config');
 
 const generateAccessToken = (userId) => {
     return jwt.sign(
-        { userId, type: 'access' },
+        { userId, role, type: 'access' },
         config.jwt.accessSecret,
         { expiresIn: config.jwt.accessExpiresIn }
     );
