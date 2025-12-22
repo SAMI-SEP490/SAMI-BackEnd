@@ -53,12 +53,11 @@ class RoomController {
         }
     }
 
-    // Lấy thông tin phòng theo user_id (tenant)
     async getRoomsByUserId(req, res, next) {
         try {
             const { userId } = req.params;
-            const { role, userIdrq } = req.user;
-            const rooms = await roomService.getRoomsByUserId(parseInt(userId), role, userIdrq);
+            const { role, userId: reqUserId } = req.user;
+            const rooms = await roomService.getRoomsByUserId(parseInt(userId), role, reqUserId);
 
             res.json({
                 success: true,
