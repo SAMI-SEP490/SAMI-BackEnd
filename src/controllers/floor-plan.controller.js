@@ -95,28 +95,7 @@ class FloorPlanController {
         }
     }
 
-    // Lấy tất cả versions của một floor
-    async getFloorPlanVersions(req, res, next) {
-        try {
-            const { buildingId, floorNumber } = req.params;
-            const userId = req.user.user_id;
-            const userRole = req.user.role;
 
-            const versions = await floorPlanService.getFloorPlanVersions(
-                buildingId,
-                floorNumber,
-                userId,
-                userRole
-            );
-
-            res.json({
-                success: true,
-                data: versions
-            });
-        } catch (err) {
-            next(err);
-        }
-    }
 
     // Cập nhật floor plan
     async updateFloorPlan(req, res, next) {
