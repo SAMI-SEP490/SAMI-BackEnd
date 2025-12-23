@@ -281,44 +281,33 @@ class ContractService {
 
     // UPDATE - Cập nhật hợp đồng
     async updateContract(contractId, data, file = null, currentUser = null) {
-        const { start_date, end_date, rent_amount, deposit_amount, status, note } = data;
+        // [FIX 1] Thêm room_id, tenant_user_id vào destructuring
+        const { room_id, tenant_user_id, start_date, end_date, rent_amount, deposit_amount, status, note } = data;
 
-        // Verify contract exists
         const existingContract = await prisma.contracts.findUnique({
             where: { contract_id: contractId },
-            include: {
-                rooms: {
-                    include: {
-                        buildings: true
-                    }
-                }
-            }
+            include: { rooms: { include: { buildings: true } } }
         });
 
-        if (!existingContract || existingContract.deleted_at) {
-            throw new Error('Contract not found');
-        }
+        if (!existingContract || existingContract.deleted_at) throw new Error('Contract not found');
 
-        // Check permission if currentUser provided
-        if (currentUser) {
-            await this.checkContractPermission(existingContract, currentUser);
-        }
+        if (currentUser) await this.checkContractPermission(existingContract, currentUser);
 
-        // Validate dates if provided
+        // Validate dates
         if (start_date || end_date) {
             const startDate = start_date ? new Date(start_date) : existingContract.start_date;
             const endDate = end_date ? new Date(end_date) : existingContract.end_date;
-
-            if (startDate >= endDate) {
-                throw new Error('Start date must be before end date');
-            }
+            if (startDate >= endDate) throw new Error('Start date must be before end date');
         }
 
         // Prepare update data
-        const updateData = {
-            updated_at: new Date()
-        };
+        const updateData = { updated_at: new Date() };
 
+        // [FIX 2] Cho phép cập nhật Room và Tenant (Nếu có gửi lên)
+        if (room_id) updateData.room_id = parseInt(room_id);
+        if (tenant_user_id) updateData.tenant_user_id = parseInt(tenant_user_id);
+
+        // Các trường cũ
         if (start_date) updateData.start_date = new Date(start_date);
         if (end_date) updateData.end_date = new Date(end_date);
         if (rent_amount !== undefined) updateData.rent_amount = rent_amount ? parseFloat(rent_amount) : null;
@@ -326,38 +315,20 @@ class ContractService {
         if (status) updateData.status = status;
         if (note !== undefined) updateData.note = note;
 
-        // Upload new file to S3 if provided
+        // Xử lý file (giữ nguyên logic cũ)
         if (file) {
-            try {
-                // Delete old file if exists
-                if (existingContract.s3_key) {
-                    await s3Service.deleteFile(existingContract.s3_key);
-                }
-
-                // Upload new file
-                const uploadResult = await s3Service.uploadFile(
-                    file.buffer,
-                    file.originalname,
-                    'contracts'
-                );
-
-                updateData.s3_key = uploadResult.s3_key;
-                updateData.file_name = uploadResult.file_name;
-                updateData.checksum = uploadResult.checksum;
-                updateData.uploaded_at = uploadResult.uploaded_at;
-            } catch (error) {
-                throw new Error(`Failed to upload contract file: ${error.message}`);
-            }
+            if (existingContract.s3_key) await s3Service.deleteFile(existingContract.s3_key);
+            const uploadResult = await s3Service.uploadFile(file.buffer, file.originalname, 'contracts');
+            updateData.s3_key = uploadResult.s3_key;
+            updateData.file_name = uploadResult.file_name;
+            updateData.checksum = uploadResult.checksum;
+            updateData.uploaded_at = uploadResult.uploaded_at;
         }
 
         const contract = await prisma.contracts.update({
             where: { contract_id: contractId },
             data: updateData,
-            include: {
-                rooms: true,
-                tenants: { include: { users: true } },
-                contract_addendums: true
-            }
+            include: { rooms: true, tenants: { include: { users: true } }, contract_addendums: true }
         });
 
         return this.formatContractResponse(contract);
