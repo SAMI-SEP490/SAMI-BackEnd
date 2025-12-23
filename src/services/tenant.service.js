@@ -330,6 +330,50 @@ class TenantService {
         // Reuse hàm _formatTenantResult có sẵn để nhất quán data trả về
         return tenants.map(tenant => this._formatTenantResult(tenant));
     }
+    async getTenantsByRoomId2(roomId) {
+        const pRoomId = parseInt(roomId);
+
+        // Validate
+        if (isNaN(pRoomId)) {
+            const error = new Error('Invalid Room ID');
+            error.statusCode = 400;
+            throw error;
+        }
+
+        const tenants = await prisma.tenants.findMany({
+            where: {
+                room_id: pRoomId,
+                users: {
+                    status: 'Active' // (Tuỳ chọn) Chỉ lấy những người đang Active
+                }
+            },
+            include: {
+                users: {
+                    select: {
+                        user_id: true,
+                        full_name: true,
+                        phone: true,
+                        email: true,
+                        gender: true,
+                        birthday: true,
+                        status: true,
+                        is_verified: true,
+                        avatar_url: true,
+                    }
+                },
+                rooms: {
+                    select: {
+                        room_id: true,
+                        room_number: true,
+                        floor: true
+                    }
+                }
+            }
+        });
+
+        // Reuse hàm _formatTenantResult có sẵn để nhất quán data trả về
+        return tenants.map(tenant => this._formatTenantResult(tenant));
+    }
     async getTenantChatbotContext(tenantUserId) {
         // 1. Find owners (Global contacts)
         const owners = await prisma.users.findMany({
