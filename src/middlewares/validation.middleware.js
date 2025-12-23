@@ -247,11 +247,17 @@ const updateDraftBillSchema = baseBillSchema.partial().superRefine((data, ctx) =
 });
 
 const updateIssuedBillSchema = baseBillSchema.partial().omit({
-    tenant_user_id: true, // Once issued, you can't change who/what it's for
+    tenant_user_id: true,
     room_id: true,
     billing_period_start: true,
     billing_period_end: true,
-    status: true, // Cannot change status of an issued bill (except to 'cancelled' via DELETE)
+}).extend({
+    status: z.enum([
+        'issued',
+        'overdue',
+        'paid',
+        'partially_paid'
+    ]).optional()
 });
 
 // Schema for Manager/Owner sending a notification
