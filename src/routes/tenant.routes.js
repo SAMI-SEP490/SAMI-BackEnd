@@ -28,6 +28,11 @@ router.get(
     tenantController.getTenantsByRoomId
 );
 router.get(
+    '/moor/:roomId',
+    requireRole(['owner', 'manager']),
+    tenantController.getTenantsByRoomId2
+);
+router.get(
     '/analytics/occupancy',
     requireRole(['owner', 'manager']),
     tenantController.getOccupancyAnalytics
