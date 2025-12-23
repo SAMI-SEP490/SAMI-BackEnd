@@ -674,10 +674,10 @@ class ContractService {
 
     async processContractWithAI(fileBuffer, mimeType = 'application/pdf') {
         try {
-            console.log('=== BẮT ĐẦU XỬ LÝ HỢP ĐỒNG BẰNG AI ===');
+
 
             // BƯỚC 1: Trích xuất text từ PDF bằng Document AI
-            console.log('Step 1: Extracting text from PDF using Document AI...');
+
             const documentAIResult = await documentAIService.processContract(fileBuffer, mimeType);
 
             if (!documentAIResult.success) {
@@ -690,11 +690,9 @@ class ContractService {
                 throw new Error('No text extracted from PDF');
             }
 
-            console.log(`✓ Extracted ${extractedText.length} characters from document`);
-            console.log(`  Total pages: ${documentAIResult.totalPages}`);
 
             // BƯỚC 2: Parse text thành JSON bằng Gemini
-            console.log('Step 2: Parsing contract text with Gemini...');
+
             const geminiResult = await geminiService.parseContractText(extractedText);
 
             if (!geminiResult.success) {
@@ -702,10 +700,10 @@ class ContractService {
             }
 
             const parsedData = geminiResult.data;
-            console.log('✓ Gemini parsed data:', JSON.stringify(parsedData, null, 2));
+
 
             // BƯỚC 3: Tìm tenant trong database
-            console.log('Step 3: Searching for tenant in database...');
+
             const searchParams = {
                 tenant_name: parsedData.tenant_name || null,
                 tenant_phone: parsedData.tenant_phone || null,
@@ -717,7 +715,7 @@ class ContractService {
             const hasSearchCriteria = Object.values(searchParams).some(val => val !== null);
 
             if (!hasSearchCriteria) {
-                console.warn('⚠ No search criteria available from parsed data');
+
                 return {
                     success: false,
                     stage: 'tenant_search',
@@ -730,7 +728,6 @@ class ContractService {
             const tenantMatch = await tenantService.findBestMatchTenant(searchParams);
 
             if (!tenantMatch) {
-                console.warn('⚠ No matching tenant found in database');
                 return {
                     success: false,
                     stage: 'tenant_not_found',
@@ -745,12 +742,11 @@ class ContractService {
             console.log(`✓ Found tenant: ${tenantMatch.full_name} (ID: ${tenantMatch.user_id})`);
 
             if (tenantMatch._match_metadata) {
-                console.log(`  Confidence score: ${tenantMatch._match_metadata.confidence_score}/100`);
                 console.log(`  Match details:`, tenantMatch._match_metadata.match_details);
             }
 
             // BƯỚC 4: Chuẩn bị data cho createContract
-            console.log('Step 4: Preparing data for contract creation...');
+
 
             const contractData = {
                 room_id: tenantMatch.room?.room_id || null,
@@ -770,7 +766,6 @@ class ContractService {
                 console.warn('⚠ Validation warnings:', validationErrors);
             }
 
-            console.log('=== HOÀN TẤT XỬ LÝ AI ===');
 
             return {
                 success: true,

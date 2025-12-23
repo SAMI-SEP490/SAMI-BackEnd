@@ -298,6 +298,9 @@ class TenantService {
                 room_id: pRoomId,
                 users: {
                     status: 'Active' // (Tuỳ chọn) Chỉ lấy những người đang Active
+                },
+                contracts: {
+                    none: {} // Lọc những tenant KHÔNG có bất kỳ hợp đồng nào
                 }
             },
             include: {
@@ -560,112 +563,82 @@ class TenantService {
     async findBestMatchTenant(searchData) {
         const { tenant_name, tenant_phone, tenant_id_number, room_number } = searchData;
 
-        // Validate: Cần ít nhất 1 thông tin để tìm kiếm
+        // Validate input
         if (!tenant_name && !tenant_phone && !tenant_id_number && !room_number) {
             const error = new Error('At least one search parameter is required');
             error.statusCode = 400;
             throw error;
         }
 
-        // Build dynamic where conditions
-        const whereConditions = {
-            AND: [],
-            users: {
-                status: 'Active' // Chỉ lấy tenant có status active
-            }
-        };
+        // --- SỬA ĐỔI CHÍNH: Dùng OR thay vì AND để lấy nhiều ứng viên tiềm năng ---
+        const orConditions = [];
 
-        // 1. ID Number - Độ ưu tiên cao nhất (unique identifier)
-        if (tenant_id_number && tenant_id_number.trim()) {
-            whereConditions.AND.push({
-                id_number: {
-                    equals: tenant_id_number.trim()
-                }
+        // 1. ID Number (Khớp chính xác)
+        if (tenant_id_number?.trim()) {
+            orConditions.push({
+                id_number: { equals: tenant_id_number.trim() }
             });
         }
 
-        // 2. Phone - Độ ưu tiên cao (thường unique)
-        if (tenant_phone && tenant_phone.trim()) {
-            // Chuẩn hóa số điện thoại (bỏ dấu cách, dấu gạch ngang)
-            const normalizedPhone = tenant_phone.replace(/[\s\-]/g, '');
-            whereConditions.AND.push({
+        // 2. Phone (Tìm kiếm tương đối)
+        if (tenant_phone?.trim()) {
+            const normalizedInputPhone = tenant_phone.replace(/[\s\-]/g, '');
+            orConditions.push({
                 users: {
-                    phone: {
-                        contains: normalizedPhone
-                    }
+                    phone: { contains: normalizedInputPhone }
                 }
             });
         }
 
-        // 3. Name - Tìm kiếm linh hoạt (case-insensitive, partial match)
-        if (tenant_name && tenant_name.trim()) {
-            whereConditions.AND.push({
+        // 3. Name (Tìm kiếm tương đối)
+        if (tenant_name?.trim()) {
+            orConditions.push({
                 users: {
-                    full_name: {
-                        contains: tenant_name.trim(),
-                        mode: 'insensitive'
-                    }
+                    full_name: { contains: tenant_name.trim(), mode: 'insensitive' }
                 }
             });
         }
 
-        // 4. Room Number - Có thể không chính xác nên dùng để lọc/scoring
-        if (room_number && room_number.trim()) {
-            const normalizedRoomNumber = room_number.trim().toUpperCase();
-            whereConditions.AND.push({
+        // Lưu ý: Room number thường không dùng làm điều kiện OR chính vì nó không định danh con người,
+        // nhưng nếu bạn muốn tìm "người ở phòng X" thì có thể thêm vào, hoặc dùng nó làm bộ lọc phụ (AND).
+        // Ở đây tôi để nó tham gia vào việc tìm kiếm ứng viên luôn.
+        if (room_number?.trim()) {
+            orConditions.push({
                 rooms: {
-                    room_number: {
-                        contains: normalizedRoomNumber,
-                        mode: 'insensitive'
-                    }
+                    room_number: { contains: room_number.trim(), mode: 'insensitive' }
                 }
             });
         }
 
-        // Nếu không có điều kiện AND nào, chỉ lọc theo status active
-        const finalWhere = whereConditions.AND.length > 0
-            ? whereConditions
-            : { users: { status: 'Active' } };
-
-        // Query database
+        // Query Database
         const candidates = await prisma.tenants.findMany({
-            where: finalWhere,
+            where: {
+                users: { status: 'Active' }, // Luôn bắt buộc Active
+                OR: orConditions.length > 0 ? orConditions : undefined
+            },
             include: {
                 users: {
                     select: {
                         user_id: true,
                         full_name: true,
                         phone: true,
-                        email: true,
-                        gender: true,
-                        birthday: true,
-                        status: true,
-                        is_verified: true,
-                        avatar_url: true
+                        // ... các trường khác
                     }
                 },
                 rooms: {
                     select: {
                         room_id: true,
-                        room_number: true,
-                        floor: true
+                        room_number: true
                     }
-                },
-
-            }
+                }
+            },
+            // Giới hạn số lượng để tránh query quá nặng nếu data lớn
+            take: 20
         });
 
-        // Không tìm thấy kết quả nào
-        if (candidates.length === 0) {
-            return null;
-        }
+        if (candidates.length === 0) return null;
 
-        // Nếu chỉ có 1 kết quả, trả về luôn
-        if (candidates.length === 1) {
-            return this._formatTenantResult(candidates[0]);
-        }
-
-        // Có nhiều kết quả -> Tính điểm để chọn kết quả tốt nhất
+        // --- PHẦN TÍNH ĐIỂM (Giữ nguyên logic của bạn, chỉ tinh chỉnh nhỏ) ---
         const scoredCandidates = candidates.map(candidate => {
             let score = 0;
             const matchDetails = {
@@ -675,86 +648,66 @@ class TenantService {
                 room_match: false
             };
 
-            // 1. ID Number match (50 điểm - quan trọng nhất)
+            // 1. ID Check
             if (tenant_id_number && candidate.id_number === tenant_id_number.trim()) {
                 score += 50;
                 matchDetails.id_number_match = true;
             }
 
-            // 2. Phone match (30 điểm - rất quan trọng)
+            // 2. Phone Check (Chuẩn hóa cả 2 đầu để so sánh chính xác hơn)
             if (tenant_phone && candidate.users.phone) {
-                const normalizedInputPhone = tenant_phone.replace(/[\s\-]/g, '');
-                const normalizedDbPhone = candidate.users.phone.replace(/[\s\-]/g, '');
+                const inputPhone = tenant_phone.replace(/\D/g, ''); // Xóa tất cả ký tự không phải số
+                const dbPhone = candidate.users.phone.replace(/\D/g, '');
 
-                if (normalizedDbPhone.includes(normalizedInputPhone) ||
-                    normalizedInputPhone.includes(normalizedDbPhone)) {
+                // Logic: Nếu số này chứa số kia hoặc ngược lại
+                if (inputPhone && dbPhone && (dbPhone.includes(inputPhone) || inputPhone.includes(dbPhone))) {
                     score += 30;
                     matchDetails.phone_match = true;
                 }
             }
 
-            // 3. Name match (15 điểm - có thể có lỗi chính tả)
+            // 3. Name Check
             if (tenant_name && candidate.users.full_name) {
                 const inputName = tenant_name.trim().toLowerCase();
                 const dbName = candidate.users.full_name.toLowerCase();
-
-                // Exact match
                 if (dbName === inputName) {
                     score += 15;
                     matchDetails.name_match = true;
-                }
-                // Partial match (tính điểm theo % khớp)
-                else if (dbName.includes(inputName) || inputName.includes(dbName)) {
-                    const similarity = Math.min(inputName.length, dbName.length) /
-                        Math.max(inputName.length, dbName.length);
-                    score += Math.round(15 * similarity);
+                } else if (dbName.includes(inputName) || inputName.includes(dbName)) {
+                    // Tính điểm partial match đơn giản hơn
+                    score += 10;
                     matchDetails.name_match = true;
                 }
             }
 
-            // 4. Room number match (5 điểm - thông tin phụ)
-            if (room_number && candidate.rooms) {
-                const normalizedInput = room_number.trim().toUpperCase();
-                const normalizedRoom = candidate.rooms.room_number.toUpperCase();
-
-                if (normalizedRoom.includes(normalizedInput) ||
-                    normalizedInput.includes(normalizedRoom)) {
+            // 4. Room Check
+            if (room_number && candidate.rooms?.room_number) {
+                const inputRoom = room_number.trim().toLowerCase();
+                const dbRoom = candidate.rooms.room_number.toLowerCase();
+                if(dbRoom.includes(inputRoom) || inputRoom.includes(dbRoom)) {
                     score += 5;
                     matchDetails.room_match = true;
                 }
             }
 
-            return {
-                tenant: candidate,
-                score,
-                matchDetails
-            };
+            return { tenant: candidate, score, matchDetails };
         });
 
-        // Sắp xếp theo điểm giảm dần
+        // Sort và lấy kết quả cao nhất
         scoredCandidates.sort((a, b) => b.score - a.score);
-
-        // Lấy kết quả tốt nhất
         const bestMatch = scoredCandidates[0];
 
-        // Kiểm tra ngưỡng tin cậy (tùy chọn)
-        // Nếu điểm quá thấp (< 30), có thể cảnh báo
-        const confidenceThreshold = 30;
-        const isHighConfidence = bestMatch.score >= confidenceThreshold;
+        // Ngưỡng tin cậy: Ví dụ phải khớp ít nhất 1 cái gì đó quan trọng (Score >= 10)
+        if (bestMatch.score < 10) return null;
 
         return {
             ...this._formatTenantResult(bestMatch.tenant),
-            // Thêm metadata về độ tin cậy
             _match_metadata: {
                 confidence_score: bestMatch.score,
-                max_possible_score: 100,
-                is_high_confidence: isHighConfidence,
-                match_details: bestMatch.matchDetails,
-                total_candidates_found: candidates.length
+                match_details: bestMatch.matchDetails
             }
         };
     }
-
     /**
      * Helper method để format kết quả tenant
      */
