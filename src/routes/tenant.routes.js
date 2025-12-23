@@ -22,7 +22,11 @@ router.get(
     requireRole(['owner', 'manager']),
     tenantController.searchTenantsByName
 );
-
+router.get(
+    '/room/:roomId',
+    requireRole(['owner', 'manager']),
+    tenantController.getTenantsByRoomId
+);
 router.get(
     '/analytics/occupancy',
     requireRole(['owner', 'manager']),

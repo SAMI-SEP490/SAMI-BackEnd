@@ -19,7 +19,23 @@ class TenantController {
             next(err);
         }
     }
+    async getTenantsByRoomId(req, res, next) {
+        try {
+            const { roomId } = req.params;
 
+            const data = await TenantService.getTenantsByRoomId(roomId);
+
+            res.status(200).json({
+                success: true,
+                message: data.length > 0
+                    ? 'Tenants retrieved successfully'
+                    : 'No active tenants found in this room',
+                data: data,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
     /**
      * Controller to search only tenants by name.
      */
