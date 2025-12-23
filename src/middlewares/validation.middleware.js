@@ -198,7 +198,7 @@ const baseBillSchema = z.object({
     total_amount: z.preprocess((val) => {
         if (typeof val === 'string' && val.trim() !== '') return Number(val);
         return val;
-    }, z.number().positive({ message: 'total_amount must be positive' })).optional(),
+    }, z.number().gt(2000, { message: 'Total amount must be greater than 2,000 VND' })).optional(),
     
     description: z.string().min(1, 'Description is required').max(255).optional(),
     

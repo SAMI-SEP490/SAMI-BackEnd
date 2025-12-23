@@ -14,6 +14,53 @@ function generateBillNumber(year, month) {
 
 class BillService {
 
+    // --- HELPER: CHECK OVERLAP ---
+    // Rule: New Bill Start <= Existing Bill End AND New Bill End >= Existing Bill Start
+    async _checkBillOverlap(roomId, startDate, endDate, excludeBillId = null) {
+        const overlappingBill = await prisma.bills.findFirst({
+            where: {
+                room_id: roomId,
+                // Check actual bills only (ignore draft/cancelled)
+                status: { in: ['issued', 'overdue', 'paid', 'partially_paid'] },
+                // Exclude current bill if updating
+                bill_id: excludeBillId ? { not: excludeBillId } : undefined,
+                AND: [
+                    { billing_period_start: { lte: endDate } },
+                    { billing_period_end: { gte: startDate } }
+                ]
+            },
+            select: { bill_number: true, billing_period_start: true, billing_period_end: true }
+        });
+
+        if (overlappingBill) {
+            const startStr = overlappingBill.billing_period_start.toISOString().split('T')[0];
+            const endStr = overlappingBill.billing_period_end.toISOString().split('T')[0];
+            const error = new Error(`Billing period overlaps with existing bill ${overlappingBill.bill_number} (${startStr} to ${endStr})`);
+            error.statusCode = 409; // Conflict
+            throw error;
+        }
+    }
+
+    // --- HELPER: AUTO SET OVERDUE ---
+    async scanAndMarkOverdueBills() {
+        const today = new Date();
+        
+        // Find bills that are 'issued' BUT due_date has passed
+        const result = await prisma.bills.updateMany({
+            where: {
+                status: 'issued',
+                due_date: { lt: today }, // Due date is less than (before) Now
+                deleted_at: null
+            },
+            data: {
+                status: 'overdue',
+                updated_at: new Date()
+            }
+        });
+
+        return result.count; // Return number of bills updated
+    }
+
     // --- LISTING ---
     /**
      * Gets ALL visible bills (issued, paid, overdue) for a specific tenant.
@@ -172,7 +219,7 @@ class BillService {
         return prisma.bills.create({
             data: {
                 ...data,
-                status: 'draft', // Force status
+                status: 'draft',
                 created_by: createdById,
             }
         });
@@ -180,8 +227,12 @@ class BillService {
 
     async createIssuedBill(data, createdById) {
         const periodStart = new Date(data.billing_period_start);
-        
-        // Check for duplicates
+        const periodEnd = new Date(data.billing_period_end);
+
+        // [NEW] Check for Overlaps
+        await this._checkBillOverlap(data.room_id, periodStart, periodEnd);
+
+        // Check for exact duplicates (legacy check, usually covered by overlap check but good to keep)
         const existing = await prisma.bills.findFirst({
             where: {
                 room_id: data.room_id,
@@ -190,7 +241,7 @@ class BillService {
             }
         });
         if (existing) {
-             const error = new Error(`A bill for this room and period already exists (Bill ID: ${existing.bill_id}).`);
+             const error = new Error(`A bill for this room and start date already exists.`);
              error.statusCode = 409;
              throw error;
         }
@@ -203,11 +254,11 @@ class BillService {
         return prisma.bills.create({
             data: {
                 ...data,
-                status: 'issued', // Force status
+                status: 'issued',
                 bill_number: billNumber,
                 created_by: createdById,
                 billing_period_start: periodStart, 
-                billing_period_end: new Date(data.billing_period_end), // Ensure dates are saved as Date objects
+                billing_period_end: periodEnd,
                 due_date: new Date(data.due_date),
             }
         });
@@ -215,7 +266,6 @@ class BillService {
 
     // --- EDIT ---
     async updateDraftBill(billId, data) {
-        // 1. Fetch the draft bill to check its current data
         const originalDraft = await prisma.bills.findUnique({
             where: { bill_id: billId },
         });
@@ -228,30 +278,31 @@ class BillService {
 
         let updateData = { ...data, updated_at: new Date() };
 
-        // 2. Handle "Publish" logic (converting draft to issued)
+        // Handle "Publish" logic
         if (data.status === 'issued') {
-            // Merge new data with old data to check for completeness
             const finalData = { ...originalDraft, ...data };
             
-            // Zod already checked that the *request* had all fields.
-            // Now we ensure the final merged object is valid.
-            // (Note: Zod validation on schema 2 already covers this, but double-check)
+            // Validate required fields
             if (!finalData.tenant_user_id || !finalData.room_id || !finalData.total_amount || !finalData.description ||
                 !finalData.billing_period_start || !finalData.billing_period_end || !finalData.due_date) {
-                const error = new Error('Cannot publish bill: missing required fields (e.g., tenant, room, amount, dates).');
+                const error = new Error('Cannot publish bill: missing required fields.');
                 error.statusCode = 400;
                 throw error;
             }
-            
-            // Generate bill number on publish
+
             const periodStart = new Date(finalData.billing_period_start);
+            const periodEnd = new Date(finalData.billing_period_end);
+
+            // [NEW] Check Overlap when publishing
+            await this._checkBillOverlap(finalData.room_id, periodStart, periodEnd, billId);
+            
             updateData.bill_number = generateBillNumber(
                 periodStart.getFullYear(),
                 periodStart.getMonth() + 1
             );
         }
         
-        // 3. Convert date strings if they exist
+        // Convert dates
         if (data.billing_period_start) updateData.billing_period_start = new Date(data.billing_period_start);
         if (data.billing_period_end) updateData.billing_period_end = new Date(data.billing_period_end);
         if (data.due_date) updateData.due_date = new Date(data.due_date);
@@ -263,22 +314,22 @@ class BillService {
     }
 
     async updateIssuedBill(billId, data) {
-        // 1. Fetch the bill to check status and payment_id
         const bill = await prisma.bills.findUnique({
             where: { bill_id: billId },
-            select: { status: true, payment_id: true }
+            select: { status: true, payment_id: true, room_id: true, billing_period_start: true, billing_period_end: true }
         });
 
-        if (!bill) { /* 404 error */ }
+        if (!bill) { 
+             const error = new Error('Bill not found'); 
+             error.statusCode = 404; throw error; 
+        }
         
-        // 2. Only allow editing 'issued' bills
         if (bill.status !== 'issued') {
             const error = new Error(`Cannot edit a bill with status: ${bill.status}.`);
             error.statusCode = 403;
             throw error;
         }
         
-        // 3. Safety Check for pending payment
         if (bill.payment_id) {
             const payment = await prisma.bill_payments.findUnique({
                 where: { payment_id: bill.payment_id },
@@ -291,9 +342,18 @@ class BillService {
             }
         }
 
-        // 4. Prepare update data
+        // If dates are changing, check for overlap
+        if (data.billing_period_start || data.billing_period_end) {
+            const newStart = data.billing_period_start ? new Date(data.billing_period_start) : bill.billing_period_start;
+            const newEnd = data.billing_period_end ? new Date(data.billing_period_end) : bill.billing_period_end;
+            
+            await this._checkBillOverlap(bill.room_id, newStart, newEnd, billId);
+        }
+
         const updateData = { ...data, updated_at: new Date() };
         if (data.due_date) updateData.due_date = new Date(data.due_date);
+        if (data.billing_period_start) updateData.billing_period_start = new Date(data.billing_period_start);
+        if (data.billing_period_end) updateData.billing_period_end = new Date(data.billing_period_end);
 
         return prisma.bills.update({
             where: { bill_id: billId },

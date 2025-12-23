@@ -46,5 +46,6 @@ router.put('/edit/draft/:id', validate(updateDraftBillSchema), billController.up
 router.put('/edit/issue/:id', validate(updateIssuedBillSchema), billController.updateIssuedBill); //Edit Issued Bills
 router.delete('/delete/:id', billController.deleteOrCancelBill);           // Soft Delete Draft/Master, Cancel Issued/Overdue
 router.post('/restore/:id', billController.restoreBill);                 // Restore soft-deleted draft/master bill
+router.post('/refresh-status', billController.refreshBillStatuses);      // Trigger Overdue Scan
 
 module.exports = router;

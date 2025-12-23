@@ -126,6 +126,18 @@ class BillController {
             res.status(200).json({ success: true, message: "Bill restored successfully", data: restoredBill });
         } catch (err) { next(err); }
     }
+
+    // Manual trigger to scan for overdue bills
+    async refreshBillStatuses(req, res, next) {
+        try {
+            const count = await BillService.scanAndMarkOverdueBills();
+            res.status(200).json({ 
+                success: true, 
+                message: `Scan complete. ${count} bills marked as Overdue.`,
+                data: { updated_count: count }
+            });
+        } catch (err) { next(err); }
+    }
 }
 
 module.exports = new BillController();
