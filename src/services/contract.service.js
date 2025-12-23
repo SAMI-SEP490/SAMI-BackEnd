@@ -765,7 +765,18 @@ class ContractService {
             if (validationErrors.length > 0) {
                 console.warn('⚠ Validation warnings:', validationErrors);
             }
-
+// [FIX START] Bổ sung building_id vào kết quả trả về
+            let buildingId = null;
+            if (tenantMatch.room?.room_id) {
+                // Truy vấn nhanh để lấy building_id từ room_id
+                const roomInfo = await prisma.rooms.findUnique({
+                    where: { room_id: tenantMatch.room.room_id },
+                    select: { building_id: true }
+                });
+                if (roomInfo) {
+                    buildingId = roomInfo.building_id;
+                }
+            }
 
             return {
                 success: true,
@@ -776,7 +787,10 @@ class ContractService {
                     phone: tenantMatch.phone,
                     email: tenantMatch.email,
                     id_number: tenantMatch.id_number,
-                    room: tenantMatch.room,
+                    room: {
+                        ...tenantMatch.room,
+                        building_id: buildingId // [QUAN TRỌNG] Thêm dòng này
+                    },
                     match_confidence: tenantMatch._match_metadata?.confidence_score || null
                 },
                 parsed_data: parsedData,
