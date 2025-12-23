@@ -28,6 +28,8 @@ const notificationRoutes = require('./routes/notification.routes');
 const botRoutes = require('./routes/bot.routes');
 const chatbotRoutes = require('./routes/chatbot.routes.js');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
+const cron = require('node-cron');
+const BillService = require('./services/bill.service');
 
 const app = express();
 
@@ -92,6 +94,33 @@ app.get('/health', async (req, res) => {
             redis: redisStatus ? 'connected' : 'disconnected'
         }
     });
+});
+
+// ==========================================
+// 🕒 CRON JOBS (Scheduled Tasks)
+// ==========================================
+
+// Schedule: Runs at 00:00:00 every day
+// Format: Seconds(optional) Minutes Hours DayOfMonth Month DayOfWeek
+cron.schedule('0 0 0 * * *', async () => {
+    console.log('🌙 [CRON] Starting daily scan for overdue bills...');
+    try {
+        const count = await BillService.scanAndMarkOverdueBills();
+        if (count > 0) {
+            console.log(`✅ [CRON] Marked ${count} bills as OVERDUE.`);
+            
+            // Optional: You could trigger push notifications here too!
+            // const userIds = ... get users who own these bills ...
+            // await PushService.sendPushToUsers(userIds, "Thông báo quá hạn", "Hóa đơn của bạn đã quá hạn...");
+        } else {
+            console.log('✨ [CRON] No new overdue bills found today.');
+        }
+    } catch (error) {
+        console.error('❌ [CRON] Error during daily scan:', error);
+    }
+}, {
+    scheduled: true,
+    timezone: "Asia/Ho_Chi_Minh" // Critical: Ensures it runs at VN Midnight
 });
 
 // API routes
