@@ -396,7 +396,6 @@ class BillService {
         select: { status: true },
       });
       if (payment && payment.status === "pending") {
-        // Nếu xác nhận thanh toán tiền mặt → hủy payment online
         if (data.status === "paid") {
           await prisma.bill_payments.update({
             where: { payment_id: bill.payment_id },
