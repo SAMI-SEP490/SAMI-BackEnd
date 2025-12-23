@@ -36,6 +36,12 @@ router.get('/statistics/building/:buildingId',
     roomController.getRoomStatisticsByBuilding
 );
 
+router.get('/building/:buildingId',
+    requireRole(['owner', 'manager']),
+    validateBuildingId,
+    roomController.getRoomsByBuilding
+);
+
 // READ - Lấy thông tin phòng theo userID (MORE SPECIFIC - before :id)
 router.get('/user/:userId',
     requireRole(['owner', 'manager', 'tenant']),

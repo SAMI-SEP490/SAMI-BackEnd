@@ -182,7 +182,43 @@ class BuildingService {
             }
         };
     }
+// [NEW] READ - Lấy danh sách tòa nhà được gán cho Manager
+    async getAssignedBuildings(userId) {
+        // Lấy danh sách các assignment còn hiệu lực
+        const assignments = await prisma.building_managers.findMany({
+            where: {
+                user_id: userId,
+                // Kiểm tra assignment còn hạn (assigned_to là null hoặc tương lai)
+                OR: [
+                    { assigned_to: null },
+                    { assigned_to: { gte: new Date() } }
+                ]
+            },
+            include: {
+                buildings: {
+                    select: {
+                        building_id: true,
+                        name: true,
+                        address: true,
+                        is_active: true
+                    }
+                }
+            },
+            orderBy: {
+                assigned_from: 'desc'
+            }
+        });
 
+        // Map data để trả về format gọn gàng
+        return assignments.map(a => ({
+            building_id: a.building_id,
+            name: a.buildings.name,
+            address: a.buildings.address,
+            assigned_from: a.assigned_from,
+            assigned_to: a.assigned_to,
+            is_building_active: a.buildings.is_active
+        }));
+    }
     // UPDATE - Cập nhật thông tin tòa nhà
     async updateBuilding(buildingId, data) {
         const { name, address, number_of_floors, total_area, is_active } = data;

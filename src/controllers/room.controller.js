@@ -178,6 +178,39 @@ class RoomController {
             next(err);
         }
     }
+
+    // [NEW] Lấy danh sách phòng theo Building ID cụ thể
+    async getRoomsByBuilding(req, res, next) {
+        try {
+            const { buildingId } = req.params;
+            const { role } = req.user;
+
+            // Đảm bảo lấy đúng trường ID
+            const userId = req.user.userId || req.user.id || req.user.user_id;
+
+            if (!userId && role === 'manager') {
+                throw new Error('User ID is missing for Manager role');
+            }
+
+            // Kết hợp buildingId từ params vào filters
+            // Vẫn giữ req.query để hỗ trợ phân trang (page, limit) hoặc lọc thêm (status, floor)
+            const filters = {
+                ...req.query,
+                building_id: buildingId
+            };
+
+            const rooms = await roomService.getRooms(filters, role, userId);
+
+            res.json({
+                success: true,
+                data: rooms.data,
+                pagination: rooms.pagination
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
 }
 
 module.exports = new RoomController();

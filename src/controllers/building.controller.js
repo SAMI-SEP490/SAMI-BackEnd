@@ -48,7 +48,26 @@ class BuildingController {
             next(err);
         }
     }
+// [NEW] Lấy danh sách tòa nhà của Manager đang đăng nhập
+    async getAssignedBuildings(req, res, next) {
+        try {
+            // Lấy ID từ token (auth middleware)
+            const userId = req.user.userId || req.user.id || req.user.user_id;
 
+            if (!userId) {
+                throw new Error('User ID not found in request');
+            }
+
+            const buildings = await buildingService.getAssignedBuildings(parseInt(userId));
+
+            res.json({
+                success: true,
+                data: buildings
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
     // Cập nhật tòa nhà
     async updateBuilding(req, res, next) {
         try {

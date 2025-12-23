@@ -30,6 +30,11 @@ router.get('/',
     buildingController.getBuildings
 );
 
+// Endpoint: GET /api/buildings/assigned
+router.get('/assigned',
+    requireRole(['manager']),
+    buildingController.getAssignedBuildings
+);
 // READ - Lấy thông tin tòa nhà theo ID
 router.get('/:id',
     requireRole(['owner', 'manager']),
