@@ -500,6 +500,7 @@ class FloorPlanService {
         // rooms trong layout (chỉ node có room_number)
         const layoutRooms = nodes
           .map((n) => ({
+            __nodeRef: n,
             room_id: n?.data?.room_id ? parseInt(n.data.room_id) : null,
             room_number: String(n?.data?.room_number ?? "").trim(),
             size: n?.data?.size ?? null,
@@ -531,7 +532,7 @@ class FloorPlanService {
 
           if (!found) {
             // create mới
-            await tx.rooms.create({
+            const created = await tx.rooms.create({
               data: {
                 building_id: r.building_id,
                 floor: r.floor,
@@ -542,7 +543,11 @@ class FloorPlanService {
                 created_at: new Date(),
                 updated_at: new Date(),
               },
+              select: { room_id: true },
             });
+
+            // 🔥 GẮN NGƯỢC room_id VÀO NODE
+            r.room_id = created.room_id;
           } else {
             // update name/size nếu đổi (nhưng phải check vacant)
             const needUpdate =
@@ -593,7 +598,7 @@ class FloorPlanService {
 
         for (const db of dbRooms) {
           const stillExists =
-            layoutRoomIds.has(db.room_id) ||
+            (db.room_id && layoutRoomIds.has(db.room_id)) ||
             layoutRoomNumbers.has(String(db.room_number).trim());
 
           if (stillExists) continue;
@@ -629,6 +634,25 @@ class FloorPlanService {
           }
         }
       }
+
+      await tx.floor_plans.update({
+        where: { plan_id: planId },
+        data: {
+          layout: {
+            ...layout,
+            nodes: layoutRooms.map((r) => ({
+              ...r.__nodeRef, // xem lưu node gốc bên dưới
+              data: {
+                ...r.__nodeRef.data,
+                room_id: r.room_id,
+                room_number: r.room_number,
+                size: r.size,
+              },
+            })),
+          },
+          updated_at: new Date(),
+        },
+      });
 
       return this.formatFloorPlanResponse(floorPlan);
     });
