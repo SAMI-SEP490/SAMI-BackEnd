@@ -298,6 +298,9 @@ class TenantService {
                 room_id: pRoomId,
                 users: {
                     status: 'Active' // (Tuỳ chọn) Chỉ lấy những người đang Active
+                },
+                contracts: {
+                    none: {} // Lọc những tenant KHÔNG có bất kỳ hợp đồng nào
                 }
             },
             include: {
