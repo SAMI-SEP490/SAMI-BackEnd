@@ -1010,6 +1010,8 @@ class ContractService {
     formatContractResponse(contract) {
         return {
             contract_id: contract.contract_id,
+            building_id: contract.rooms?.building_id || null,
+            building_name: contract.rooms?.buildings?.name || null,
             room_id: contract.room_id,
             room_number: contract.rooms?.room_number,
             tenant_user_id: contract.tenant_user_id,

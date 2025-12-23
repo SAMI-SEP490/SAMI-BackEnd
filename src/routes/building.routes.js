@@ -31,7 +31,7 @@ router.get('/',
 );
 
 // Endpoint: GET /api/buildings/assigned
-router.get('/assigned',
+router.get('/manager/assigned',
     requireRole(['manager']),
     buildingController.getAssignedBuildings
 );
