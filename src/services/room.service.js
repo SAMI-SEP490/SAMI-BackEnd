@@ -3,7 +3,11 @@
 // Changed: Auto-update room status based on maintenance requests and contracts
 
 const prisma = require('../config/prisma');
-import { room_status, contract_status, maintenance_status } from '@prisma/client';
+const {
+    room_status,
+    contract_status,
+    maintenance_status
+} = require('../config/prisma');
 class RoomService {
     // Helper: Tính toán status động của phòng
     async calculateRoomStatus(roomId) {
@@ -887,97 +891,62 @@ class RoomService {
         await this.checkBuildingAccess(buildingId, normalizedRole, userId);
 
         const building = await prisma.buildings.findUnique({
-            where: { building_id: buildingId }
+            where: { building_id: buildingId },
+            select: { name: true } // Chỉ lấy field cần thiết
         });
 
         if (!building) {
             throw new Error('Building not found');
         }
 
-        // Cập nhật status động cho tất cả phòng trong building trước khi thống kê
-        const allRooms = await prisma.rooms.findMany({
-            where: { building_id: buildingId },
-            select: { room_id: true }
+        // 1. Dùng groupBy để lấy thống kê Room Status trong 1 lần query
+        // Schema enum: available, occupied, maintenance
+        const roomStats = await prisma.rooms.groupBy({
+            by: ['status'],
+            where: {
+                building_id: buildingId,
+                is_active: true
+            },
+            _count: {
+                room_id: true
+            }
         });
 
-        await Promise.all(
-            allRooms.map(room => this.updateRoomStatus(room.room_id))
-        );
+        // Chuyển mảng groupBy thành object map để dễ truy xuất
+        // Ví dụ: { available: 10, occupied: 5, maintenance: 2 }
+        const statsMap = roomStats.reduce((acc, curr) => {
+            acc[curr.status] = curr._count.room_id;
+            return acc;
+        }, {});
 
-        const [
-            totalRooms,
-            activeRooms,
-            occupiedRooms,
-            availableRooms,
-            maintenanceRooms,
-            reservedRooms,
-            activeContracts,
-            pendingMaintenance
-        ] = await Promise.all([
-            prisma.rooms.count({
-                where: { building_id: buildingId }
-            }),
+        // Tính tổng số phòng active
+        const activeRooms = (statsMap['available'] || 0) + (statsMap['occupied'] || 0) + (statsMap['maintenance'] || 0);
 
-            prisma.rooms.count({
-                where: {
-                    building_id: buildingId,
-                    is_active: true
-                }
-            }),
+        // Tính tổng số phòng bao gồm cả inactive (nếu cần)
+        const totalRooms = await prisma.rooms.count({
+            where: { building_id: buildingId }
+        });
 
-            prisma.rooms.count({
-                where: {
-                    building_id: buildingId,
-                    is_active: true,
-                    status: room_status.OCCUPIED
-                }
-            }),
-
-            prisma.rooms.count({
-                where: {
-                    building_id: buildingId,
-                    is_active: true,
-                    status: room_status.AVAILABLE
-                }
-            }),
-
-            prisma.rooms.count({
-                where: {
-                    building_id: buildingId,
-                    is_active: true,
-                    status: room_status.MAINTENANCE
-                }
-            }),
-
-            prisma.rooms.count({
-                where: {
-                    building_id: buildingId,
-                    is_active: true,
-                    status: room_status.RESERVED
-                }
-            }),
-
+        // 2. Chạy song song các query còn lại
+        const [activeContracts, pendingMaintenance] = await Promise.all([
             prisma.contracts.count({
                 where: {
-                    rooms: { building_id: buildingId },
-                    status: contract_status.ACTIVE,
+                    rooms: { building_id: buildingId }, // Relation filter correct based on schema
+                    status: 'active', // Enum value trong DB là chữ thường
                     deleted_at: null
                 }
             }),
-
             prisma.maintenance_requests.count({
                 where: {
                     rooms: { building_id: buildingId },
                     status: {
-                        in: [
-                            maintenance_status.PENDING,
-                            maintenance_status.IN_PROGRESS
-                        ]
+                        in: ['pending', 'in_progress'] // Enum value trong DB là chữ thường
                     }
                 }
             })
         ]);
 
+        const occupiedRooms = statsMap['occupied'] || 0;
 
         return {
             building_id: buildingId,
@@ -985,9 +954,9 @@ class RoomService {
             total_rooms: totalRooms,
             active_rooms: activeRooms,
             occupied_rooms: occupiedRooms,
-            available_rooms: availableRooms,
-            maintenance_rooms: maintenanceRooms,
-            reserved_rooms: reservedRooms,
+            available_rooms: statsMap['available'] || 0,
+            maintenance_rooms: statsMap['maintenance'] || 0,
+            // reserved_rooms: 0, // Đã xóa vì không có trong Schema enum
             occupancy_rate: activeRooms > 0 ? ((occupiedRooms / activeRooms) * 100).toFixed(2) : 0,
             active_contracts: activeContracts,
             pending_maintenance: pendingMaintenance
