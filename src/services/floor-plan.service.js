@@ -423,229 +423,252 @@ class FloorPlanService {
 
   // UPDATE - Cập nhật floor plan
   async updateFloorPlan(planId, data, userId, userRole) {
-  const { name, layout, file_url, is_published, note } = data;
+    const { name, layout, file_url, is_published, note } = data;
 
-  // 1️⃣ Verify floor plan exists
-  const existingPlan = await prisma.floor_plans.findUnique({
-    where: { plan_id: planId },
-  });
-  if (!existingPlan) {
-    throw new Error("Floor plan not found");
-  }
-
-  // 2️⃣ Check access
-  const hasAccess = await this.checkFloorPlanAccess(userId, userRole, planId);
-  if (!hasAccess) {
-    throw new Error(
-      "Access denied: You do not have permission to update this floor plan"
-    );
-  }
-
-  // 3️⃣ Transaction
-  return await prisma.$transaction(async (tx) => {
-    /* =========================
-       A. UPDATE FLOOR PLAN META
-    ========================== */
-    const updateData = {
-      updated_at: new Date(),
-    };
-
-    if (name !== undefined) updateData.name = name?.trim() || null;
-    if (file_url !== undefined) updateData.file_url = file_url?.trim() || null;
-    if (note !== undefined) updateData.note = note?.trim() || null;
-    if (is_published !== undefined) {
-      updateData.is_published =
-        is_published === true || is_published === "true";
+    // 1️⃣ Verify floor plan exists
+    const existingPlan = await prisma.floor_plans.findUnique({
+      where: { plan_id: planId },
+    });
+    if (!existingPlan) {
+      throw new Error("Floor plan not found");
     }
 
-    // layout sẽ update SAU khi sync room xong
-    const floorPlan = await tx.floor_plans.update({
-      where: { plan_id: planId },
-      data: updateData,
-      include: {
-        buildings: {
-          select: { building_id: true, name: true, address: true },
-        },
-        users: {
-          select: { user_id: true, full_name: true, email: true },
-        },
-      },
-    });
+    // 2️⃣ Check access
+    const hasAccess = await this.checkFloorPlanAccess(userId, userRole, planId);
+    if (!hasAccess) {
+      throw new Error(
+        "Access denied: You do not have permission to update this floor plan"
+      );
+    }
 
-    /* =========================
+    // 3️⃣ Transaction
+    return await prisma.$transaction(async (tx) => {
+      /* =========================
+       A. UPDATE FLOOR PLAN META
+    ========================== */
+      const updateData = {
+        updated_at: new Date(),
+      };
+
+      if (name !== undefined) updateData.name = name?.trim() || null;
+      if (file_url !== undefined)
+        updateData.file_url = file_url?.trim() || null;
+      if (note !== undefined) updateData.note = note?.trim() || null;
+      if (is_published !== undefined) {
+        updateData.is_published =
+          is_published === true || is_published === "true";
+      }
+
+      // layout sẽ update SAU khi sync room xong
+      const floorPlan = await tx.floor_plans.update({
+        where: { plan_id: planId },
+        data: updateData,
+        include: {
+          buildings: {
+            select: { building_id: true, name: true, address: true },
+          },
+          users: {
+            select: { user_id: true, full_name: true, email: true },
+          },
+        },
+      });
+
+      /* =========================
        B. SYNC ROOMS FROM LAYOUT
        (CHỈ KHI CÓ layout)
     ========================== */
-    let finalLayout = undefined;
+      let finalLayout = undefined;
 
-    if (layout !== undefined) {
-      const layoutObj = layout || {};
-      const nodes = Array.isArray(layoutObj.nodes) ? layoutObj.nodes : [];
+      if (layout !== undefined) {
+        const layoutObj = layout || {};
+        const nodes = Array.isArray(layoutObj.nodes) ? layoutObj.nodes : [];
 
-      // 1) Extract rooms from layout
-      let layoutRooms = nodes
-        .map((n) => ({
-          __nodeRef: n,
-          room_id: n?.data?.room_id ? parseInt(n.data.room_id) : null,
-          room_number: String(n?.data?.room_number ?? "").trim(),
-          size: n?.data?.size ?? null,
-          floor: existingPlan.floor_number,
-          building_id: existingPlan.building_id,
-        }))
-        .filter((x) => x.room_number);
+        // 1) Extract rooms from layout
+        let layoutRooms = nodes
+          .map((n) => ({
+            __nodeRef: n,
+            room_id: n?.data?.room_id ? parseInt(n.data.room_id) : null,
+            room_number: String(n?.data?.room_number ?? "").trim(),
+            size: n?.data?.size ?? null,
+            floor: existingPlan.floor_number,
+            building_id: existingPlan.building_id,
+          }))
+          .filter((x) => x.room_number);
 
-      // 2) Rooms in DB
-      const dbRooms = await tx.rooms.findMany({
-        where: {
-          building_id: existingPlan.building_id,
-          floor: existingPlan.floor_number,
-          is_active: true,
-        },
-        select: { room_id: true, room_number: true, size: true },
-      });
+        // 2) Rooms in DB
+        const dbRooms = await tx.rooms.findMany({
+          where: {
+            building_id: existingPlan.building_id,
+            floor: existingPlan.floor_number,
+            is_active: true,
+          },
+          select: { room_id: true, room_number: true, size: true },
+        });
 
-      const dbById = new Map(dbRooms.map((r) => [r.room_id, r]));
-      const dbByNumber = new Map(
-        dbRooms.map((r) => [String(r.room_number).trim(), r])
-      );
+        const dbById = new Map(dbRooms.map((r) => [r.room_id, r]));
+        const dbByNumber = new Map(
+          dbRooms.map((r) => [String(r.room_number).trim(), r])
+        );
 
-      // 3) UPSERT rooms
-      for (const r of layoutRooms) {
-        const found =
-          (r.room_id && dbById.get(r.room_id)) ||
-          dbByNumber.get(r.room_number);
+        // 3) UPSERT rooms
+        for (const r of layoutRooms) {
+          const found =
+            (r.room_id && dbById.get(r.room_id)) ||
+            dbByNumber.get(r.room_number);
 
-        if (!found) {
-          // CREATE
-          const created = await tx.rooms.create({
-            data: {
-              building_id: r.building_id,
-              floor: r.floor,
-              room_number: r.room_number,
-              size: r.size,
-              status: "available",
-              is_active: true,
-              created_at: new Date(),
-              updated_at: new Date(),
-            },
-            select: { room_id: true },
-          });
-          r.room_id = created.room_id;
-        } else {
-          // UPDATE (if changed) – must be vacant
-          const needUpdate =
-            String(found.room_number).trim() !== r.room_number ||
-            (found.size || null) !== (r.size || null);
-
-          if (needUpdate) {
-            const [tenantCount, activeContractCount] = await Promise.all([
-              tx.tenants.count({ where: { room_id: found.room_id } }),
-              tx.contracts.count({
-                where: {
-                  room_id: found.room_id,
-                  status: "active",
-                  deleted_at: null,
-                },
-              }),
-            ]);
-
-            if (tenantCount > 0 || activeContractCount > 0) {
-              throw new Error("Chỉ được sửa phòng khi phòng không có người ở.");
-            }
-
-            await tx.rooms.update({
-              where: { room_id: found.room_id },
+          if (!found) {
+            // CREATE
+            const created = await tx.rooms.create({
               data: {
+                building_id: r.building_id,
+                floor: r.floor,
                 room_number: r.room_number,
                 size: r.size,
+                status: "available",
+                is_active: true,
+                created_at: new Date(),
+                updated_at: new Date(),
+              },
+              select: { room_id: true },
+            });
+            r.room_id = created.room_id;
+          } else {
+            // UPDATE (if changed) – must be vacant
+            const needUpdate =
+              String(found.room_number).trim() !== r.room_number ||
+              (found.size || null) !== (r.size || null);
+
+            if (needUpdate) {
+              const [tenantCount, activeContractCount] = await Promise.all([
+                tx.tenants.count({ where: { room_id: found.room_id } }),
+                tx.contracts.count({
+                  where: {
+                    room_id: found.room_id,
+                    status: "active",
+                    deleted_at: null,
+                  },
+                }),
+              ]);
+
+              if (tenantCount > 0 || activeContractCount > 0) {
+                throw new Error(
+                  "Chỉ được sửa phòng khi phòng không có người ở."
+                );
+              }
+
+              await tx.rooms.update({
+                where: { room_id: found.room_id },
+                data: {
+                  room_number: r.room_number,
+                  size: r.size,
+                  updated_at: new Date(),
+                },
+              });
+            }
+
+            r.room_id = found.room_id;
+          }
+        }
+
+        // 4) DELETE / DEACTIVATE removed rooms
+        const layoutRoomIds = new Set(
+          layoutRooms.map((x) => x.room_id).filter(Boolean)
+        );
+        const layoutRoomNumbers = new Set(
+          layoutRooms.map((x) => x.room_number)
+        );
+
+        for (const db of dbRooms) {
+          const stillExists =
+            layoutRoomIds.has(db.room_id) ||
+            layoutRoomNumbers.has(String(db.room_number).trim());
+
+          if (stillExists) continue;
+
+          const [tenantCount, activeContractCount] = await Promise.all([
+            tx.tenants.count({ where: { room_id: db.room_id } }),
+            tx.contracts.count({
+              where: {
+                room_id: db.room_id,
+                status: "active",
+                deleted_at: null,
+              },
+            }),
+          ]);
+
+          if (tenantCount > 0 || activeContractCount > 0) {
+            throw new Error("Chỉ được xóa phòng khi phòng không có người ở.");
+          }
+
+          if ((userRole || "").toUpperCase() === "OWNER") {
+            await tx.rooms.delete({ where: { room_id: db.room_id } });
+          } else {
+            await tx.rooms.update({
+              where: { room_id: db.room_id },
+              data: {
+                is_active: false,
+                status: "available",
                 updated_at: new Date(),
               },
             });
           }
-
-          r.room_id = found.room_id;
         }
-      }
 
-      // 4) DELETE / DEACTIVATE removed rooms
-      const layoutRoomIds = new Set(
-        layoutRooms.map((x) => x.room_id).filter(Boolean)
-      );
-      const layoutRoomNumbers = new Set(
-        layoutRooms.map((x) => x.room_number)
-      );
+        // 5) Build FINAL layout (gắn room_id ngược lại node)
+        const roomByNumber = new Map(
+          layoutRooms.map((r) => [String(r.room_number), r])
+        );
 
-      for (const db of dbRooms) {
-        const stillExists =
-          layoutRoomIds.has(db.room_id) ||
-          layoutRoomNumbers.has(String(db.room_number).trim());
+        finalLayout = {
+          ...layoutObj,
+          nodes: nodes.map((n) => {
+            // chỉ update node ROOM
+            if (
+              n.type === "block" &&
+              n.data?.icon === "room" &&
+              n.data?.room_number
+            ) {
+              const key = String(n.data.room_number).trim();
+              const r = roomByNumber.get(key);
 
-        if (stillExists) continue;
+              if (!r) return n;
 
-        const [tenantCount, activeContractCount] = await Promise.all([
-          tx.tenants.count({ where: { room_id: db.room_id } }),
-          tx.contracts.count({
-            where: {
-              room_id: db.room_id,
-              status: "active",
-              deleted_at: null,
-            },
+              return {
+                ...n,
+                data: {
+                  ...n.data,
+                  room_id: r.room_id,
+                  room_number: r.room_number,
+                  size: r.size,
+                },
+              };
+            }
+
+            // ⚠️ các node khác GIỮ NGUYÊN
+            return n;
           }),
-        ]);
-
-        if (tenantCount > 0 || activeContractCount > 0) {
-          throw new Error("Chỉ được xóa phòng khi phòng không có người ở.");
-        }
-
-        if ((userRole || "").toUpperCase() === "OWNER") {
-          await tx.rooms.delete({ where: { room_id: db.room_id } });
-        } else {
-          await tx.rooms.update({
-            where: { room_id: db.room_id },
-            data: {
-              is_active: false,
-              status: "available",
-              updated_at: new Date(),
-            },
-          });
-        }
+        };
       }
 
-      // 5) Build FINAL layout (gắn room_id ngược lại node)
-      finalLayout = {
-        ...layoutObj,
-        nodes: layoutRooms.map((r) => ({
-          ...r.__nodeRef,
-          data: {
-            ...r.__nodeRef.data,
-            room_id: r.room_id,
-            room_number: r.room_number,
-            size: r.size,
-          },
-        })),
-      };
-    }
-
-    /* =========================
+      /* =========================
        C. UPDATE LAYOUT (ONCE)
     ========================== */
-    if (finalLayout !== undefined) {
-      await tx.floor_plans.update({
-        where: { plan_id: planId },
-        data: {
-          layout: finalLayout,
-          updated_at: new Date(),
-        },
+      if (finalLayout !== undefined) {
+        await tx.floor_plans.update({
+          where: { plan_id: planId },
+          data: {
+            layout: finalLayout,
+            updated_at: new Date(),
+          },
+        });
+      }
+
+      return this.formatFloorPlanResponse({
+        ...floorPlan,
+        layout: finalLayout ?? floorPlan.layout,
       });
-    }
-
-    return this.formatFloorPlanResponse({
-      ...floorPlan,
-      layout: finalLayout ?? floorPlan.layout,
     });
-  });
-}
-
+  }
 
   // PUBLISH - Publish floor plan
   async publishFloorPlan(planId, userId, userRole) {
