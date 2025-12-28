@@ -16,6 +16,8 @@ const {
   updateProfileSchema,
   verifyOTPSchema,
   resendOTPSchema,
+  upload,
+  handleMulterError,
 } = require("../middlewares/validation.middleware");
 
 // Public routes
@@ -66,7 +68,9 @@ router.post(
 router.get("/profile", authController.getProfile);
 router.put(
   "/profile",
+  upload.single("avatar"),
   validate(updateProfileSchema),
+  handleMulterError,
   authController.updateProfile
 );
 

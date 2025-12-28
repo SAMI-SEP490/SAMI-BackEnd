@@ -6,7 +6,7 @@ const express = require('express');
 const router = express.Router();
 const contractController = require('../controllers/contract.controller');
 const { authenticate, requireRole } = require('../middlewares/auth.middleware');
-const { upload, handleUploadError } = require('../middlewares/upload.middleware');
+const { upload,uploadImage , handleUploadError} = require('../middlewares/upload.middleware');
 const {
     validateCreateContract,
     validateUpdateContract,
@@ -25,11 +25,11 @@ router.post('/',
     contractController.createContract
 );
 
-// READ - Lấy danh sách hợp đồng
-router.get('/',
-    requireRole(['owner', 'manager','tenant']),
-    contractController.getContracts
-);
+    // READ - Lấy danh sách hợp đồng
+    router.get('/',
+        requireRole(['owner', 'manager','tenant']),
+        contractController.getContracts
+    );
 
 // READ - Lấy hợp đồng theo ID
 router.get('/:id',
@@ -82,5 +82,14 @@ router.get('/:id/download/direct',
     validateContractId,
     contractController.downloadContractDirect
 );
+// Upload ảnh → PDF → S3
+router.post('/:id/upload-images',
+    requireRole(['owner', 'manager']),
+    uploadImage.array('images', 10),
+    contractController.uploadContractImages);
 
+router.post('/import',
+    requireRole(['owner', 'manager']),
+    upload.single('contract_file'),
+    contractController.processContractWithAI);
 module.exports = router;

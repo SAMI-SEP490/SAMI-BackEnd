@@ -1,4 +1,4 @@
-// Updated: 2025-15-10
+// Updated: 2025-05-12
 // by: DatNB
 
 const prisma = require('../config/prisma');
@@ -7,6 +7,7 @@ const { hashPassword, comparePassword } = require('../utils/password');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const { generateRandomToken } = require('../utils/tokens');
 const { sendPasswordResetEmail, sendOTPEmail } = require('../utils/email');
+const s3Service = require('./s3.service');
 const config = require('../config');
 
 class AuthService {
@@ -38,7 +39,7 @@ class AuthService {
                 gender,
                 birthday: birthday ? new Date(birthday) : null,
                 status: 'Active',
-                is_verified: false // New field to track if user has completed first login OTP
+                is_verified: false
             }
         });
 
@@ -51,13 +52,12 @@ class AuthService {
         };
     }
 
-    async login(email, password, ipAddress, userAgent, deviceId) {
+    async login(email, password) {
         // Find user by email or phone
         const user = await prisma.users.findFirst({
             where: {
                 OR: [
-                    { email },
-                    { phone: email } // Allow login with phone number too
+                    { email }
                 ],
                 deleted_at: null
             }
@@ -112,7 +112,7 @@ class AuthService {
             throw new Error('OTP has expired or does not exist');
         }
 
-        if (storedOTP !== otp) {
+        if (String(storedOTP).trim() !== String(otp).trim()) {
             throw new Error('Invalid OTP');
         }
 
@@ -178,7 +178,7 @@ class AuthService {
 
     generateLoginResponse(user) {
         // Generate tokens
-        const accessToken = generateAccessToken(user.user_id);
+        const accessToken = generateAccessToken(user.user_id, user.role);
         const refreshToken = generateRefreshToken(user.user_id);
 
         return {
@@ -192,7 +192,8 @@ class AuthService {
                 gender: user.gender,
                 birthday: user.birthday,
                 avatar_url: user.avatar_url,
-                status: user.status
+                status: user.status,
+                role: user.role
             }
         };
     }
@@ -223,7 +224,7 @@ class AuthService {
         }
 
         // Generate new access token
-        const accessToken = generateAccessToken(user.user_id);
+        const accessToken = generateAccessToken(user.user_id, user.role);
 
         return {
             accessToken,
@@ -285,11 +286,9 @@ class AuthService {
         });
 
         if (!user) {
-            // Don't reveal if user exists for security reasons
-            // But still return success
             return {
-                success: true,
-                message: 'If an account exists with this email, an OTP has been sent'
+                success: false,
+                message: 'Email does not exist in our system'
             };
         }
 
@@ -337,7 +336,7 @@ class AuthService {
             throw new Error('OTP has expired or does not exist');
         }
 
-        if (storedOTP !== otp) {
+        if (String(storedOTP).trim() !== String(otp).trim()) {
             throw new Error('Invalid OTP');
         }
 
@@ -484,6 +483,20 @@ class AuthService {
                         emergency_contact_phone: true,
                         id_number: true,
                         note: true,
+                        rooms: {
+                            select: {
+                                room_id: true,
+                                room_number: true,
+                                floor: true,
+                                buildings: {
+                                    select: {
+                                        building_id: true,
+                                        name: true,
+                                        address: true
+                                    }
+                                }
+                            }
+                        }
                     }
                 });
                 break;
@@ -535,18 +548,79 @@ class AuthService {
         };
     }
 
-    async updateProfile(userId, data) {
-        const { full_name, gender, birthday, avatar_url } = data;
+    async updateProfile(userId, data, avatarFile = null) {
+        const { full_name, gender, birthday, phone } = data;
 
+        // Validate phone nếu có thay đổi
+        if (phone) {
+            const existingUserWithPhone = await prisma.users.findFirst({
+                where: {
+                    phone: phone,
+                    user_id: { not: userId }, // Không phải chính user này
+                    deleted_at: null
+                }
+            });
+
+            if (existingUserWithPhone) {
+                throw new Error('Phone number is already in use by another account');
+            }
+        }
+
+        let avatar_url = undefined;
+
+        // Nếu có file avatar được upload
+        if (avatarFile) {
+            try {
+
+
+                // Upload ảnh lên S3 sử dụng method uploadAvatar mới
+                const uploadResult = await s3Service.uploadAvatar(
+                    avatarFile.buffer,
+                    avatarFile.originalname
+                );
+
+                console.log('S3 upload result:', uploadResult);
+                avatar_url = uploadResult.url;
+                console.log('Avatar URL to save:', avatar_url);
+
+                // Xóa ảnh cũ nếu có (optional - để tránh rác trên S3)
+                const currentUser = await prisma.users.findUnique({
+                    where: { user_id: userId },
+                    select: { avatar_url: true }
+                });
+
+                if (currentUser && currentUser.avatar_url) {
+                    // Extract s3_key from old URL
+                    const oldS3Key = s3Service.extractS3KeyFromUrl(currentUser.avatar_url);
+                    if (oldS3Key && oldS3Key.startsWith('avatars/')) {
+                        // Chỉ xóa nếu là avatar (safety check)
+                        await s3Service.deleteFile(oldS3Key).catch(err => {
+                            console.error('Failed to delete old avatar:', err);
+                            // Không throw error, tiếp tục update profile
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error uploading avatar:', error);
+                throw new Error('Failed to upload avatar image');
+            }
+        }
+
+        // Chuẩn bị data để update (chỉ update những field được gửi lên)
+        const updateData = {
+            updated_at: new Date()
+        };
+
+        if (full_name !== undefined) updateData.full_name = full_name;
+        if (gender !== undefined) updateData.gender = gender;
+        if (birthday !== undefined) updateData.birthday = birthday ? new Date(birthday) : null;
+        if (phone !== undefined) updateData.phone = phone;
+        if (avatar_url !== undefined) updateData.avatar_url = avatar_url;
+
+        // Update user profile
         const user = await prisma.users.update({
             where: { user_id: userId },
-            data: {
-                full_name,
-                gender,
-                birthday: birthday ? new Date(birthday) : undefined,
-                avatar_url,
-                updated_at: new Date()
-            },
+            data: updateData,
             select: {
                 user_id: true,
                 email: true,
@@ -561,7 +635,6 @@ class AuthService {
 
         return user;
     }
-
 }
 
 module.exports = new AuthService();

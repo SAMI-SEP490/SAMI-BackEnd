@@ -1,9 +1,59 @@
-// Updated: 2025-18-10
+// Updated: 2025-23-11
 // by: MinhBH
 
 const TenantService = require('../services/tenant.service');
 
 class TenantController {
+    /**
+     * Get a list of all tenants.
+     */
+    async getAllTenants(req, res, next) {
+        try {
+            const tenants = await TenantService.getAllTenants();
+            res.status(200).json({
+                success: true,
+                message: 'Tenants retrieved successfully',
+                data: tenants
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+    async getTenantsByRoomId(req, res, next) {
+        try {
+            const { roomId } = req.params;
+
+            const data = await TenantService.getTenantsByRoomId(roomId);
+
+            res.status(200).json({
+                success: true,
+                message: data.length > 0
+                    ? 'Tenants retrieved successfully'
+                    : 'No active tenants found in this room',
+                data: data,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    async getTenantsByRoomId2(req, res, next) {
+        try {
+            const { roomId } = req.params;
+
+            const data = await TenantService.getTenantsByRoomId2(roomId);
+
+            res.status(200).json({
+                success: true,
+                message: data.length > 0
+                    ? 'Tenants retrieved successfully'
+                    : 'No active tenants found in this room',
+                data: data,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
     /**
      * Controller to search only tenants by name.
      */
@@ -92,33 +142,78 @@ class TenantController {
     }
 
     /**
-     * Get all bills (paid, unpaid, etc.) for the authenticated tenant.
+     * Endpoint for the AI agent to get tenant context.
      */
-    async getAllTenantBills(req, res, next) {
+    async getTenantChatbotContext(req, res, next) {
         try {
-            const tenantUserId = req.user.user_id;
-            const bills = await TenantService.getAllTenantBills(tenantUserId);
-            res.status(200).json({
-                success: true,
-                message: 'All bills retrieved successfully',
-                data: bills,
-            });
+            // req.user.user_id comes from your 'authenticate' middleware
+            const context = await TenantService.getTenantChatbotContext(req.user.user_id);
+            res.status(200).json({ success: true, data: context });
         } catch (err) {
             next(err);
         }
     }
 
-    /**
-     * Get all unpaid bills for the authenticated tenant.
-     */
-    async getAllUnpaidTenantBills(req, res, next) { // <-- RENAMED
+    async searchTenant(req, res, next) {
         try {
-            const tenantUserId = req.user.user_id;
-            const bills = await TenantService.getAllUnpaidTenantBills(tenantUserId); // <-- Calls renamed service
+            const { tenant_name, tenant_phone, tenant_id_number, room_number } = req.body;
+
+            const result = await TenantService.findBestMatchTenant({
+                tenant_name,
+                tenant_phone,
+                tenant_id_number,
+                room_number
+            });
+
+            if (!result) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'No matching tenant found',
+                    data: null
+                });
+            }
+
+            // Kiểm tra độ tin cậy
+            const isLowConfidence = result._match_metadata &&
+                result._match_metadata.confidence_score < 50;
+
             res.status(200).json({
                 success: true,
-                message: 'Unpaid bills retrieved successfully',
-                data: bills,
+                message: isLowConfidence
+                    ? 'Tenant found but with low confidence. Please verify the information.'
+                    : 'Tenant found successfully',
+                data: result
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
+    /**
+     * Same thing but using the API key auth
+     */
+    async getTenantContextByBot(req, res, next) {
+        try {
+            // 1. Extract user ID from Query Params
+            const { tenant_user_id } = req.query;
+
+            if (!tenant_user_id) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'tenant_user_id is required as query parameter'
+                });
+            }
+
+            // 2. Call the existing service
+            const context = await TenantService.getTenantChatbotContext(parseInt(tenant_user_id));
+
+            // 3. Return in standard Bot response format
+            res.json({
+                success: true,
+                data: context,
+                bot_info: {
+                    accessed_by: req.bot.name, // From bot.middleware
+                    timestamp: new Date()
+                }
             });
         } catch (err) {
             next(err);

@@ -1,9 +1,9 @@
-// Updated: 2025-18-10
+// Updated: 2025-07-11
 // by: DatNB & MinhBH
 
 
 const { z, ZodError } = require('zod');
-
+const multer = require('multer');
 const isoDateString = () =>
     z
         .string({
@@ -20,9 +20,9 @@ const registerSchema = z.object({
     email: z.string().email('Invalid email format'),
     password: z.string().min(8, 'Password must be at least 8 characters'),
     phone: z.string().min(10, 'Phone number must be at least 10 characters'),
-    full_name: z.string().min(1, 'Full name is required').optional(),
-    gender: z.enum(['Male', 'Female', 'Other']).optional(),
-    birthday: z.string().or(z.date()).optional()
+    full_name: z.string().min(1, 'Full name is required'),
+    gender: z.enum(['Male', 'Female', 'Other']),
+    birthday: z.string().or(z.date())
 });
 
 const loginSchema = z.object({
@@ -56,7 +56,12 @@ const updateProfileSchema = z.object({
     full_name: z.string().min(1).optional(),
     gender: z.enum(['Male', 'Female', 'Other']).optional(),
     birthday: z.string().or(z.date()).optional(),
-    avatar_url: z.string().url().optional()
+    avatar_url: z.string().url().optional(),
+
+    phone: z
+        .string()
+        .regex(/^(0|\+84)[0-9]{9}$/, 'Số điện thoại không hợp lệ')
+        .optional()
 });
 
 // New OTP schemas (Zod)
@@ -125,10 +130,7 @@ const changeToManagerSchema = z.object({
 
 const updateUserSchema = z.object({
     // User fields
-    full_name: z.string().min(1, 'Full name is required').optional(),
-    gender: z.enum(['Male', 'Female', 'Other']).optional(),
-    birthday: z.string().or(z.date()).optional(),
-    status: z.string().min(1, 'Status cannot be empty').optional(),
+    full_name: z.string().min(1, 'Full name is required'),
 
     // Role-specific fields (all optional)
     
@@ -144,12 +146,12 @@ const updateUserSchema = z.object({
         .min(10, 'Phone number must be at least 10 digits')
         .max(11, 'Phone number must not exceed 11 digits')
         .regex(/^[0-9]+$/, { message: 'Phone number must contain only numbers' })
-        .optional(),
+        ,
     id_number: z.string()
         .min(9, 'ID number must be at least 9 characters')
         .max(12, 'ID number must not exceed 12 characters')
         .regex(/^[0-9]+$/, { message: 'ID number must contain only numbers' })
-        .optional(),
+        ,
     
     // For Managers
     building_id: z.preprocess((val) => {
@@ -182,6 +184,107 @@ const createPaymentSchema = z.object({
     ).min(1, { message: 'billIds must be a non-empty array' })
 });
 
+const baseBillSchema = z.object({
+    tenant_user_id: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive({ message: 'tenant_user_id must be a positive integer' })).optional(),
+    
+    room_id: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive({ message: 'room_id must be a positive integer' })).optional(),
+    
+    total_amount: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().gt(2000, { message: 'Total amount must be greater than 2,000 VND' })).optional(),
+    
+    description: z.string().min(1, 'Description is required').max(255).optional(),
+    
+    billing_period_start: z.string().datetime({ message: "Invalid date format" }).optional(),
+    billing_period_end: z.string().datetime({ message: "Invalid date format" }).optional(),
+    due_date: z.string().datetime({ message: "Invalid date format" }).optional(),
+    penalty_amount: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().nonnegative({ message: 'penalty_amount cannot be negative' })).optional(),
+    
+    status: z.enum(['draft', 'issued']).optional()
+});
+
+// We can just use the partial base schema, as a draft can be very empty.
+const createDraftBillSchema = baseBillSchema.partial();
+
+const createIssuedBillSchema = baseBillSchema.required({
+    tenant_user_id: true,
+    room_id: true,
+    total_amount: true,
+    description: true,
+    billing_period_start: true,
+    billing_period_end: true,
+    due_date: true,
+}).refine(data => new Date(data.billing_period_start) < new Date(data.billing_period_end), {
+    message: "Billing end date must be after start date",
+    path: ["billing_period_end"],
+}).refine(data => new Date(data.billing_period_end) < new Date(data.due_date), {
+    message: "Due date must be after billing end date",
+    path: ["due_date"],
+});
+
+const updateDraftBillSchema = baseBillSchema.partial().superRefine((data, ctx) => {
+    if (data.status === 'issued') {
+        // If they try to "publish" the draft, it must have all required fields.
+        // We're checking the data *being sent*. The service layer must check the *final merged* data.
+        if (data.tenant_user_id === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "tenant_user_id is required to publish", path: ["tenant_user_id"] });
+        if (data.room_id === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "room_id is required to publish", path: ["room_id"] });
+        if (data.total_amount === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "total_amount is required to publish", path: ["total_amount"] });
+        if (data.description === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "description is required to publish", path: ["description"] });
+        if (data.billing_period_start === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "billing_period_start is required to publish", path: ["billing_period_start"] });
+        if (data.billing_period_end === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "billing_period_end is required to publish", path: ["billing_period_end"] });
+        if (data.due_date === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "due_date is required to publish", path: ["due_date"] });
+    }
+});
+
+const updateIssuedBillSchema = baseBillSchema.partial().omit({
+    tenant_user_id: true,
+    room_id: true,
+    billing_period_start: true,
+    billing_period_end: true,
+}).extend({
+    status: z.enum([
+        'issued',
+        'overdue',
+        'paid',
+        'partially_paid'
+    ]).optional()
+});
+
+// Schema for Manager/Owner sending a notification
+const sendNotificationSchema = z.object({
+    recipient_id: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive()),
+    title: z.string().min(1, "Title is required").max(300),
+    body: z.string().min(1, "Body is required"),
+    payload: z.record(z.any()).optional() // e.g., { "link": "/some/path" }
+});
+
+const sendBroadcastSchema = z.object({
+    title: z.string().min(1, "Title is required").max(300),
+    body: z.string().min(1, "Body is required"),
+    payload: z.record(z.any()).optional()
+});
+
+// Schema for registering a device
+const registerDeviceSchema = z.object({
+    token: z.string().min(1, "Token is required"),
+    device_type: z.enum(['IOS', 'ANDROID', 'WEB'])
+});
+
+
+
 const validate = (schema) => {
     return (req, res, next) => {
         try {
@@ -204,6 +307,38 @@ const validate = (schema) => {
     };
 };
 
+const storage = multer.memoryStorage();
+const upload = multer({
+    storage: storage,
+    limits: {
+        fileSize: 5 * 1024 * 1024, // 5MB
+    },
+    fileFilter: (req, file, cb) => {
+        const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+        if (allowedMimeTypes.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error('Invalid file type. Only JPEG, PNG, and WebP images are allowed.'));
+        }
+    }
+});
+// Middleware để log multer errors
+const handleMulterError = (err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+        console.error('Multer Error:', err);
+        return res.status(400).json({
+            success: false,
+            message: `Upload error: ${err.message}`
+        });
+    } else if (err) {
+        console.error('Upload Error:', err);
+        return res.status(400).json({
+            success: false,
+            message: err.message
+        });
+    }
+    next();
+};
 module.exports = {
     validate,
     registerSchema,
@@ -218,5 +353,14 @@ module.exports = {
     changeToTenantSchema,
     changeToManagerSchema,
     updateUserSchema,
-    createPaymentSchema
+    createPaymentSchema,
+    createDraftBillSchema,
+    createIssuedBillSchema,
+    updateDraftBillSchema,
+    updateIssuedBillSchema,
+    sendNotificationSchema,
+    sendBroadcastSchema,
+    registerDeviceSchema,
+    upload,
+    handleMulterError
 };

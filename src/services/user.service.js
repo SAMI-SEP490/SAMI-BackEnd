@@ -30,10 +30,13 @@ class UserService {
     }
 
     /**
-     * Retrieves a list of all users.
+     * Retrieves a list of all users (excluding OWNER).
      */
     async getAllUsers() {
         const users = await prisma.users.findMany({
+            where: {
+                role: { not: 'OWNER' }, // Exclude OWNER
+            },
             select: {
                 user_id: true,
                 phone: true,
@@ -48,7 +51,6 @@ class UserService {
                 updated_at: true,
                 deleted_at: true,
                 // Relations still needed for the note
-                building_owner: { select: { notes: true } },
                 building_managers: {
                     select: {
                         note: true,
@@ -107,7 +109,7 @@ class UserService {
     }
 
     /**
-     * Retrieves the details for a single user by their ID.
+     * Retrieves the details for a single user by their ID (excluding OWNER).
      */
     async getUserById(userId) {
         const user = await prisma.users.findUnique({
@@ -125,14 +127,18 @@ class UserService {
                 created_at: true,
                 updated_at: true,
                 deleted_at: true,
-                // Relations still needed for note/emergency contact
-                building_owner: { select: { notes: true } },
                 building_managers: {
                     select: {
                         note: true,
                         building_id: true,
                         assigned_from: true,
                         assigned_to: true,
+                        buildings: {
+                            select: {
+                                building_id: true,
+                                name: true,
+                            },
+                        },
                     },
                 },
                 tenants: {
@@ -141,6 +147,20 @@ class UserService {
                         emergency_contact_phone: true,
                         tenant_since: true,
                         id_number: true,
+                        room_id: true,
+                        rooms: {
+                            select: {
+                                room_id: true,
+                                room_number: true,
+                                building_id: true,
+                                buildings: {
+                                    select: {
+                                        building_id: true,
+                                        name: true,
+                                    },
+                                },
+                            },
+                        },
                     },
                 },
             },
@@ -148,6 +168,12 @@ class UserService {
 
         if (!user) {
             throw new Error('User not found');
+        }
+
+        if (user.role === 'OWNER') {
+            const error = new Error('Access to owner accounts is not allowed');
+            error.statusCode = 403;
+            throw error;
         }
 
         const userObject = {
@@ -168,17 +194,23 @@ class UserService {
             tenant_since: null,
             id_number: null,
             building_id: null,
+            building_name: null,
+            room_id: null,
+            room_name: null,
             assigned_from: null,
             assigned_to: null,
         };
 
-        // Add role-specific info
         if (user.role === 'TENANT' && user.tenants) {
             userObject.emergency_contact_phone = user.tenants.emergency_contact_phone;
             userObject.tenant_since = user.tenants.tenant_since;
             userObject.id_number = user.tenants.id_number;
+            userObject.room_id = user.tenants.room_id;
+            userObject.room_name = user.tenants.rooms?.room_number || null;
+            userObject.building_name = user.tenants.rooms?.buildings?.name || null;
         } else if (user.role === 'MANAGER' && user.building_managers) {
             userObject.building_id = user.building_managers.building_id;
+            userObject.building_name = user.building_managers.buildings?.name || null;
             userObject.assigned_from = user.building_managers.assigned_from;
             userObject.assigned_to = user.building_managers.assigned_to;
         }
@@ -187,7 +219,7 @@ class UserService {
     }
 
     /**
-     * Searches all users by full_name.
+     * Searches all users by full_name (excluding OWNER).
      */
     async searchUsersByName(nameQuery) {
         const users = await prisma.users.findMany({
@@ -196,6 +228,7 @@ class UserService {
                     contains: nameQuery,
                     mode: 'insensitive',
                 },
+                role: { not: 'OWNER' }, // Exclude OWNER
             },
             select: {
                 user_id: true,
@@ -210,8 +243,6 @@ class UserService {
                 created_at: true,
                 updated_at: true,
                 deleted_at: true,
-                // Relations still needed for the note
-                building_owner: { select: { notes: true } },
                 building_managers: {
                     select: {
                         note: true,
@@ -271,7 +302,7 @@ class UserService {
 
 
     /**
-     * Soft-deletes a user, with permissions.
+     * Soft-deletes a user, with permissions (excluding OWNER).
      */
     async softDeleteUser(targetUserId, requestingUserId) {
         const requestingUserRole = await this._getUserRole(requestingUserId);
@@ -279,6 +310,13 @@ class UserService {
 
         if (!targetUserRole) {
             throw new Error('User not found');
+        }
+
+        // Block deletion of OWNER
+        if (targetUserRole === 'OWNER') {
+            const error = new Error('Cannot delete owner accounts');
+            error.statusCode = 403;
+            throw error;
         }
 
         // MANAGER can only handle TENANT
@@ -303,7 +341,7 @@ class UserService {
             where: { user_id: targetUserId },
             data: {
                 deleted_at: new Date(),
-                status: 'Deleted',
+                status: 'Inactive',
             },
             select: { user_id: true, deleted_at: true, status: true },
         });
@@ -312,7 +350,7 @@ class UserService {
     }
 
     /**
-     * Restores a soft-deleted user, with permissions.
+     * Restores a soft-deleted user, with permissions (excluding OWNER).
      */
     async restoreUser(targetUserId, requestingUserId) {
         const requestingUserRole = await this._getUserRole(requestingUserId);
@@ -320,6 +358,13 @@ class UserService {
 
         if (!targetUserRole) {
             throw new Error('User not found');
+        }
+
+        // Block restoration of OWNER
+        if (targetUserRole === 'OWNER') {
+            const error = new Error('Cannot restore owner accounts');
+            error.statusCode = 403;
+            throw error;
         }
 
         // MANAGER can only handle TENANT
@@ -353,13 +398,14 @@ class UserService {
     }
 
     /**
-     * Retrieves a list of all soft-deleted users, with permissions.
+     * Retrieves a list of all soft-deleted users, with permissions (excluding OWNER).
      */
     async getDeletedUsers(requestingUserId) {
         const requestingUserRole = await this._getUserRole(requestingUserId);
 
         let whereClause = {
             deleted_at: { not: null },
+            role: { not: 'OWNER' }, // Exclude OWNER
         };
 
         // MANAGER can only handle TENANT
@@ -383,7 +429,6 @@ class UserService {
                 updated_at: true,
                 deleted_at: true,
                 // Relations still needed for the note
-                building_owner: { select: { notes: true } },
                 building_managers: {
                     select: {
                         note: true,
@@ -456,6 +501,13 @@ class UserService {
             throw new AppError('User not found');
         }
 
+        // Block changing OWNER role
+        if (user.role === 'OWNER') {
+            const error = new Error('Cannot change owner role');
+            error.statusCode = 403;
+            throw error;
+        }
+
         // Check if already a tenant
         const existingTenant = await prisma.tenants.findUnique({
             where: { user_id: userId }
@@ -516,6 +568,13 @@ class UserService {
             throw new AppError('User not found');
         }
 
+        // Block changing OWNER role
+        if (user.role === 'OWNER') {
+            const error = new Error('Cannot change owner role');
+            error.statusCode = 403;
+            throw error;
+        }
+
         // Check if building exists
         const building = await prisma.buildings.findUnique({
             where: { building_id: buildingId }
@@ -571,7 +630,7 @@ class UserService {
     }
 
     /**
-     * Updates an user's information.
+     * Updates an user's information (excluding OWNER and email field).
      */
     async updateUser(targetUserId, requestingUserId, data) {
         const requestingUserRole = await this._getUserRole(requestingUserId);
@@ -581,6 +640,13 @@ class UserService {
             throw new Error('User not found');
         }
 
+        // Block updating OWNER
+        if (targetUserRole === 'OWNER') {
+            const error = new Error('Cannot update owner accounts');
+            error.statusCode = 403;
+            throw error;
+        }
+
         // MANAGER can only handle TENANT
         if (requestingUserRole === 'MANAGER' && targetUserRole !== 'TENANT') {
             const error = new Error('Managers can only edit tenant accounts');
@@ -588,15 +654,23 @@ class UserService {
             throw error;
         }
 
+        // Block email update
+        if (data.email) {
+            const error = new Error('Email cannot be updated');
+            error.statusCode = 400;
+            throw error;
+        }
+
         return prisma.$transaction(async (tx) => {
             let userDataToUpdate = {};
             let roleDataUpdated = false;
 
-            // 1. Prepare User table data
+            // 1. Prepare User table data (excluding email)
             if (data.full_name) userDataToUpdate.full_name = data.full_name;
             if (data.gender) userDataToUpdate.gender = data.gender;
             if (data.birthday) userDataToUpdate.birthday = new Date(data.birthday);
             if (data.status) userDataToUpdate.status = data.status;
+            if (data.phone) userDataToUpdate.phone = data.phone;
 
             // 2. Prepare and execute role-specific table update
             if (targetUserRole === 'TENANT') {
@@ -624,18 +698,6 @@ class UserService {
                     await tx.building_managers.update({
                         where: { user_id: targetUserId },
                         data: managerData,
-                    });
-                    roleDataUpdated = true;
-                }
-            } else if (targetUserRole === 'OWNER') {
-                let ownerData = {};
-                // Note: schema uses 'notes' (plural) for owner
-                if (data.notes) ownerData.notes = data.notes; 
-                
-                if (Object.keys(ownerData).length > 0) {
-                    await tx.building_owner.update({
-                        where: { user_id: targetUserId },
-                        data: ownerData,
                     });
                     roleDataUpdated = true;
                 }

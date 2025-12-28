@@ -1,4 +1,4 @@
-// Updated: 2025-18-10
+// Updated: 2025-23-11
 // by: MinhBH
 
 const express = require('express');
@@ -9,13 +9,29 @@ const { authenticate, requireRole } = require('../middlewares/auth.middleware');
 // Protected routes - require authentication
 router.use(authenticate);
 
+// Get all tenants (Owner and Manager)
+router.get(
+    '/all',
+    requireRole(['owner', 'manager']),
+    tenantController.getAllTenants
+);
+
 // Search only tenants (Owner and Manager)
 router.get(
     '/search',
     requireRole(['owner', 'manager']),
     tenantController.searchTenantsByName
 );
-
+router.get(
+    '/room/:roomId',
+    requireRole(['owner', 'manager']),
+    tenantController.getTenantsByRoomId
+);
+router.get(
+    '/moor/:roomId',
+    requireRole(['owner', 'manager']),
+    tenantController.getTenantsByRoomId2
+);
 router.get(
     '/analytics/occupancy',
     requireRole(['owner', 'manager']),
@@ -41,15 +57,12 @@ router.get(
 );
 
 router.get(
-    '/bills',
+    '/ai-context',
     requireRole(['tenant']),
-    tenantController.getAllTenantBills
+    tenantController.getTenantChatbotContext
 );
-
-router.get(
-    '/bills-unpaid',
-    requireRole(['tenant']),
-    tenantController.getAllUnpaidTenantBills
-);
+router.post('/search',
+    requireRole(['owner', 'manager']),
+    tenantController.searchTenant);
 
 module.exports = router;

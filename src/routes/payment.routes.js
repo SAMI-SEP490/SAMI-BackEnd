@@ -1,4 +1,6 @@
-// /routes/payment.routes.js
+// Updated: 2025-28-10
+// by: MinhBH
+
 const express = require('express');
 const router = express.Router();
 const paymentController = require('../controllers/payment.controller');
@@ -23,6 +25,65 @@ router.get(
 router.get(
     '/vnpay_ipn',
     paymentController.handleVnpayIpn
+);
+
+router.get(
+    '/history',
+    authenticate,
+    requireRole(['tenant']),
+    paymentController.getTenantPaymentHistory
+);
+
+router.get(
+    '/list-all',
+    authenticate,
+    requireRole(['owner', 'manager']),
+    paymentController.getAllPaymentHistory
+);
+
+router.get(
+    '/revenue/yearly',
+    authenticate,
+    requireRole(['owner', 'manager']),
+    paymentController.getYearlyRevenueReport
+);
+
+router.get(
+    '/revenue/monthly',
+    authenticate,
+    requireRole(['owner', 'manager']),
+    paymentController.getMonthlyRevenueDetails
+);
+
+router.get(
+    '/revenue/export',
+    authenticate,
+    requireRole(['owner', 'manager']),
+    paymentController.exportRevenue
+);
+
+// Create PayOS (Tenant)
+router.post(
+    '/create-payos',
+    authenticate,
+    requireRole(['tenant']),
+    validate(createPaymentSchema),
+    paymentController.createPayOS
+);
+
+// PayOS Webhook (Public)
+router.post('/payos-webhook', paymentController.handlePayOSWebhook);
+
+// Return Pages (Public)
+router.get('/success', paymentController.renderSuccessPage);
+router.get('/cancel', paymentController.renderCancelPage);
+
+// Cash Payment (Manager/Owner only)
+router.post(
+    '/cash', 
+    authenticate, 
+    requireRole(['MANAGER', 'OWNER']), 
+    paymentController.createCashPayment
 );
 
 module.exports = router;

@@ -1,5 +1,5 @@
-// Updated: 2024-24-10
-// by: DatNB
+// Updated: 2024-28-10
+// by: DatNB & MinhBH
 
 
 const express = require('express');
@@ -17,7 +17,19 @@ const tenantRoutes = require('./routes/tenant.routes');
 const guestRoutes = require('./routes/guest.routes');
 const addendumRoutes = require('./routes/addendum.routes');
 const paymentRoutes = require('./routes/payment.routes.js');
+const billRoutes = require('./routes/bill.routes');
+const buildingRoutes = require('./routes/building.routes');
+const maintenanceRoutes = require('./routes/maintenance.routes');
+const roomRoutes = require('./routes/room.routes');
+const floorPlanRoutes = require('./routes/floor-plan.routes');
+const regulationRoutes = require('./routes/regulation.routes');
+const vehicleRoutes = require('./routes/vehicle.routes');
+const notificationRoutes = require('./routes/notification.routes');
+const botRoutes = require('./routes/bot.routes');
+const chatbotRoutes = require('./routes/chatbot.routes.js');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
+const cron = require('node-cron');
+const BillService = require('./services/bill.service');
 
 const app = express();
 
@@ -84,6 +96,33 @@ app.get('/health', async (req, res) => {
     });
 });
 
+// ==========================================
+// 🕒 CRON JOBS (Scheduled Tasks)
+// ==========================================
+
+// Schedule: Runs at 00:00:00 every day
+// Format: Seconds(optional) Minutes Hours DayOfMonth Month DayOfWeek
+cron.schedule('0 0 0 * * *', async () => {
+    console.log('🌙 [CRON] Starting daily scan for overdue bills...');
+    try {
+        const count = await BillService.scanAndMarkOverdueBills();
+        if (count > 0) {
+            console.log(`✅ [CRON] Marked ${count} bills as OVERDUE.`);
+            
+            // Optional: You could trigger push notifications here too!
+            // const userIds = ... get users who own these bills ...
+            // await PushService.sendPushToUsers(userIds, "Thông báo quá hạn", "Hóa đơn của bạn đã quá hạn...");
+        } else {
+            console.log('✨ [CRON] No new overdue bills found today.');
+        }
+    } catch (error) {
+        console.error('❌ [CRON] Error during daily scan:', error);
+    }
+}, {
+    scheduled: true,
+    timezone: "Asia/Ho_Chi_Minh" // Critical: Ensures it runs at VN Midnight
+});
+
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
@@ -91,8 +130,17 @@ app.use('/api/contract', contractRoutes);
 app.use('/api/tenant', tenantRoutes);
 app.use('/api/guest', guestRoutes);
 app.use('/api/addendum', addendumRoutes);
+app.use('/api/maintenance', maintenanceRoutes);
 app.use('/api/payments', paymentRoutes);
-
+app.use('/api/bill', billRoutes);
+app.use('/api/building', buildingRoutes);
+app.use('/api/room', roomRoutes);
+app.use('/api/floor-plan', floorPlanRoutes);
+app.use('/api/regulation', regulationRoutes);
+app.use('/api/vehicle', vehicleRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/bot', botRoutes);
+app.use('/api/chatbot', chatbotRoutes);
 // 404 handler
 app.use(notFound);
 

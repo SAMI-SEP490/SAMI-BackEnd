@@ -1,5 +1,4 @@
-
-// Updated: 2025-17-10
+// Updated: 2025-10-12
 // By: DatNB
 
 const contractService = require('../services/contract.service');
@@ -27,7 +26,7 @@ class ContractController {
             const { id } = req.params;
             const contract = await contractService.getContractById(
                 parseInt(id),
-                req.user  // Truyền thông tin user hiện tại
+                req.user  // ✅ Truyền currentUser để check permission
             );
 
             res.json({
@@ -42,12 +41,10 @@ class ContractController {
     // Lấy danh sách hợp đồng
     async getContracts(req, res, next) {
         try {
-
             const contracts = await contractService.getContracts(
                 req.query,
-                req.user  // Truyền thông tin user hiện tại
+                req.user  // ✅ Truyền currentUser để filter theo role
             );
-
 
             res.json({
                 success: true,
@@ -64,7 +61,12 @@ class ContractController {
         try {
             const { id } = req.params;
             const file = req.file;
-            const contract = await contractService.updateContract(parseInt(id), req.body, file);
+            const contract = await contractService.updateContract(
+                parseInt(id),
+                req.body,
+                file,
+                req.user  // ✅ Truyền currentUser để check permission
+            );
 
             res.json({
                 success: true,
@@ -80,7 +82,10 @@ class ContractController {
     async deleteContract(req, res, next) {
         try {
             const { id } = req.params;
-            const result = await contractService.deleteContract(parseInt(id));
+            const result = await contractService.deleteContract(
+                parseInt(id),
+                req.user  // ✅ Truyền currentUser để check permission
+            );
 
             res.json({
                 success: true,
@@ -91,10 +96,19 @@ class ContractController {
         }
     }
 
-    // Xóa vĩnh viễn hợp đồng
+    // Xóa vĩnh viễn hợp đồng (chỉ OWNER)
     async hardDeleteContract(req, res, next) {
         try {
             const { id } = req.params;
+
+            // ✅ Check role trước khi xóa vĩnh viễn
+            if (req.user.role !== 'OWNER') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Only OWNER can permanently delete contracts'
+                });
+            }
+
             const result = await contractService.hardDeleteContract(parseInt(id));
 
             res.json({
@@ -106,10 +120,19 @@ class ContractController {
         }
     }
 
-    // Khôi phục hợp đồng
+    // Khôi phục hợp đồng (chỉ OWNER/MANAGER)
     async restoreContract(req, res, next) {
         try {
             const { id } = req.params;
+
+            // ✅ Check role trước khi restore
+            if (req.user.role === 'TENANT') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You do not have permission to restore contracts'
+                });
+            }
+
             const contract = await contractService.restoreContract(parseInt(id));
 
             res.json({
@@ -122,15 +145,44 @@ class ContractController {
         }
     }
 
+    // Terminate hợp đồng (chỉ OWNER/MANAGER)
+    async terminateContract(req, res, next) {
+        try {
+            const { id } = req.params;
+            const { reason } = req.body;
 
+            // ✅ Check role trước khi terminate
+            if (req.user.role === 'TENANT') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You do not have permission to terminate contracts'
+                });
+            }
 
+            const contract = await contractService.terminateContract(
+                parseInt(id),
+                reason
+            );
+
+            res.json({
+                success: true,
+                message: 'Contract terminated successfully',
+                data: contract
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    // Download contract - Trả về URL presigned
     async downloadContract(req, res, next) {
         try {
             const { id } = req.params;
             const result = await contractService.downloadContract(
                 parseInt(id),
-                req.user  //
+                req.user  // ✅ Truyền currentUser để check permission
             );
+
             res.json({
                 success: true,
                 message: 'Download URL generated successfully',
@@ -141,18 +193,215 @@ class ContractController {
         }
     }
 
+    // Download contract trực tiếp - Stream file
     async downloadContractDirect(req, res, next) {
         try {
             const { id } = req.params;
             const result = await contractService.downloadContractDirect(
                 parseInt(id),
-                req.user  //
+                req.user  // ✅ Truyền currentUser để check permission
             );
+
             res.setHeader('Content-Type', result.content_type);
             res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(result.file_name)}"`);
             res.send(result.buffer);
         } catch (err) {
             next(err);
+        }
+    }
+
+    // Upload ảnh và chuyển thành PDF
+    async uploadContractImages(req, res, next) {
+        try {
+            const { id } = req.params; // contract_id
+
+            if (!req.files || req.files.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Không có ảnh nào được upload!'
+                });
+            }
+
+            // ✅ Check permission trước khi upload
+            if (req.user.role === 'TENANT') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You do not have permission to upload contract files'
+                });
+            }
+
+            // Gửi toàn bộ file (buffer + thông tin) cho service
+            const result = await contractService.convertAndUpload(parseInt(id), req.files);
+
+            res.json({
+                success: true,
+                message: '✅ Ảnh đã được chuyển thành PDF và upload lên S3 thành công!',
+                data: result,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    // Xử lý hợp đồng bằng AI
+    async processContractWithAI(req, res, next) {
+        try {
+            const file = req.file; // File từ multer
+
+            if (!file) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Vui lòng upload file PDF hợp đồng'
+                });
+            }
+
+            // Validate file type
+            if (file.mimetype !== 'application/pdf') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Chỉ chấp nhận file PDF'
+                });
+            }
+
+            // ✅ Check permission - chỉ OWNER/MANAGER được dùng AI
+            if (req.user.role === 'TENANT') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You do not have permission to use AI processing'
+                });
+            }
+
+            console.log(`📄 Processing contract PDF: ${file.originalname}`);
+
+            // Xử lý AI
+            const result = await contractService.processContractWithAI(
+                file.buffer,
+                file.mimetype
+            );
+
+            // Nếu không tìm thấy tenant hoặc thiếu thông tin
+            if (!result.success) {
+                return res.status(200).json({
+                    success: false,
+                    stage: result.stage,
+                    message: result.error,
+                    data: {
+                        parsed_data: result.parsed_data,
+                        search_params: result.search_params,
+                        suggestion: result.suggestion
+                    }
+                });
+            }
+
+            // Thành công - trả về data để admin review
+            res.status(200).json({
+                success: true,
+                message: '✅ Xử lý AI thành công',
+                data: {
+                    contract_data: result.contract_data,
+                    tenant_info: result.tenant_info,
+                    parsed_data: result.parsed_data,
+                    validation_warnings: result.validation_warnings,
+                    processing_summary: result.processing_summary
+                },
+                next_steps: result.validation_warnings.length > 0
+                    ? 'Review và sửa data trước khi tạo contract'
+                    : 'Data đầy đủ, có thể tạo contract ngay'
+            });
+
+        } catch (err) {
+            console.error('❌ Error in processContractWithAI controller:', err);
+            next(err);
+        }
+    }
+
+    // ✅ [NEW] Endpoint để force update tất cả hợp đồng hết hạn
+    async updateExpiredContracts(req, res, next) {
+        try {
+            // Chỉ OWNER/MANAGER được gọi endpoint này
+            if (req.user.role === 'TENANT') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You do not have permission to update expired contracts'
+                });
+            }
+
+            const count = await contractService.autoUpdateExpiredContracts();
+
+            res.json({
+                success: true,
+                message: `Updated ${count} expired contracts`,
+                data: { updated_count: count }
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    // [BOT] Lấy link download hợp đồng cho Chatbot
+    // Endpoint: POST /api/bot/contract/download
+    async getMyContractFileForBot(req, res, next) {
+        try {
+            const { tenant_user_id } = req.body;
+            
+            if (!tenant_user_id) {
+                return res.json({ url: null, message: "Lỗi: Không tìm thấy ID người dùng." });
+            }
+
+            // 1. Giả lập user object để reuse service logic
+            const mockUser = { role: 'TENANT', user_id: parseInt(tenant_user_id) };
+
+            // 2. Tìm hợp đồng đang Active của user này
+            // Ta dùng hàm getContracts có sẵn để lọc
+            const result = await contractService.getContracts({
+                status: 'active',
+                page: 1,
+                limit: 1
+            }, mockUser);
+
+            const activeContract = result.data?.[0];
+
+            // 3. Kiểm tra file
+            if (!activeContract || !activeContract.s3_key) {
+                // Thử tìm hợp đồng Pending nếu không có Active
+                const pendingResult = await contractService.getContracts({
+                    status: 'pending',
+                    page: 1,
+                    limit: 1
+                }, mockUser);
+                
+                const pendingContract = pendingResult.data?.[0];
+                
+                if (pendingContract && pendingContract.s3_key) {
+                     // Found pending file
+                     const downloadData = await contractService.downloadContract(pendingContract.contract_id, mockUser);
+                     return res.json({
+                        url: downloadData.download_url,
+                        message: "Đây là bản nháp hợp đồng đang chờ duyệt (Link hết hạn trong 1 giờ)."
+                     });
+                }
+
+                return res.json({
+                    url: null,
+                    message: "Hiện chưa có bản mềm hợp đồng (PDF) trên hệ thống."
+                });
+            }
+
+            // 4. Generate URL (Active Contract)
+            const downloadData = await contractService.downloadContract(activeContract.contract_id, mockUser);
+
+            return res.json({
+                url: downloadData.download_url,
+                message: "Đây là link tải hợp đồng của bạn (Link hết hạn trong 1 giờ)."
+            });
+
+        } catch (err) {
+            console.error("Bot Contract Download Error:", err.message);
+            // Trả về JSON 200 thay vì lỗi 500 để Bot không bị crash
+            res.json({ 
+                url: null, 
+                message: "Không thể lấy file hợp đồng lúc này. Vui lòng thử lại sau." 
+            });
         }
     }
 }

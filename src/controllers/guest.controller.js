@@ -115,10 +115,12 @@ class GuestController {
     async rejectGuestRegistration(req, res, next) {
         try {
             const { id } = req.params;
+            const { rejection_reason } = req.body;
 
             const rejected = await guestService.rejectGuestRegistration(
                 parseInt(id),
-                req.user.user_id
+                req.user.user_id,
+                rejection_reason
             );
 
             res.json({
