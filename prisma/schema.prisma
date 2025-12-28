@@ -178,7 +178,6 @@ enum room_status {
   available
   occupied
   maintenance
-  reserved
 }
 
 enum vehicle_status {
@@ -224,7 +223,6 @@ model users {
   // Relations
   tenants           tenants?
   building_managers building_managers[]
-  building_owner    building_owner?
   device_tokens     device_tokens[]
 
   // Relations: Notifications
@@ -262,15 +260,14 @@ model users {
 }
 
 model tenants {
-  user_id                 Int       @id
-  id_number               String    @unique @db.VarChar(50)
-  tenant_since            DateTime? @db.Date
-  emergency_contact_phone String?   @db.VarChar(20)
-  note                    String?
+  user_id      Int       @id
+  id_number    String    @unique @db.VarChar(50)
+  tenant_since DateTime? @db.Date
+  note         String?
 
   // Relations
-  user         users          @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
-  room_tenants room_tenants[]
+  user                 users          @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  room_tenants_history room_tenants[]
 
   // Contracts & Bills
   contracts contracts[]
@@ -316,17 +313,8 @@ model building_managers {
   building buildings @relation(fields: [building_id], references: [building_id], onDelete: Cascade)
   user     users     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
 
-  @@unique([building_id, user_id], map: "unique_building_manager")
   @@index([building_id], map: "idx_building_managers_building_id")
   @@index([user_id], map: "idx_building_managers_user_id")
-}
-
-model building_owner {
-  user_id    Int       @id
-  notes      String?
-  created_at DateTime? @default(now()) @db.Timestamp(6)
-
-  user users @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
 }
 
 model rooms {
@@ -365,7 +353,7 @@ model room_tenants {
   tenant_type    tenant_type
   moved_in_at    DateTime    @db.Date
   moved_out_at   DateTime?   @db.Date
-  is_current     Boolean?    @default(true)
+  is_current     Boolean?    @default(false)
   note           String?
   created_at     DateTime?   @default(now()) @db.Timestamp(6)
 
@@ -414,6 +402,7 @@ model contracts {
   @@index([tenant_user_id], map: "idx_contracts_tenant_user_id")
   @@index([status], map: "idx_contracts_status")
   @@index([room_id, status], map: "idx_contracts_room_status")
+  @@index([room_id, start_date, end_date], map: "idx_contracts_room_dates")
 }
 
 model contract_addendums {

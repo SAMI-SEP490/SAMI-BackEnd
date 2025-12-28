@@ -1,5 +1,5 @@
-// Updated: 2025-10-12
-// By: DatNB
+// Updated: 2025-12-28
+// By: DatNB & Gemini Refactor
 
 const contractService = require('../services/contract.service');
 
@@ -8,7 +8,7 @@ class ContractController {
     async createContract(req, res, next) {
         try {
             const file = req.file; // File từ multer
-            const contract = await contractService.createContract(req.body, file);
+            const contract = await contractService.createContract(req.body, file, req.user);
 
             res.status(201).json({
                 success: true,
@@ -26,7 +26,7 @@ class ContractController {
             const { id } = req.params;
             const contract = await contractService.getContractById(
                 parseInt(id),
-                req.user  // ✅ Truyền currentUser để check permission
+                req.user
             );
 
             res.json({
@@ -43,7 +43,7 @@ class ContractController {
         try {
             const contracts = await contractService.getContracts(
                 req.query,
-                req.user  // ✅ Truyền currentUser để filter theo role
+                req.user
             );
 
             res.json({
@@ -65,7 +65,7 @@ class ContractController {
                 parseInt(id),
                 req.body,
                 file,
-                req.user  // ✅ Truyền currentUser để check permission
+                req.user
             );
 
             res.json({
@@ -84,7 +84,7 @@ class ContractController {
             const { id } = req.params;
             const result = await contractService.deleteContract(
                 parseInt(id),
-                req.user  // ✅ Truyền currentUser để check permission
+                req.user
             );
 
             res.json({
@@ -101,7 +101,7 @@ class ContractController {
         try {
             const { id } = req.params;
 
-            // ✅ Check role trước khi xóa vĩnh viễn
+
             if (req.user.role !== 'OWNER') {
                 return res.status(403).json({
                     success: false,
@@ -109,7 +109,11 @@ class ContractController {
                 });
             }
 
-            const result = await contractService.hardDeleteContract(parseInt(id));
+
+            const result = await contractService.hardDeleteContract(
+                parseInt(id),
+                req.user
+            );
 
             res.json({
                 success: true,
@@ -125,7 +129,6 @@ class ContractController {
         try {
             const { id } = req.params;
 
-            // ✅ Check role trước khi restore
             if (req.user.role === 'TENANT') {
                 return res.status(403).json({
                     success: false,
@@ -133,7 +136,11 @@ class ContractController {
                 });
             }
 
-            const contract = await contractService.restoreContract(parseInt(id));
+
+            const contract = await contractService.restoreContract(
+                parseInt(id),
+                req.user
+            );
 
             res.json({
                 success: true,
@@ -151,7 +158,6 @@ class ContractController {
             const { id } = req.params;
             const { reason } = req.body;
 
-            // ✅ Check role trước khi terminate
             if (req.user.role === 'TENANT') {
                 return res.status(403).json({
                     success: false,
@@ -159,9 +165,11 @@ class ContractController {
                 });
             }
 
+
             const contract = await contractService.terminateContract(
                 parseInt(id),
-                reason
+                reason,
+                req.user
             );
 
             res.json({
@@ -180,7 +188,7 @@ class ContractController {
             const { id } = req.params;
             const result = await contractService.downloadContract(
                 parseInt(id),
-                req.user  // ✅ Truyền currentUser để check permission
+                req.user
             );
 
             res.json({
@@ -199,7 +207,7 @@ class ContractController {
             const { id } = req.params;
             const result = await contractService.downloadContractDirect(
                 parseInt(id),
-                req.user  // ✅ Truyền currentUser để check permission
+                req.user
             );
 
             res.setHeader('Content-Type', result.content_type);
@@ -222,7 +230,6 @@ class ContractController {
                 });
             }
 
-            // ✅ Check permission trước khi upload
             if (req.user.role === 'TENANT') {
                 return res.status(403).json({
                     success: false,
@@ -230,12 +237,16 @@ class ContractController {
                 });
             }
 
-            // Gửi toàn bộ file (buffer + thông tin) cho service
-            const result = await contractService.convertAndUpload(parseInt(id), req.files);
+
+            const result = await contractService.convertAndUpload(
+                parseInt(id),
+                req.files,
+                req.user
+            );
 
             res.json({
                 success: true,
-                message: '✅ Ảnh đã được chuyển thành PDF và upload lên S3 thành công!',
+                message: ' Ảnh đã được chuyển thành PDF và upload lên S3 thành công!',
                 data: result,
             });
         } catch (err) {
@@ -255,7 +266,6 @@ class ContractController {
                 });
             }
 
-            // Validate file type
             if (file.mimetype !== 'application/pdf') {
                 return res.status(400).json({
                     success: false,
@@ -263,7 +273,6 @@ class ContractController {
                 });
             }
 
-            // ✅ Check permission - chỉ OWNER/MANAGER được dùng AI
             if (req.user.role === 'TENANT') {
                 return res.status(403).json({
                     success: false,
@@ -273,13 +282,12 @@ class ContractController {
 
             console.log(`📄 Processing contract PDF: ${file.originalname}`);
 
-            // Xử lý AI
+            // Xử lý AI (Logic này không cần check DB permission sâu nên không cần req.user)
             const result = await contractService.processContractWithAI(
                 file.buffer,
                 file.mimetype
             );
 
-            // Nếu không tìm thấy tenant hoặc thiếu thông tin
             if (!result.success) {
                 return res.status(200).json({
                     success: false,
@@ -293,10 +301,9 @@ class ContractController {
                 });
             }
 
-            // Thành công - trả về data để admin review
             res.status(200).json({
                 success: true,
-                message: '✅ Xử lý AI thành công',
+                message: ' Xử lý AI thành công',
                 data: {
                     contract_data: result.contract_data,
                     tenant_info: result.tenant_info,
@@ -310,15 +317,14 @@ class ContractController {
             });
 
         } catch (err) {
-            console.error('❌ Error in processContractWithAI controller:', err);
+            console.error(' Error in processContractWithAI controller:', err);
             next(err);
         }
     }
 
-    // ✅ [NEW] Endpoint để force update tất cả hợp đồng hết hạn
+    // Endpoint để force update tất cả hợp đồng hết hạn
     async updateExpiredContracts(req, res, next) {
         try {
-            // Chỉ OWNER/MANAGER được gọi endpoint này
             if (req.user.role === 'TENANT') {
                 return res.status(403).json({
                     success: false,
@@ -339,20 +345,19 @@ class ContractController {
     }
 
     // [BOT] Lấy link download hợp đồng cho Chatbot
-    // Endpoint: POST /api/bot/contract/download
     async getMyContractFileForBot(req, res, next) {
         try {
             const { tenant_user_id } = req.body;
-            
+
             if (!tenant_user_id) {
                 return res.json({ url: null, message: "Lỗi: Không tìm thấy ID người dùng." });
             }
 
             // 1. Giả lập user object để reuse service logic
+            // NOTE: Cẩn thận bảo mật ở route này (nên có IP whitelist hoặc API Key riêng cho Bot)
             const mockUser = { role: 'TENANT', user_id: parseInt(tenant_user_id) };
 
-            // 2. Tìm hợp đồng đang Active của user này
-            // Ta dùng hàm getContracts có sẵn để lọc
+            // 2. Tìm hợp đồng đang Active
             const result = await contractService.getContracts({
                 status: 'active',
                 page: 1,
@@ -363,22 +368,21 @@ class ContractController {
 
             // 3. Kiểm tra file
             if (!activeContract || !activeContract.s3_key) {
-                // Thử tìm hợp đồng Pending nếu không có Active
+                // Fallback: Thử tìm hợp đồng Pending
                 const pendingResult = await contractService.getContracts({
                     status: 'pending',
                     page: 1,
                     limit: 1
                 }, mockUser);
-                
+
                 const pendingContract = pendingResult.data?.[0];
-                
+
                 if (pendingContract && pendingContract.s3_key) {
-                     // Found pending file
-                     const downloadData = await contractService.downloadContract(pendingContract.contract_id, mockUser);
-                     return res.json({
+                    const downloadData = await contractService.downloadContract(pendingContract.contract_id, mockUser);
+                    return res.json({
                         url: downloadData.download_url,
                         message: "Đây là bản nháp hợp đồng đang chờ duyệt (Link hết hạn trong 1 giờ)."
-                     });
+                    });
                 }
 
                 return res.json({
@@ -387,7 +391,7 @@ class ContractController {
                 });
             }
 
-            // 4. Generate URL (Active Contract)
+            // 4. Generate URL
             const downloadData = await contractService.downloadContract(activeContract.contract_id, mockUser);
 
             return res.json({
@@ -397,10 +401,9 @@ class ContractController {
 
         } catch (err) {
             console.error("Bot Contract Download Error:", err.message);
-            // Trả về JSON 200 thay vì lỗi 500 để Bot không bị crash
-            res.json({ 
-                url: null, 
-                message: "Không thể lấy file hợp đồng lúc này. Vui lòng thử lại sau." 
+            res.json({
+                url: null,
+                message: "Không thể lấy file hợp đồng lúc này. Vui lòng thử lại sau."
             });
         }
     }
