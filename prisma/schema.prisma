@@ -313,7 +313,6 @@ model building_managers {
   building buildings @relation(fields: [building_id], references: [building_id], onDelete: Cascade)
   user     users     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
 
-  @@unique([building_id, user_id], map: "unique_building_manager")
   @@index([building_id], map: "idx_building_managers_building_id")
   @@index([user_id], map: "idx_building_managers_user_id")
 }
