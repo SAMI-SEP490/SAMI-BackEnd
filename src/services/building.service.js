@@ -177,6 +177,7 @@ class BuildingService {
       },
     };
   }
+
   // [NEW] READ - Lấy danh sách tòa nhà được gán cho Manager
   async getAssignedBuildings(userId) {
     // Lấy danh sách các assignment còn hiệu lực
@@ -222,6 +223,8 @@ class BuildingService {
       is_active,
       electric_unit_price,
       water_unit_price,
+      service_fee,
+      bill_due_day,
     } = data;
 
     // 1️⃣ Verify building exists
@@ -233,7 +236,7 @@ class BuildingService {
       throw new Error("Building not found");
     }
 
-    // 2️⃣ Kiểm tra trùng tên (nếu đổi tên)
+    // 2️⃣ Check duplicate name (if changing name)
     if (name && name.trim() !== existingBuilding.name) {
       const duplicateName = await prisma.buildings.findFirst({
         where: {
@@ -294,11 +297,11 @@ class BuildingService {
       if (electric_unit_price === null || electric_unit_price === "") {
         updateData.electric_unit_price = null;
       } else {
-        const electricPrice = parseFloat(electric_unit_price);
-        if (isNaN(electricPrice) || electricPrice < 0) {
+        const price = parseFloat(electric_unit_price);
+        if (isNaN(price) || price < 0) {
           throw new Error("electric_unit_price must be a non-negative number");
         }
-        updateData.electric_unit_price = electricPrice;
+        updateData.electric_unit_price = price;
       }
     }
 
@@ -307,11 +310,37 @@ class BuildingService {
       if (water_unit_price === null || water_unit_price === "") {
         updateData.water_unit_price = null;
       } else {
-        const waterPrice = parseFloat(water_unit_price);
-        if (isNaN(waterPrice) || waterPrice < 0) {
+        const price = parseFloat(water_unit_price);
+        if (isNaN(price) || price < 0) {
           throw new Error("water_unit_price must be a non-negative number");
         }
-        updateData.water_unit_price = waterPrice;
+        updateData.water_unit_price = price;
+      }
+    }
+
+    // Service fee
+    if (service_fee !== undefined) {
+      if (service_fee === null || service_fee === "") {
+        updateData.service_fee = null;
+      } else {
+        const fee = parseFloat(service_fee);
+        if (isNaN(fee) || fee < 0) {
+          throw new Error("service_fee must be a non-negative number");
+        }
+        updateData.service_fee = fee;
+      }
+    }
+
+    // Bill due day (1–31)
+    if (bill_due_day !== undefined) {
+      if (bill_due_day === null || bill_due_day === "") {
+        updateData.bill_due_day = null;
+      } else {
+        const day = parseInt(bill_due_day);
+        if (isNaN(day) || day < 1 || day > 31) {
+          throw new Error("bill_due_day must be between 1 and 31");
+        }
+        updateData.bill_due_day = day;
       }
     }
 
@@ -819,9 +848,11 @@ class BuildingService {
       total_area: building.total_area,
       is_active: building.is_active,
 
-      // ✅ GIÁ ĐIỆN / NƯỚC
+      // 💰 Prices & fees
       electric_unit_price: building.electric_unit_price,
       water_unit_price: building.water_unit_price,
+      service_fee: building.service_fee,
+      bill_due_day: building.bill_due_day,
 
       managers:
         building.building_managers?.map((m) => ({
@@ -846,9 +877,13 @@ class BuildingService {
       total_area: building.total_area,
       is_active: building.is_active,
 
-      // ✅ THÊM 2 TRƯỜNG Ở ĐÂY
+      // ✅ ĐÃ CÓ
       electric_unit_price: building.electric_unit_price,
       water_unit_price: building.water_unit_price,
+
+      // ✅ THÊM 2 TRƯỜNG MỚI
+      service_fee: building.service_fee,
+      bill_due_day: building.bill_due_day,
 
       total_rooms: building._count?.rooms || 0,
       total_regulations: building._count?.regulations || 0,
