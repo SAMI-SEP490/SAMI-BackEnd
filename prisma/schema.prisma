@@ -257,6 +257,8 @@ model users {
   vehicle_reg_rejected  vehicle_registrations[] @relation("VehicleRegRejectedBy")
   vehicle_reg_cancelled vehicle_registrations[] @relation("VehicleRegCancelledBy")
   vehicles_deactivated  vehicles[]              @relation("VehicleDeactivatedBy")
+
+  utility_recorded utility_readings[] @relation("UtilityRecordedBy")
 }
 
 model tenants {
@@ -340,6 +342,7 @@ model rooms {
   room_tenants         room_tenants[]
   maintenance_requests maintenance_requests[]
   guest_registrations  guest_registrations[]
+  utility_readings     utility_readings[]
 
   @@unique([building_id, room_number], map: "unique_building_room")
   @@index([building_id], map: "idx_rooms_building_id")
@@ -371,24 +374,25 @@ model room_tenants {
 // ============================================
 
 model contracts {
-  contract_id     Int              @id @default(autoincrement())
-  room_id         Int
-  tenant_user_id  Int
-  start_date      DateTime         @db.Date
-  end_date        DateTime         @db.Date
-  duration_months Int
-  rent_amount     Decimal          @db.Decimal(12, 2)
-  deposit_amount  Decimal          @db.Decimal(12, 2)
-  penalty_rate    Decimal?         @db.Decimal(5, 2)
-  status          contract_status? @default(pending)
-  file_name       String?          @db.VarChar(255)
-  s3_key          String?          @db.VarChar(500)
-  checksum        String?          @db.VarChar(255)
-  note            String?
-  created_at      DateTime?        @default(now()) @db.Timestamp(6)
-  updated_at      DateTime?        @updatedAt @db.Timestamp(6)
-  uploaded_at     DateTime?        @db.Timestamp(6)
-  deleted_at      DateTime?        @db.Timestamp(6)
+  contract_id          Int              @id @default(autoincrement())
+  room_id              Int
+  tenant_user_id       Int
+  start_date           DateTime         @db.Date
+  end_date             DateTime         @db.Date
+  duration_months      Int
+  rent_amount          Decimal          @db.Decimal(12, 2)
+  deposit_amount       Decimal          @db.Decimal(12, 2)
+  penalty_rate         Decimal?         @db.Decimal(5, 2)
+  payment_cycle_months Int              @default(1)
+  status               contract_status? @default(pending)
+  file_name            String?          @db.VarChar(255)
+  s3_key               String?          @db.VarChar(500)
+  checksum             String?          @db.VarChar(255)
+  note                 String?
+  created_at           DateTime?        @default(now()) @db.Timestamp(6)
+  updated_at           DateTime?        @updatedAt @db.Timestamp(6)
+  uploaded_at          DateTime?        @db.Timestamp(6)
+  deleted_at           DateTime?        @db.Timestamp(6)
 
   // Relations
   room_history rooms   @relation("RoomContractsHistory", fields: [room_id], references: [room_id])
@@ -445,8 +449,9 @@ model bill_payments {
   paid_by        Int?
   note           String?         @db.VarChar(500)
 
-  payer           users?                 @relation("PaymentPaidBy", fields: [paid_by], references: [user_id])
-  payment_details bill_payment_details[]
+  payer            users?                 @relation("PaymentPaidBy", fields: [paid_by], references: [user_id])
+  payment_details  bill_payment_details[]
+  utility_readings utility_readings[]
 
   @@index([transaction_id], map: "unique_transaction_id") // Already unique, but keeping for DBML fidelity
   @@index([paid_by], map: "idx_bill_payments_paid_by")
@@ -788,4 +793,39 @@ model device_tokens {
   user users @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
 
   @@index([user_id], map: "idx_device_tokens_user_id")
+}
+
+// ============================================
+// UTILITIES (ĐIỆN NƯỚC)
+// ============================================
+
+model utility_readings {
+  reading_id Int  @id @default(autoincrement())
+  room_id    Int
+  bill_id    Int? // Link tới hóa đơn (nếu đã tạo bill từ chỉ số này)
+
+  recorded_date DateTime @db.Date
+  billing_month Int
+  billing_year  Int
+
+  prev_electric  Int // Chỉ số điện cũ
+  curr_electric  Int // Chỉ số điện mới
+  electric_price Decimal @db.Decimal(12, 2) // Giá điện áp dụng tại lúc chốt
+
+  prev_water  Int // Chỉ số nước cũ
+  curr_water  Int // Chỉ số nước mới
+  water_price Decimal @db.Decimal(12, 2) // Giá nước áp dụng tại lúc chốt
+
+  created_by Int? // Người ghi số (quản lý)
+  created_at DateTime? @default(now()) @db.Timestamp(6)
+
+  // Relations
+  room    rooms  @relation(fields: [room_id], references: [room_id])
+  bill    bills? @relation(fields: [bill_id], references: [bill_id])
+  creator users? @relation("UtilityRecordedBy", fields: [created_by], references: [user_id])
+
+  @@index([room_id], map: "idx_utility_readings_room")
+  @@index([recorded_date], map: "idx_utility_readings_date")
+  @@index([bill_id], map: "idx_utility_readings_bill")
+  @@unique([room_id, billing_month, billing_year], map: "unique_room_utility_period")
 }
