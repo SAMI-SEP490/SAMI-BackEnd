@@ -715,36 +715,6 @@ class ContractService {
         }
     }
 
-    async autoUpdateExpiredContracts() {
-        try {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-
-            const expiredContracts = await prisma.contracts.findMany({
-                where: {
-                    end_date: { lt: today },
-                    status: CONTRACT_STATUS.ACTIVE
-                },
-                include: {
-                    room_history: { include: { building: true } }
-                }
-            });
-
-            if (expiredContracts.length === 0) return 0;
-
-            let count = 0;
-            for (const contract of expiredContracts) {
-                await this.autoUpdateExpiredStatus(contract);
-                count++;
-            }
-
-            return count;
-        } catch (error) {
-            console.error('Error auto-updating expired contracts:', error);
-            return 0;
-        }
-    }
-
     // ============================================
     // GET METHODS
     // ============================================
