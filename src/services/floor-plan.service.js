@@ -714,18 +714,6 @@ class FloorPlanService {
       throw new Error("Floor plan is already published");
     }
 
-    // ===== CHỈ ĐƯỢC XÓA TẦNG CAO NHẤT =====
-    const agg = await prisma.floor_plans.aggregate({
-      where: { building_id: floorPlan.building_id },
-      _max: { floor_number: true },
-    });
-
-    const maxFloor = agg?._max?.floor_number || 0;
-
-    if (floorPlan.floor_number !== maxFloor) {
-      throw new Error(`Chỉ được xóa tầng cao nhất (tầng ${maxFloor}).`);
-    }
-
     const published = await prisma.floor_plans.update({
       where: { plan_id: planId },
       data: {
@@ -820,6 +808,18 @@ class FloorPlanService {
       throw new Error("Cannot delete published floor plan. Unpublish it first");
     }
 
+    // ✅ CHỈ ĐƯỢC XÓA TẦNG CAO NHẤT
+    const agg = await prisma.floor_plans.aggregate({
+      where: { building_id: floorPlan.building_id },
+      _max: { floor_number: true },
+    });
+
+    const maxFloor = agg?._max?.floor_number || 0;
+
+    if (floorPlan.floor_number !== maxFloor) {
+      throw new Error(`Chỉ được xóa tầng cao nhất (tầng ${maxFloor}).`);
+    }
+
     await prisma.$transaction(async (tx) => {
       await tx.floor_plans.delete({
         where: { plan_id: planId },
@@ -828,7 +828,7 @@ class FloorPlanService {
       await tx.buildings.update({
         where: { building_id: floorPlan.building_id },
         data: {
-          number_of_floors: maxFloor - 1,
+          number_of_floors: Math.max(0, maxFloor - 1),
         },
       });
     });

@@ -198,8 +198,8 @@ class FloorPlanController {
             const userId = req.user.user_id;
             const userRole = req.user.role;
 
-            // Chỉ OWNER và MANAGER mới có quyền xóa floor plan
-            if (userRole !== 'OWNER' && userRole !== 'MANAGER') {
+            // Chỉ OWNER mới có quyền xóa floor plan
+            if (userRole !== 'OWNER') {
                 return res.status(403).json({
                     success: false,
                     message: 'Access denied: Only owners and managers can delete floor plans'
