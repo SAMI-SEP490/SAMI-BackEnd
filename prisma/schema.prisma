@@ -21,6 +21,7 @@ enum ConsentType {
   TERM_OF_SERVICE
   PRIVACY_POLICY
   CONTRACT_SIGNING
+  CONTRACT_TERMINATION
   CONTRACT_ADDENDUM
 
   @@map("consent_type")
@@ -68,6 +69,7 @@ enum contract_status {
   pending_transaction
   active
   terminated
+  requested_termination
   expired
 }
 
