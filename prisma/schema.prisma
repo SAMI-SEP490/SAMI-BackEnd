@@ -317,12 +317,10 @@ model buildings {
 }
 
 model building_managers {
-  manager_id    Int       @id @default(autoincrement())
-  user_id       Int
-  building_id   Int
-  assigned_from DateTime  @db.Date
-  assigned_to   DateTime? @db.Date
-  note          String?   @db.VarChar(255)
+  manager_id  Int     @id @default(autoincrement())
+  user_id     Int
+  building_id Int
+  note        String? @db.VarChar(255)
 
   building buildings @relation(fields: [building_id], references: [building_id], onDelete: Cascade)
   user     users     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
