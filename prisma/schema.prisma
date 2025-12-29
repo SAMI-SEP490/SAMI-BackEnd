@@ -17,7 +17,14 @@ enum Role {
   OWNER
   USER
 }
+enum ConsentType {
+  TERM_OF_SERVICE
+  PRIVACY_POLICY
+  CONTRACT_SIGNING
+  CONTRACT_ADDENDUM
 
+  @@map("consent_type")
+}
 enum addendum_status {
   draft
   pending_approval
@@ -25,7 +32,11 @@ enum addendum_status {
   rejected
   cancelled
 }
-
+enum ConsentAction {
+  ACCEPTED
+  REVOKED
+  UPDATED
+}
 enum addendum_type {
   extension
   rent_change
@@ -33,7 +44,6 @@ enum addendum_type {
   general
   other
 }
-
 enum bill_status {
   draft
   issued
@@ -234,8 +244,7 @@ model users {
   payments_made bill_payments[] @relation("PaymentPaidBy")
 
   // Relations: Contracts & Docs
-  addendums_created  contract_addendums[] @relation("AddendumCreatedBy")
-  addendums_approved contract_addendums[] @relation("AddendumApprovedBy")
+  addendums_created contract_addendums[] @relation("AddendumCreatedBy")
 
   // Relations: Floor Plans & Regulations
   floor_plans_created   floor_plans[]          @relation("FloorPlanCreatedBy")
@@ -259,6 +268,7 @@ model users {
   vehicles_deactivated  vehicles[]              @relation("VehicleDeactivatedBy")
 
   utility_recorded utility_readings[] @relation("UtilityRecordedBy")
+  consentLogs      consent_logs[]
 }
 
 model tenants {
@@ -377,6 +387,7 @@ model contracts {
   contract_id          Int              @id @default(autoincrement())
   room_id              Int
   tenant_user_id       Int
+  contract_number      String           @unique @db.VarChar(50)
   start_date           DateTime         @db.Date
   end_date             DateTime         @db.Date
   duration_months      Int
@@ -393,14 +404,15 @@ model contracts {
   updated_at           DateTime?        @updatedAt @db.Timestamp(6)
   uploaded_at          DateTime?        @db.Timestamp(6)
   deleted_at           DateTime?        @db.Timestamp(6)
-
+  tenant_accepted_at   DateTime?        @db.Timestamp(6)
   // Relations
-  room_history rooms   @relation("RoomContractsHistory", fields: [room_id], references: [room_id])
-  room_current rooms?  @relation("RoomCurrentContract") // Opposite side of 1-1
-  tenant       tenants @relation(fields: [tenant_user_id], references: [user_id])
+  room_history         rooms            @relation("RoomContractsHistory", fields: [room_id], references: [room_id])
+  room_current         rooms?           @relation("RoomCurrentContract") // Opposite side of 1-1
+  tenant               tenants          @relation(fields: [tenant_user_id], references: [user_id])
 
   contract_addendums contract_addendums[]
   bills              bills[]
+  consentLogs        consent_logs[]
 
   @@index([room_id], map: "idx_contracts_room_id")
   @@index([tenant_user_id], map: "idx_contracts_tenant_user_id")
@@ -410,29 +422,99 @@ model contracts {
 }
 
 model contract_addendums {
-  addendum_id    Int              @id @default(autoincrement())
-  contract_id    Int
-  type           addendum_type?   @default(general)
-  version        Int              @default(1)
-  status         addendum_status? @default(draft)
-  changes        Json?
-  effective_date DateTime?        @db.Date
-  created_by     Int
-  approved_by    Int?
-  approved_at    DateTime?        @db.Timestamp(6)
-  note           String?
-  created_at     DateTime?        @default(now()) @db.Timestamp(6)
-  updated_at     DateTime?        @updatedAt @db.Timestamp(6)
+  addendum_id     Int             @id @default(autoincrement())
+  contract_id     Int
+  addendum_number Int
+  addendum_type   addendum_type
+  status          addendum_status
+
+  file_name String? @db.VarChar(255)
+  s3_key    String? @db.VarChar(500)
+  checksum  String? @db.VarChar(255)
+
+  file_url         String
+  effective_from   DateTime?
+  effective_to     DateTime?
+  changes_snapshot Json?
+
+  created_by Int
+
+  created_at         DateTime? @default(now()) @db.Timestamp(6)
+  updated_at         DateTime? @updatedAt @db.Timestamp(6)
+  tenant_accepted_at DateTime? @db.Timestamp(6)
 
   contract contracts @relation(fields: [contract_id], references: [contract_id], onDelete: Cascade)
   creator  users     @relation("AddendumCreatedBy", fields: [created_by], references: [user_id])
-  approver users?    @relation("AddendumApprovedBy", fields: [approved_by], references: [user_id])
 
-  @@unique([contract_id, version], map: "unique_contract_addendum_version")
   @@index([contract_id], map: "idx_contract_addendums_contract_id")
   @@index([created_by], map: "idx_contract_addendums_created_by")
 }
 
+model consent_logs {
+  log_id      Int  @id @default(autoincrement())
+  user_id     Int
+  contract_id Int?
+  addendum_id Int?
+
+  // Reference đến version cụ thể thay vì duplicate content
+  version_id Int
+  action     ConsentAction @default(ACCEPTED)
+
+  // Bằng chứng kỹ thuật
+  ip_address  String  @db.VarChar(45) // IPv4/IPv6
+  device_info String? @db.VarChar(500) // Tăng lên để lưu đầy đủ user agent
+
+  // Hash của toàn bộ consent context để verify integrity
+  data_hash String @db.VarChar(64) // SHA256 = 64 chars
+
+  // Session tracking
+  session_id String? @db.VarChar(100)
+
+  // Timestamps
+  created_at DateTime @default(now()) @db.Timestamp(6)
+
+  // Relations
+  user     users            @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  contract contracts?       @relation(fields: [contract_id], references: [contract_id], onDelete: SetNull)
+  version  consent_versions @relation(fields: [version_id], references: [version_id])
+
+  // Indexes được tối ưu theo use case
+  @@index([user_id, created_at(sort: Desc)]) // Query logs của user theo thời gian
+  @@index([contract_id, created_at(sort: Desc)]) // Query logs của contract
+  @@index([version_id]) // Join với consent_versions
+  @@index([data_hash]) // Verify integrity, detect duplicates
+  @@map("consent_logs")
+}
+// ============================================
+// BẢNG PHỤ: Lưu các version của Terms/Policy
+// ============================================
+model consent_versions {
+  version_id Int @id @default(autoincrement())
+
+  // Version info
+  consent_type   ConsentType
+  version_number String      @db.VarChar(20) // "v1.0", "v2.1"
+
+  // Content
+  content      String @db.Text // Nội dung đầy đủ
+  content_hash String @db.VarChar(64) // SHA256 hash để verify integrity
+
+  // Status management
+  is_active Boolean @default(false) // Chỉ 1 version active cho mỗi type
+
+  // Timestamps
+  created_at DateTime @default(now()) @db.Timestamp(6)
+  updated_at DateTime @updatedAt @db.Timestamp(6)
+
+  // Relations
+  consent_logs consent_logs[]
+
+  // Constraints
+  @@unique([consent_type, version_number]) // Không duplicate version
+  @@index([consent_type, is_active]) // Get active version
+  @@index([content_hash]) // Verify integrity
+  @@map("consent_versions")
+}
 // ============================================
 // BILLING SYSTEM
 // ============================================
@@ -483,6 +565,7 @@ model bills {
 
   payment_details bill_payment_details[]
   service_charges bill_service_charges[]
+  utilityReadings utility_readings[]
 
   @@index([contract_id], map: "idx_bills_contract_id")
   @@index([tenant_user_id], map: "idx_bills_tenant_user_id")
@@ -820,12 +903,14 @@ model utility_readings {
   created_at DateTime? @default(now()) @db.Timestamp(6)
 
   // Relations
-  room    rooms  @relation(fields: [room_id], references: [room_id])
-  bill    bills? @relation(fields: [bill_id], references: [bill_id])
-  creator users? @relation("UtilityRecordedBy", fields: [created_by], references: [user_id])
+  room                    rooms          @relation(fields: [room_id], references: [room_id])
+  bill                    bills?         @relation(fields: [bill_id], references: [bill_id])
+  creator                 users?         @relation("UtilityRecordedBy", fields: [created_by], references: [user_id])
+  billPayments            bill_payments? @relation(fields: [bill_paymentsPayment_id], references: [payment_id])
+  bill_paymentsPayment_id Int?
 
+  @@unique([room_id, billing_month, billing_year], map: "unique_room_utility_period")
   @@index([room_id], map: "idx_utility_readings_room")
   @@index([recorded_date], map: "idx_utility_readings_date")
   @@index([bill_id], map: "idx_utility_readings_bill")
-  @@unique([room_id, billing_month, billing_year], map: "unique_room_utility_period")
 }
