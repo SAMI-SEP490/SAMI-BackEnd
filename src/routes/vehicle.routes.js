@@ -9,6 +9,9 @@ const {
     createVehicleRegistrationSchema,
     updateVehicleRegistrationSchema,
     cancelVehicleRegistrationSchema,
+    approveVehicleRegistrationSchema,
+    assignVehicleSlotSchema,
+    changeVehicleSlotSchema,
     validate
 } = require('../middlewares/vehicle.middleware');
 
@@ -42,6 +45,7 @@ router.delete(
 router.post(
     '/registrations/:id/approve',
     requireRole(['MANAGER', 'OWNER']),
+    validate(approveVehicleRegistrationSchema),
     vehicleRegistrationController.approveVehicleRegistration
 );
 
@@ -84,5 +88,30 @@ router.get(
     '/:id',
     vehicleRegistrationController.getVehicleById
 );
+router.post(
+    '/:id/assign-slot',
+    requireRole(['MANAGER', 'OWNER']),
+    validate(assignVehicleSlotSchema),
+    vehicleRegistrationController.assignVehicleToSlot
+);
 
+router.post(
+    '/:id/change-slot',
+    requireRole(['MANAGER', 'OWNER']),
+    validate(changeVehicleSlotSchema),
+    vehicleRegistrationController.changeVehicleSlot
+);
+
+router.post(
+    '/:id/deactivate',
+    requireRole(['MANAGER', 'OWNER']),
+    vehicleRegistrationController.deactivateVehicle
+);
+
+router.post(
+    '/:id/reactivate',
+    requireRole(['MANAGER', 'OWNER']),
+    validate(assignVehicleSlotSchema), // bắt assign slot khi reactivate
+    vehicleRegistrationController.reactivateVehicle
+);
 module.exports = router;

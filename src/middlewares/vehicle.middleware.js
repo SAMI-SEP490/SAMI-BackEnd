@@ -139,7 +139,33 @@ const cancelVehicleRegistrationSchema = Joi.object({
             'string.max': 'Cancellation reason cannot exceed 300 characters'
         })
 });
-
+const approveVehicleRegistrationSchema = Joi.object({
+    slot_id: Joi.number()
+        .integer()
+        .positive()
+        .required()
+        .messages({
+            'any.required': 'slot_id is required',
+            'number.base': 'slot_id must be a number',
+            'number.integer': 'slot_id must be an integer',
+            'number.positive': 'slot_id must be a positive number'
+        })
+});
+const assignVehicleSlotSchema = Joi.object({
+    slot_id: Joi.number()
+        .integer()
+        .positive()
+        .required()
+        .messages({
+            'any.required': 'slot_id is required'
+        })
+});
+const changeVehicleSlotSchema = Joi.object({
+    slot_id: Joi.number()
+        .integer()
+        .positive()
+        .required()
+});
 // Validation middleware function
 const validate = (schema) => {
     return (req, res, next) => {
@@ -170,5 +196,8 @@ module.exports = {
     createVehicleRegistrationSchema,
     updateVehicleRegistrationSchema,
     cancelVehicleRegistrationSchema,
+    approveVehicleRegistrationSchema,
+    assignVehicleSlotSchema,
+    changeVehicleSlotSchema,
     validate
 };
