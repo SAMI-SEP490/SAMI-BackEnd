@@ -126,6 +126,21 @@ class FloorPlanService {
       floorNum = floor;
     }
 
+    // ===== CHECK TẠO TẦNG LIÊN TỤC (KHÔNG ĐƯỢC NHẢY TẦNG) =====
+    const agg = await prisma.floor_plans.aggregate({
+      where: { building_id: buildingId },
+      _max: { floor_number: true },
+    });
+
+    const maxFloor = agg?._max?.floor_number || 0;
+    const expectedNextFloor = maxFloor + 1;
+
+    if (floorNum !== expectedNextFloor) {
+      throw new Error(
+        `Phải tạo tầng liên tục. Tầng tiếp theo phải là tầng ${expectedNextFloor}.`
+      );
+    }
+
     // Kiểm tra xem đã có floor plan cho building và floor này chưa
     const existingPlan = await prisma.floor_plans.findFirst({
       where: {
@@ -171,6 +186,13 @@ class FloorPlanService {
               email: true,
             },
           },
+        },
+      });
+      // ===== UPDATE LẠI number_of_floors CỦA BUILDING =====
+      await tx.buildings.update({
+        where: { building_id: buildingId },
+        data: {
+          number_of_floors: expectedNextFloor,
         },
       });
 
@@ -692,6 +714,18 @@ class FloorPlanService {
       throw new Error("Floor plan is already published");
     }
 
+    // ===== CHỈ ĐƯỢC XÓA TẦNG CAO NHẤT =====
+    const agg = await prisma.floor_plans.aggregate({
+      where: { building_id: floorPlan.building_id },
+      _max: { floor_number: true },
+    });
+
+    const maxFloor = agg?._max?.floor_number || 0;
+
+    if (floorPlan.floor_number !== maxFloor) {
+      throw new Error(`Chỉ được xóa tầng cao nhất (tầng ${maxFloor}).`);
+    }
+
     const published = await prisma.floor_plans.update({
       where: { plan_id: planId },
       data: {
@@ -786,8 +820,17 @@ class FloorPlanService {
       throw new Error("Cannot delete published floor plan. Unpublish it first");
     }
 
-    await prisma.floor_plans.delete({
-      where: { plan_id: planId },
+    await prisma.$transaction(async (tx) => {
+      await tx.floor_plans.delete({
+        where: { plan_id: planId },
+      });
+
+      await tx.buildings.update({
+        where: { building_id: floorPlan.building_id },
+        data: {
+          number_of_floors: maxFloor - 1,
+        },
+      });
     });
 
     return { success: true, message: "Floor plan deleted successfully" };
