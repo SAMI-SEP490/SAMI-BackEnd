@@ -1,5 +1,5 @@
 // Updated: 2025-12-29
-// Refactored: Compatible with latest schema.prisma (Manager time-based assignment & Relations)
+// Refactored: Compatible with latest schema.prisma + Status Transition Rules
 
 const prisma = require('../config/prisma');
 const s3Service = require('./s3.service');
@@ -10,30 +10,33 @@ const geminiService = require('./gemini.service');
 const tenantService = require('./tenant.service');
 const documentAIService = require('./document-ai.service');
 
+// Status Enum từ schema
+const CONTRACT_STATUS = {
+    PENDING: 'pending',
+    REJECTED: 'rejected',
+    PENDING_TRANSACTION: 'pending_transaction',
+    ACTIVE: 'active',
+    TERMINATED: 'terminated',
+    REQUESTED_TERMINATION: 'requested_termination',
+    EXPIRED: 'expired'
+};
+
 class ContractService {
     /**
      * Helper: Tính End Date từ Start Date và Duration (months)
-     * Logic: start + months = end
      */
     calculateEndDate(startDate, durationMonths) {
         if (!startDate || !durationMonths) return null;
 
         const start = new Date(startDate);
         const end = new Date(start);
-
-        // Cộng thêm số tháng
         end.setMonth(end.getMonth() + parseInt(durationMonths));
-
-        // Xử lý edge case: Ví dụ 31/1 + 1 tháng -> Javascript sẽ thành 2/3 hoặc 3/3 tùy năm
-        // Thông thường trong hợp đồng, nếu bắt đầu ngày X thì kết thúc ngày X của tháng sau
-        // Tuy nhiên logic Javascript `setMonth` tự động xử lý tràn ngày (overflow)
 
         return end;
     }
 
     /**
-     * Helper: (Legacy/AI Support) Tính duration từ start và end
-     * Dùng khi AI chỉ đọc được ngày kết thúc mà không có text "12 tháng"
+     * Helper: Tính duration từ start và end
      */
     calculateDurationFromDates(startDate, endDate) {
         const start = new Date(startDate);
@@ -43,12 +46,11 @@ class ContractService {
         months -= start.getMonth();
         months += end.getMonth();
 
-        // Điều chỉnh nếu ngày chưa tròn tháng
         if (end.getDate() < start.getDate()) {
             months--;
         }
 
-        return Math.max(1, months); // Tối thiểu 1 tháng
+        return Math.max(1, months);
     }
 
     /**
@@ -57,8 +59,13 @@ class ContractService {
     async checkContractConflict(roomId, startDate, endDate, excludeContractId = null) {
         const where = {
             room_id: roomId,
-            status: { in: ['active', 'pending', 'pending_transaction'] },
-            deleted_at: null,
+            status: {
+                in: [
+                    CONTRACT_STATUS.ACTIVE,
+                    CONTRACT_STATUS.PENDING,
+                    CONTRACT_STATUS.PENDING_TRANSACTION
+                ]
+            },
             OR: [
                 { AND: [{ start_date: { lte: startDate } }, { end_date: { gte: startDate } }] },
                 { AND: [{ start_date: { lte: endDate } }, { end_date: { gte: endDate } }] },
@@ -73,19 +80,81 @@ class ContractService {
         return await prisma.contracts.findFirst({ where });
     }
 
+    /**
+     * Helper: Kiểm tra bills chưa thanh toán
+     */
+    async hasUnpaidBills(contractId) {
+        const unpaidBills = await prisma.bills.findMany({
+            where: {
+                contract_id: contractId,
+                status: {
+                    in: ['draft', 'issued', 'partially_paid', 'overdue']
+                },
+                deleted_at: null
+            }
+        });
+
+        return unpaidBills.length > 0;
+    }
+
+    /**
+     * Helper: Validate status transition
+     */
+    validateStatusTransition(currentStatus, newStatus, reason = null) {
+        const validTransitions = {
+            [CONTRACT_STATUS.PENDING]: [
+                CONTRACT_STATUS.ACTIVE,
+                CONTRACT_STATUS.REJECTED
+            ],
+            [CONTRACT_STATUS.REJECTED]: [
+                CONTRACT_STATUS.PENDING  // Có thể tạo lại nếu sửa thông tin
+            ],
+            [CONTRACT_STATUS.ACTIVE]: [
+                CONTRACT_STATUS.REQUESTED_TERMINATION,
+                CONTRACT_STATUS.PENDING_TRANSACTION,
+                CONTRACT_STATUS.TERMINATED,
+                CONTRACT_STATUS.EXPIRED
+            ],
+            [CONTRACT_STATUS.REQUESTED_TERMINATION]: [
+                CONTRACT_STATUS.PENDING_TRANSACTION,
+                CONTRACT_STATUS.TERMINATED,
+                CONTRACT_STATUS.ACTIVE  // Từ chối yêu cầu chấm dứt
+            ],
+            [CONTRACT_STATUS.PENDING_TRANSACTION]: [
+                CONTRACT_STATUS.TERMINATED,
+                CONTRACT_STATUS.EXPIRED
+            ]
+        };
+
+        const allowedTransitions = validTransitions[currentStatus] || [];
+
+        if (!allowedTransitions.includes(newStatus)) {
+            throw new Error(
+                `Invalid status transition from ${currentStatus} to ${newStatus}`
+            );
+        }
+
+        // REJECTED bắt buộc phải có lý do
+        if (newStatus === CONTRACT_STATUS.REJECTED && !reason) {
+            throw new Error('Reason is required when rejecting contract');
+        }
+
+        return true;
+    }
+
     // ============================================
     // CREATE CONTRACT
     // ============================================
     async createContract(data, file = null, currentUser = null) {
         const {
             room_id, tenant_user_id, start_date,
-            duration_months, // <--- BẮT BUỘC
+            duration_months,
             rent_amount, deposit_amount, penalty_rate,
             payment_cycle_months,
-            status, note
+            note
         } = data;
 
-        // 1. Validation cơ bản (Bỏ check end_date, thêm check duration_months)
+        // 1. Validation
         if (!room_id || !tenant_user_id || !start_date || !duration_months || !rent_amount) {
             throw new Error('Missing required fields: room_id, tenant_user_id, start_date, duration_months, rent_amount');
         }
@@ -97,11 +166,9 @@ class ContractService {
 
         if (duration < 1) throw new Error('Duration must be at least 1 month');
 
-        // 2. TÍNH TOÁN END DATE
+        // 2. Tính End Date
         const endDate = this.calculateEndDate(startDate, duration);
-
-        // Logic check ngày (phòng hờ)
-        if (startDate >= endDate) throw new Error('Calculated end date is invalid (must be after start date)');
+        if (startDate >= endDate) throw new Error('Calculated end date is invalid');
 
         // 3. Check Room & Permission
         const room = await prisma.rooms.findUnique({
@@ -113,7 +180,7 @@ class ContractService {
 
         if (currentUser && currentUser.role === 'MANAGER') {
             const hasAccess = await this.checkManagerBuildingAccess(currentUser.user_id, room.building_id);
-            if (!hasAccess) throw new Error('You do not have permission to create contracts in this building at this time');
+            if (!hasAccess) throw new Error('You do not have permission to create contracts in this building');
         }
 
         // 4. Check Tenant
@@ -123,7 +190,7 @@ class ContractService {
         // 5. Check Conflict
         const conflictingContract = await this.checkContractConflict(roomId, startDate, endDate);
         if (conflictingContract) {
-            throw new Error(`Room conflict: Existing contract from ${conflictingContract.start_date.toISOString().split('T')[0]} to ${conflictingContract.end_date.toISOString().split('T')[0]}`);
+            throw new Error(`Room conflict: Existing contract #${conflictingContract.contract_id}`);
         }
 
         // 6. Upload File
@@ -138,22 +205,25 @@ class ContractService {
             };
         }
 
-        const contractStatus = status || 'pending';
-
-        // 7. TRANSACTION
+        // 7. Create Contract - Luôn bắt đầu với PENDING
         const result = await prisma.$transaction(async (tx) => {
+            // Generate contract_number
+            const count = await tx.contracts.count();
+            const contract_number = `CT${Date.now()}-${count + 1}`;
+
             const newContract = await tx.contracts.create({
                 data: {
+                    contract_number,
                     room_id: roomId,
                     tenant_user_id: tenantUserId,
                     start_date: startDate,
-                    end_date: endDate,      // <--- Calculated
-                    duration_months: duration, // <--- Source of truth
+                    end_date: endDate,
+                    duration_months: duration,
                     rent_amount: parseFloat(rent_amount),
                     deposit_amount: deposit_amount ? parseFloat(deposit_amount) : 0,
                     penalty_rate: penalty_rate ? parseFloat(penalty_rate) : null,
                     payment_cycle_months: payment_cycle_months ? parseInt(payment_cycle_months) : 1,
-                    status: contractStatus,
+                    status: CONTRACT_STATUS.PENDING,  // Luôn bắt đầu PENDING
                     note,
                     ...fileData,
                     created_at: new Date(),
@@ -165,29 +235,6 @@ class ContractService {
                 }
             });
 
-            if (newContract.status === 'active') {
-                await tx.rooms.update({
-                    where: { room_id: roomId },
-                    data: { current_contract_id: newContract.contract_id, status: 'occupied' }
-                });
-
-                await tx.room_tenants.updateMany({
-                    where: { room_id: roomId, tenant_user_id: tenantUserId, is_current: true },
-                    data: { is_current: false, moved_out_at: new Date() }
-                });
-
-                await tx.room_tenants.create({
-                    data: {
-                        room_id: roomId,
-                        tenant_user_id: tenantUserId,
-                        tenant_type: 'primary',
-                        moved_in_at: startDate,
-                        is_current: true,
-                        note: `Contract #${newContract.contract_id}`
-                    }
-                });
-            }
-
             return newContract;
         });
 
@@ -195,7 +242,511 @@ class ContractService {
     }
 
     // ============================================
-    // GET CONTRACT BY ID
+    // CONTRACT APPROVAL (Tenant Accept/Reject)
+    // ============================================
+    async approveContract(contractId, action, reason = null, currentUser = null) {
+
+
+        const contract = await prisma.contracts.findUnique({
+            where: { contract_id: contractId },
+            include: {
+                room_history: { include: { building: true } },
+                tenant: { include: { user: true } }
+            }
+        });
+
+        if (!contract) throw new Error('Contract not found');
+
+        // Chỉ tenant mới được accept/reject
+        if (currentUser && currentUser.role === 'TENANT') {
+            if (contract.tenant_user_id !== currentUser.user_id) {
+                throw new Error('You do not have permission to approve this contract');
+            }
+        }
+
+        // Chỉ contract PENDING mới được accept/reject
+        if (contract.status !== CONTRACT_STATUS.PENDING) {
+            throw new Error('Only pending contracts can be accepted or rejected');
+        }
+
+        const newStatus = action === 'accept'
+            ? CONTRACT_STATUS.ACTIVE
+            : CONTRACT_STATUS.REJECTED;
+
+        // Validate transition
+        this.validateStatusTransition(contract.status, newStatus, reason);
+
+        const result = await prisma.$transaction(async (tx) => {
+            // Update contract
+            const updatedContract = await tx.contracts.update({
+                where: { contract_id: contractId },
+                data: {
+                    status: newStatus,
+                    tenant_accepted_at: action === 'accept' ? new Date() : null,
+                    note: reason
+                        ? `${contract.note || ''}\n[${action.toUpperCase()}] ${reason}`.trim()
+                        : contract.note,
+                    updated_at: new Date()
+                },
+                include: {
+                    room_history: { include: { building: true } },
+                    tenant: { include: { user: true } }
+                }
+            });
+
+            // Nếu ACTIVE, cập nhật room và room_tenants
+            if (newStatus === CONTRACT_STATUS.ACTIVE) {
+                await tx.rooms.update({
+                    where: { room_id: contract.room_id },
+                    data: {
+                        current_contract_id: contractId,
+                        status: 'occupied'
+                    }
+                });
+
+                // Close previous tenant history
+                await tx.room_tenants.updateMany({
+                    where: {
+                        room_id: contract.room_id,
+                        tenant_user_id: contract.tenant_user_id,
+                        is_current: true
+                    },
+                    data: {
+                        is_current: false,
+                        moved_out_at: new Date()
+                    }
+                });
+
+                // Create new tenant history
+                await tx.room_tenants.create({
+                    data: {
+                        room_id: contract.room_id,
+                        tenant_user_id: contract.tenant_user_id,
+                        tenant_type: 'primary',
+                        moved_in_at: contract.start_date,
+                        is_current: true,
+                        note: `Contract #${contractId} activated`
+                    }
+                });
+            }
+
+            return updatedContract;
+        });
+
+        return this.formatContractResponse(result);
+    }
+
+    // ============================================
+    // UPDATE CONTRACT
+    // ============================================
+    async updateContract(contractId, data, file = null, currentUser = null) {
+        const existingContract = await prisma.contracts.findUnique({
+            where: { contract_id: contractId },
+            include: { room_history: { include: { building: true } } }
+        });
+
+        if (!existingContract) throw new Error('Contract not found');
+        if (currentUser) await this.checkContractPermission(existingContract, currentUser);
+
+        // Chỉ cho phép update khi PENDING hoặc REJECTED
+        if (![CONTRACT_STATUS.PENDING, CONTRACT_STATUS.REJECTED].includes(existingContract.status)) {
+            throw new Error('Only pending or rejected contracts can be updated');
+        }
+
+        const {
+            room_id, tenant_user_id, start_date,
+            duration_months,
+            rent_amount, deposit_amount, penalty_rate,
+            payment_cycle_months,
+            note
+        } = data;
+
+        // Prepare data for calculation
+        const targetRoomId = room_id ? parseInt(room_id) : existingContract.room_id;
+        const targetStartDate = start_date ? new Date(start_date) : existingContract.start_date;
+        const targetDuration = duration_months ? parseInt(duration_months) : existingContract.duration_months;
+        const targetEndDate = this.calculateEndDate(targetStartDate, targetDuration);
+
+        // Check conflict
+        const conflictingContract = await this.checkContractConflict(
+            targetRoomId,
+            targetStartDate,
+            targetEndDate,
+            contractId
+        );
+
+        if (conflictingContract) {
+            throw new Error(`Room conflict with contract #${conflictingContract.contract_id}`);
+        }
+
+        const updateData = { updated_at: new Date() };
+
+        if (room_id) updateData.room_id = parseInt(room_id);
+        if (tenant_user_id) updateData.tenant_user_id = parseInt(tenant_user_id);
+
+        if (start_date || duration_months) {
+            updateData.start_date = targetStartDate;
+            updateData.duration_months = targetDuration;
+            updateData.end_date = targetEndDate;
+        }
+
+        if (rent_amount !== undefined) updateData.rent_amount = parseFloat(rent_amount);
+        if (deposit_amount !== undefined) updateData.deposit_amount = parseFloat(deposit_amount);
+        if (penalty_rate !== undefined) updateData.penalty_rate = penalty_rate ? parseFloat(penalty_rate) : null;
+        if (payment_cycle_months !== undefined) updateData.payment_cycle_months = parseInt(payment_cycle_months);
+        if (note !== undefined) updateData.note = note;
+
+        // Nếu đang REJECTED và update, chuyển về PENDING để tenant xem lại
+        if (existingContract.status === CONTRACT_STATUS.REJECTED) {
+            updateData.status = CONTRACT_STATUS.PENDING;
+            updateData.tenant_accepted_at = null;
+        }
+
+        if (file) {
+            if (existingContract.s3_key) {
+                await s3Service.deleteFile(existingContract.s3_key);
+            }
+            const uploadResult = await s3Service.uploadFile(file.buffer, file.originalname, 'contracts');
+            updateData.s3_key = uploadResult.s3_key;
+            updateData.file_name = uploadResult.file_name;
+            updateData.checksum = uploadResult.checksum;
+            updateData.uploaded_at = uploadResult.uploaded_at;
+        }
+
+        const updatedContract = await prisma.contracts.update({
+            where: { contract_id: contractId },
+            data: updateData,
+            include: {
+                room_history: { include: { building: true } },
+                tenant: { include: { user: true } }
+            }
+        });
+
+        return this.formatContractResponse(updatedContract);
+    }
+
+    // ============================================
+    // REQUEST TERMINATION (Only Manager/Owner)
+    // ============================================
+    async requestTermination(contractId, reason, currentUser = null) {
+        const contract = await prisma.contracts.findUnique({
+            where: { contract_id: contractId },
+            include: { room_history: { include: { building: true } } }
+        });
+
+        if (!contract) throw new Error('Contract not found');
+
+        // 1. Check Permission: Chỉ MANAGER hoặc OWNER mới được gửi request
+        if (currentUser) {
+            if (currentUser.role === 'TENANT') {
+                throw new Error('Tenants cannot initiate termination request. Please contact your manager.');
+            }
+            if (currentUser.role === 'MANAGER') {
+                const hasAccess = await this.checkManagerBuildingAccess(
+                    currentUser.user_id,
+                    contract.room_history.building_id
+                );
+                if (!hasAccess) throw new Error('You do not have permission to manage this contract');
+            }
+        }
+
+        // Chỉ ACTIVE mới request termination
+        if (contract.status !== CONTRACT_STATUS.ACTIVE) {
+            throw new Error('Only active contracts can request termination');
+        }
+
+        if (!reason) {
+            throw new Error('Reason is required for termination request');
+        }
+
+        const updatedContract = await prisma.contracts.update({
+            where: { contract_id: contractId },
+            data: {
+                status: CONTRACT_STATUS.REQUESTED_TERMINATION,
+                // Ghi chú rõ ai là người request để hiện lên UI
+                note: `${contract.note || ''}\n[REQ-TERM] Request by Manager: ${reason}`.trim(),
+                updated_at: new Date()
+            },
+            include: {
+                room_history: { include: { building: true } },
+                tenant: { include: { user: true } }
+            }
+        });
+
+        return this.formatContractResponse(updatedContract);
+    }
+
+    // ============================================
+    // APPROVE/REJECT TERMINATION (Only Tenant)
+    // ============================================
+    async handleTerminationRequest(contractId, action, currentUser = null) {
+        // action: 'approve' | 'reject'
+
+        const contract = await prisma.contracts.findUnique({
+            where: { contract_id: contractId },
+            include: { room_history: { include: { building: true } } }
+        });
+
+        if (!contract) throw new Error('Contract not found');
+
+        // 1. Check Permission: Chỉ TENANT (chính chủ) mới được duyệt
+        if (currentUser) {
+            if (currentUser.role === 'MANAGER' || currentUser.role === 'OWNER') {
+                throw new Error('Managers cannot approve their own termination request. Waiting for Tenant approval.');
+            }
+            if (currentUser.role === 'TENANT') {
+                // Phải đúng là tenant của hợp đồng này
+                if (contract.tenant_user_id !== currentUser.user_id) {
+                    throw new Error('You do not have permission to approve this contract');
+                }
+            }
+        }
+
+        if (contract.status !== CONTRACT_STATUS.REQUESTED_TERMINATION) {
+            throw new Error('Contract is not in requested termination status');
+        }
+
+        if (action === 'reject') {
+            // Tenant từ chối hủy -> Về ACTIVE
+            const updated = await prisma.contracts.update({
+                where: { contract_id: contractId },
+                data: {
+                    status: CONTRACT_STATUS.ACTIVE,
+                    note: `${contract.note || ''}\n[REQ-TERM] Rejected by Tenant`.trim(),
+                    updated_at: new Date()
+                },
+                include: {
+                    room_history: { include: { building: true } },
+                    tenant: { include: { user: true } }
+                }
+            });
+            return this.formatContractResponse(updated);
+        }
+
+        // Tenant đồng ý -> Check bills
+        const hasUnpaid = await this.hasUnpaidBills(contractId);
+
+        const newStatus = hasUnpaid
+            ? CONTRACT_STATUS.PENDING_TRANSACTION
+            : CONTRACT_STATUS.TERMINATED;
+
+        const result = await prisma.$transaction(async (tx) => {
+            const updated = await tx.contracts.update({
+                where: { contract_id: contractId },
+                data: {
+                    status: newStatus,
+                    note: `${contract.note || ''}\n[REQ-TERM] Approved by Tenant`.trim(),
+                    updated_at: new Date()
+                },
+                include: {
+                    room_history: { include: { building: true } },
+                    tenant: { include: { user: true } }
+                }
+            });
+
+            // Nếu sạch nợ -> Clear room luôn
+            if (newStatus === CONTRACT_STATUS.TERMINATED) {
+                await this._clearRoomAndTenant(tx, contract.room_id, contract.tenant_user_id, contractId);
+            }
+
+            return updated;
+        });
+
+        return this.formatContractResponse(result);
+    }
+    // ============================================
+    // COMPLETE PENDING TRANSACTION
+    // ============================================
+    async completePendingTransaction(contractId, finalStatus, currentUser = null) {
+        // finalStatus: 'terminated' | 'expired'
+
+        const contract = await prisma.contracts.findUnique({
+            where: { contract_id: contractId },
+            include: { room_history: { include: { building: true } } }
+        });
+
+        if (!contract) throw new Error('Contract not found');
+        if (currentUser) await this.checkContractPermission(contract, currentUser);
+
+        if (contract.status !== CONTRACT_STATUS.PENDING_TRANSACTION) {
+            throw new Error('Contract is not in pending transaction status');
+        }
+
+        // Validate finalStatus
+        if (![CONTRACT_STATUS.TERMINATED, CONTRACT_STATUS.EXPIRED].includes(finalStatus)) {
+            throw new Error('Invalid final status');
+        }
+
+        // Check bills đã thanh toán hết
+        const hasUnpaid = await this.hasUnpaidBills(contractId);
+        if (hasUnpaid) {
+            throw new Error('Cannot complete: There are still unpaid bills');
+        }
+
+        const result = await prisma.$transaction(async (tx) => {
+            const updated = await tx.contracts.update({
+                where: { contract_id: contractId },
+                data: {
+                    status: finalStatus,
+                    updated_at: new Date()
+                },
+                include: {
+                    room_history: { include: { building: true } },
+                    tenant: { include: { user: true } }
+                }
+            });
+
+            await this._clearRoomAndTenant(tx, contract.room_id, contract.tenant_user_id, contractId);
+
+            return updated;
+        });
+
+        return this.formatContractResponse(result);
+    }
+
+    // ============================================
+    // HARD DELETE CONTRACT
+    // ============================================
+    async hardDeleteContract(contractId, currentUser = null) {
+        const contract = await prisma.contracts.findUnique({
+            where: { contract_id: contractId }
+        });
+
+        if (!contract) throw new Error('Contract not found');
+
+        // Chỉ OWNER được delete
+        if (currentUser && currentUser.role !== 'OWNER') {
+            throw new Error('Only OWNER can permanently delete contracts');
+        }
+
+        // Chỉ xóa được EXPIRED hoặc TERMINATED
+        if (![CONTRACT_STATUS.EXPIRED, CONTRACT_STATUS.TERMINATED].includes(contract.status)) {
+            throw new Error('Only expired or terminated contracts can be deleted');
+        }
+
+        await prisma.$transaction(async (tx) => {
+            // Check và clear room nếu cần
+            const room = await tx.rooms.findUnique({
+                where: { room_id: contract.room_id }
+            });
+
+            if (room && room.current_contract_id === contractId) {
+                await tx.rooms.update({
+                    where: { room_id: contract.room_id },
+                    data: { current_contract_id: null, status: 'available' }
+                });
+            }
+
+            // Xóa room_tenants
+            await tx.room_tenants.deleteMany({
+                where: {
+                    room_id: contract.room_id,
+                    tenant_user_id: contract.tenant_user_id
+                }
+            });
+
+            // Delete contract
+            await tx.contracts.delete({
+                where: { contract_id: contractId }
+            });
+        });
+
+        // Delete S3 file
+        if (contract.s3_key) {
+            try {
+                await s3Service.deleteFile(contract.s3_key);
+            } catch (error) {
+                console.error('Failed to delete S3 file:', error);
+            }
+        }
+
+        return { success: true, message: 'Contract permanently deleted' };
+    }
+
+    // ============================================
+    // AUTO-UPDATE EXPIRED CONTRACTS
+    // ============================================
+    async autoUpdateExpiredStatus(contract) {
+        if (!contract || contract.status !== CONTRACT_STATUS.ACTIVE) return;
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const endDate = new Date(contract.end_date);
+        endDate.setHours(0, 0, 0, 0);
+
+        if (endDate < today) {
+            // Kiểm tra ngày thu tiền điện nước
+            const building = await prisma.buildings.findUnique({
+                where: { building_id: contract.room_history?.building_id },
+                select: { bill_due_day: true }
+            });
+
+            const utilityCollectionDate = building?.bill_due_day || 5; // Default ngày 5
+            const currentDay = today.getDate();
+
+            // Nếu contract kết thúc trước ngày thu tiền -> PENDING_TRANSACTION
+            // để chờ chốt điện nước
+            const hasUnpaid = await this.hasUnpaidBills(contract.contract_id);
+
+            const newStatus = hasUnpaid || currentDay < utilityCollectionDate
+                ? CONTRACT_STATUS.PENDING_TRANSACTION
+                : CONTRACT_STATUS.EXPIRED;
+
+            await prisma.$transaction(async (tx) => {
+                await tx.contracts.update({
+                    where: { contract_id: contract.contract_id },
+                    data: {
+                        status: newStatus,
+                        updated_at: new Date()
+                    }
+                });
+
+                if (newStatus === CONTRACT_STATUS.EXPIRED) {
+                    await this._clearRoomAndTenant(
+                        tx,
+                        contract.room_id,
+                        contract.tenant_user_id,
+                        contract.contract_id
+                    );
+                }
+            });
+
+            console.log(`✓ Contract ${contract.contract_id} auto-updated to ${newStatus}`);
+        }
+    }
+
+    async autoUpdateExpiredContracts() {
+        try {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            const expiredContracts = await prisma.contracts.findMany({
+                where: {
+                    end_date: { lt: today },
+                    status: CONTRACT_STATUS.ACTIVE
+                },
+                include: {
+                    room_history: { include: { building: true } }
+                }
+            });
+
+            if (expiredContracts.length === 0) return 0;
+
+            let count = 0;
+            for (const contract of expiredContracts) {
+                await this.autoUpdateExpiredStatus(contract);
+                count++;
+            }
+
+            return count;
+        } catch (error) {
+            console.error('Error auto-updating expired contracts:', error);
+            return 0;
+        }
+    }
+
+    // ============================================
+    // GET METHODS
     // ============================================
     async getContractById(contractId, currentUser) {
         const contract = await prisma.contracts.findUnique({
@@ -207,9 +758,7 @@ class ContractService {
             }
         });
 
-        if (!contract || contract.deleted_at) {
-            throw new Error('Contract not found');
-        }
+        if (!contract) throw new Error('Contract not found');
 
         await this.autoUpdateExpiredStatus(contract);
         await this.checkContractPermission(contract, currentUser);
@@ -217,9 +766,6 @@ class ContractService {
         return this.formatContractResponse(contract);
     }
 
-    // ============================================
-    // GET CONTRACTS (LIST)
-    // ============================================
     async getContracts(filters = {}, currentUser) {
         let {
             room_id, tenant_user_id, status, page = 1, limit = 20,
@@ -229,9 +775,9 @@ class ContractService {
         page = parseInt(page);
         limit = parseInt(limit);
         const skip = (page - 1) * limit;
-        const where = { deleted_at: null };
+        const where = {};
 
-        // ROLE FILTER
+        // Role filter
         if (currentUser.role === 'TENANT') {
             where.tenant_user_id = currentUser.user_id;
         } else if (currentUser.role === 'MANAGER') {
@@ -253,7 +799,7 @@ class ContractService {
             where.room_history = { building_id: { in: buildingIds } };
         }
 
-        // OTHER FILTERS
+        // Other filters
         if (room_id) where.room_id = parseInt(room_id);
         if (tenant_user_id && currentUser.role !== 'TENANT') {
             where.tenant_user_id = parseInt(tenant_user_id);
@@ -283,14 +829,26 @@ class ContractService {
                 include: {
                     room_history: {
                         select: {
-                            room_id: true, room_number: true, building_id: true,
-                            building: { select: { building_id: true, name: true } }
+                            room_id: true,
+                            room_number: true,
+                            building_id: true,
+                            building: {
+                                select: {
+                                    building_id: true,
+                                    name: true
+                                }
+                            }
                         }
                     },
                     tenant: {
                         include: {
                             user: {
-                                select: { user_id: true, full_name: true, email: true, phone: true }
+                                select: {
+                                    user_id: true,
+                                    full_name: true,
+                                    email: true,
+                                    phone: true
+                                }
                             }
                         }
                     }
@@ -306,224 +864,6 @@ class ContractService {
             data: contracts.map(c => this.formatContractResponse(c)),
             pagination: { total, page, limit, pages: Math.ceil(total / limit) }
         };
-    }
-
-
-    // ============================================
-    // DELETE CONTRACT (SOFT)
-    // ============================================
-    async deleteContract(contractId, currentUser = null) {
-        const contract = await prisma.contracts.findUnique({
-            where: { contract_id: contractId },
-            include: { room_history: { include: { building: true } } }
-        });
-
-        if (!contract || contract.deleted_at) throw new Error('Contract not found');
-        if (currentUser) await this.checkContractPermission(contract, currentUser);
-
-        await prisma.$transaction(async (tx) => {
-            // Soft delete contract
-            await tx.contracts.update({
-                where: { contract_id: contractId },
-                data: { deleted_at: new Date() }
-            });
-
-            // Clean up room if this was current
-            const room = await tx.rooms.findUnique({ where: { room_id: contract.room_id } });
-            if (room && room.current_contract_id === contractId) {
-                await tx.rooms.update({
-                    where: { room_id: contract.room_id },
-                    data: { current_contract_id: null, status: 'available' }
-                });
-            }
-
-            // Clean up tenant history
-            await tx.room_tenants.updateMany({
-                where: { room_id: contract.room_id, tenant_user_id: contract.tenant_user_id, is_current: true },
-                data: { is_current: false, moved_out_at: new Date() }
-            });
-        });
-
-        return { success: true, message: 'Contract deleted successfully' };
-    }
-
-    // ============================================
-    // HARD DELETE CONTRACT
-    // ============================================
-    async hardDeleteContract(contractId, currentUser = null) {
-        const contract = await prisma.contracts.findUnique({
-            where: { contract_id: contractId }
-        });
-
-        if (!contract) {
-            throw new Error('Contract not found');
-        }
-
-        // CHECK PERMISSION: Chỉ OWNER được hard delete
-        if (currentUser && currentUser.role !== 'OWNER') {
-            throw new Error('Only OWNER can permanently delete contracts');
-        }
-
-        await prisma.$transaction(async (tx) => {
-            // 1. Kiểm tra và Clear Room nếu hợp đồng này đang Active tại phòng đó
-            const room = await tx.rooms.findUnique({
-                where: { room_id: contract.room_id }
-            });
-
-            if (room && room.current_contract_id === contractId) {
-                await tx.rooms.update({
-                    where: { room_id: contract.room_id },
-                    data: { current_contract_id: null, status: 'available' }
-                });
-            }
-
-            // 2. Xóa sạch lịch sử room_tenants
-            await tx.room_tenants.deleteMany({
-                where: {
-                    room_id: contract.room_id,
-                    tenant_user_id: contract.tenant_user_id,
-                }
-            });
-
-            // 3. Delete from database
-            await tx.contracts.delete({
-                where: { contract_id: contractId }
-            });
-        });
-
-        // 4. Delete file from S3
-        if (contract.s3_key) {
-            try {
-                await s3Service.deleteFile(contract.s3_key);
-            } catch (error) {
-                console.error('Failed to delete S3 file:', error);
-            }
-        }
-
-        return { success: true, message: 'Contract permanently deleted' };
-    }
-
-    // ============================================
-    // RESTORE CONTRACT
-    // ============================================
-    async restoreContract(contractId, currentUser = null) {
-        const contract = await prisma.contracts.findUnique({
-            where: { contract_id: contractId },
-            include: { room_history: { include: { building: true } } }
-        });
-
-        if (!contract) throw new Error('Contract not found');
-        if (!contract.deleted_at) throw new Error('Contract is not deleted');
-
-        // Check Permission (Including time-based manager access)
-        if (currentUser && currentUser.role === 'MANAGER') {
-            const hasAccess = await this.checkManagerBuildingAccess(currentUser.user_id, contract.room_history.building_id);
-            if (!hasAccess) throw new Error('No permission to restore contracts in this building at this time');
-        }
-
-        // Check conflict before restore
-        if (['active', 'pending', 'pending_transaction'].includes(contract.status)) {
-            const conflict = await this.checkContractConflict(contract.room_id, contract.start_date, contract.end_date, contractId);
-            if (conflict) {
-                throw new Error(`Cannot restore. Conflict with contract #${conflict.contract_id}`);
-            }
-        }
-
-        const restored = await prisma.$transaction(async (tx) => {
-            const restoredContract = await tx.contracts.update({
-                where: { contract_id: contractId },
-                data: { deleted_at: null },
-                include: {
-                    room_history: { include: { building: true } },
-                    tenant: { include: { user: true } }
-                }
-            });
-
-            // Nếu restore lại một hợp đồng Active, cần set lại Room
-            if (restoredContract.status === 'active') {
-                await tx.rooms.update({
-                    where: { room_id: restoredContract.room_id },
-                    data: {
-                        current_contract_id: restoredContract.contract_id,
-                        status: 'occupied'
-                    }
-                });
-
-                // Mở lại room_tenants nếu ngày end chưa qua
-                if (new Date(restoredContract.end_date) > new Date()) {
-                    await tx.room_tenants.create({
-                        data: {
-                            room_id: restoredContract.room_id,
-                            tenant_user_id: restoredContract.tenant_user_id,
-                            tenant_type: 'primary',
-                            moved_in_at: restoredContract.start_date,
-                            is_current: true,
-                            note: 'Restored contract'
-                        }
-                    });
-                }
-            }
-
-            return restoredContract;
-        });
-
-        return this.formatContractResponse(restored);
-    }
-
-    // ============================================
-    // TERMINATE CONTRACT
-    // ============================================
-    async terminateContract(contractId, reason = null, currentUser = null) {
-        const contract = await prisma.contracts.findUnique({
-            where: { contract_id: contractId },
-            include: { room_history: { include: { building: true } } }
-        });
-
-        if (!contract || contract.deleted_at) throw new Error('Contract not found');
-        if (contract.status === 'terminated') throw new Error('Contract is already terminated');
-        if (currentUser) await this.checkContractPermission(contract, currentUser);
-
-        const result = await prisma.$transaction(async (tx) => {
-            // 1. Update Contract
-            const terminated = await tx.contracts.update({
-                where: { contract_id: contractId },
-                data: {
-                    status: 'terminated',
-                    note: reason ? `${contract.note || ''}\nTermination reason: ${reason}` : contract.note,
-                    updated_at: new Date()
-                },
-                include: {
-                    room_history: { include: { building: true } },
-                    tenant: { include: { user: true } }
-                }
-            });
-
-            // 2. Clear Room (Safe Check)
-            const room = await tx.rooms.findUnique({ where: { room_id: contract.room_id } });
-            if (room && room.current_contract_id === contractId) {
-                await tx.rooms.update({
-                    where: { room_id: contract.room_id },
-                    data: { current_contract_id: null, status: 'available' }
-                });
-            }
-
-            // 3. Update Room Tenants (Close history)
-            await tx.room_tenants.updateMany({
-                where: {
-                    room_id: contract.room_id,
-                    tenant_user_id: contract.tenant_user_id,
-                    is_current: true
-                },
-                data: {
-                    is_current: false,
-                    moved_out_at: new Date()
-                }
-            });
-
-            return terminated;
-        });
-
-        return this.formatContractResponse(result);
     }
 
     // ============================================
@@ -826,70 +1166,6 @@ class ContractService {
         }
     }
 
-    // ============================================
-    // AUTO-UPDATE EXPIRED CONTRACTS
-    // ============================================
-
-    async autoUpdateExpiredStatus(contract) {
-        if (!contract || contract.deleted_at || (contract.status !== 'active' && contract.status !== 'pending')) return;
-
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const endDate = new Date(contract.end_date);
-        endDate.setHours(0, 0, 0, 0);
-
-        if (endDate < today) {
-            // TRANSACTION: Expire Contract + Clear Room + Close Tenant History
-            await prisma.$transaction(async (tx) => {
-                await tx.contracts.update({
-                    where: { contract_id: contract.contract_id },
-                    data: { status: 'expired', updated_at: new Date() }
-                });
-
-                const room = await tx.rooms.findUnique({ where: { room_id: contract.room_id } });
-                if (room && room.current_contract_id === contract.contract_id) {
-                    await tx.rooms.update({
-                        where: { room_id: contract.room_id },
-                        data: { current_contract_id: null, status: 'available' }
-                    });
-                }
-
-                await tx.room_tenants.updateMany({
-                    where: { room_id: contract.room_id, tenant_user_id: contract.tenant_user_id, is_current: true },
-                    data: { is_current: false, moved_out_at: new Date() }
-                });
-            });
-            console.log(`✓ Contract ${contract.contract_id} auto-updated to expired`);
-        }
-    }
-
-    async autoUpdateExpiredContracts() {
-        try {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-
-            const expiredContracts = await prisma.contracts.findMany({
-                where: {
-                    end_date: { lt: today },
-                    status: { in: ['active', 'pending'] },
-                    deleted_at: null
-                }
-            });
-
-            if (expiredContracts.length === 0) return 0;
-
-            let count = 0;
-            for (const contract of expiredContracts) {
-                await this.autoUpdateExpiredStatus(contract);
-                count++;
-            }
-
-            return count;
-        } catch (error) {
-            console.error('Error auto-updating expired contracts:', error);
-            return 0;
-        }
-    }
 
     // ============================================
     // PRIVATE HELPERS
@@ -923,6 +1199,37 @@ class ContractService {
 
         if (!contractData.rent_amount || contractData.rent_amount <= 0) errors.push('Invalid rent_amount');
         return errors;
+    }
+
+    /**
+     * Private: Clear room and close tenant history
+     */
+    async _clearRoomAndTenant(tx, roomId, tenantUserId, contractId) {
+        // 1. Cập nhật Room -> Available
+        // Chỉ update nếu contract hiện tại của room đúng là contract đang xử lý
+        const room = await tx.rooms.findUnique({ where: { room_id: roomId } });
+        if (room && room.current_contract_id === contractId) {
+            await tx.rooms.update({
+                where: { room_id: roomId },
+                data: {
+                    current_contract_id: null,
+                    status: 'available'
+                }
+            });
+        }
+
+        // 2. Đóng lịch sử thuê (Room Tenants)
+        await tx.room_tenants.updateMany({
+            where: {
+                room_id: roomId,
+                tenant_user_id: tenantUserId,
+                is_current: true
+            },
+            data: {
+                is_current: false,
+                moved_out_at: new Date()
+            }
+        });
     }
     // ============================================
     // FORMAT RESPONSE
