@@ -12,3 +12,7 @@ gcloud-service-key.json
 
 # Firebase JSON private key
 *firebase-adminsdk*.json
+
+# prisma
+generated
+prisma/migrations
