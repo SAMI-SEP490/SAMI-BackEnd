@@ -237,33 +237,6 @@ class ContractController {
         }
     }
 
-    // 12. Upload ảnh và chuyển thành PDF
-    async uploadContractImages(req, res, next) {
-        try {
-            const { id } = req.params;
-
-            if (!req.files || req.files.length === 0) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Không có ảnh nào được upload!'
-                });
-            }
-
-            const result = await contractService.convertAndUpload(
-                parseInt(id),
-                req.files,
-                req.user
-            );
-
-            res.json({
-                success: true,
-                message: 'Images converted to PDF and uploaded successfully',
-                data: result,
-            });
-        } catch (err) {
-            next(err);
-        }
-    }
 
     // 13. AI Processing
     async processContractWithAI(req, res, next) {

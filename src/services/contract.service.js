@@ -142,21 +142,41 @@ class ContractService {
         return true;
     }
 
+    async _convertImageToPdf(imageBuffer) {
+        return new Promise((resolve, reject) => {
+            try {
+                const doc = new PDFDocument({ autoFirstPage: false });
+                const chunks = [];
+
+                doc.on('data', chunk => chunks.push(chunk));
+                doc.on('end', () => resolve(Buffer.concat(chunks)));
+                doc.on('error', err => reject(err));
+
+                // Load image to get dimensions
+                const img = doc.openImage(imageBuffer);
+                doc.addPage({ size: [img.width, img.height] });
+                doc.image(imageBuffer, 0, 0);
+
+                doc.end();
+            } catch (error) {
+                reject(error);
+            }
+        });
+    }
+
     // ============================================
-    // CREATE CONTRACT
+    // CREATE CONTRACT (Logic mới xử lý file)
     // ============================================
     async createContract(data, file = null, currentUser = null) {
         const {
             room_id, tenant_user_id, start_date,
-            duration_months,
-            rent_amount, deposit_amount, penalty_rate,
-            payment_cycle_months,
-            note
+            duration_months, rent_amount, deposit_amount, penalty_rate,
+            payment_cycle_months, note
         } = data;
 
         // 1. Validation
         if (!room_id || !tenant_user_id || !start_date || !duration_months || !rent_amount) {
-            throw new Error('Missing required fields: room_id, tenant_user_id, start_date, duration_months, rent_amount');
+            throw new Error('Missing required fields');
         }
 
         const roomId = parseInt(room_id);
@@ -165,38 +185,39 @@ class ContractService {
         const duration = parseInt(duration_months);
 
         if (duration < 1) throw new Error('Duration must be at least 1 month');
-
-        // 2. Tính End Date
         const endDate = this.calculateEndDate(startDate, duration);
         if (startDate >= endDate) throw new Error('Calculated end date is invalid');
 
-        // 3. Check Room & Permission
-        const room = await prisma.rooms.findUnique({
-            where: { room_id: roomId },
-            include: { building: true }
-        });
-
-        if (!room || !room.is_active) throw new Error('Room not found or is inactive');
-
+        // Check Permissions & Conflict (Giữ nguyên logic cũ)
+        const room = await prisma.rooms.findUnique({ where: { room_id: roomId }, include: { building: true } });
+        if (!room || !room.is_active) throw new Error('Room not found or inactive');
         if (currentUser && currentUser.role === 'MANAGER') {
             const hasAccess = await this.checkManagerBuildingAccess(currentUser.user_id, room.building_id);
-            if (!hasAccess) throw new Error('You do not have permission to create contracts in this building');
+            if (!hasAccess) throw new Error('No permission for this building');
         }
-
-        // 4. Check Tenant
         const tenant = await prisma.tenants.findUnique({ where: { user_id: tenantUserId } });
         if (!tenant) throw new Error('Tenant not found');
-
-        // 5. Check Conflict
         const conflictingContract = await this.checkContractConflict(roomId, startDate, endDate);
-        if (conflictingContract) {
-            throw new Error(`Room conflict: Existing contract #${conflictingContract.contract_id}`);
-        }
+        if (conflictingContract) throw new Error(`Room conflict: Contract #${conflictingContract.contract_id}`);
 
-        // 6. Upload File
+        // --- FILE PROCESSING (UPDATED) ---
         let fileData = {};
         if (file) {
-            const uploadResult = await s3Service.uploadFile(file.buffer, file.originalname, 'contracts');
+            let bufferToUpload = file.buffer;
+            let originalName = file.originalname;
+
+            // Nếu là ảnh -> Convert sang PDF
+            if (file.mimetype.startsWith('image/')) {
+                try {
+                    bufferToUpload = await this._convertImageToPdf(file.buffer);
+                    // Đổi đuôi file thành .pdf
+                    originalName = originalName.replace(/\.[^/.]+$/, "") + ".pdf";
+                } catch (err) {
+                    throw new Error('Failed to convert image to PDF: ' + err.message);
+                }
+            }
+
+            const uploadResult = await s3Service.uploadFile(bufferToUpload, originalName, 'contracts');
             fileData = {
                 s3_key: uploadResult.s3_key,
                 file_name: uploadResult.file_name,
@@ -205,13 +226,12 @@ class ContractService {
             };
         }
 
-        // 7. Create Contract - Luôn bắt đầu với PENDING
+        // Create DB Record
         const result = await prisma.$transaction(async (tx) => {
-            // Generate contract_number
             const count = await tx.contracts.count();
             const contract_number = `CT${Date.now()}-${count + 1}`;
 
-            const newContract = await tx.contracts.create({
+            return await tx.contracts.create({
                 data: {
                     contract_number,
                     room_id: roomId,
@@ -223,19 +243,14 @@ class ContractService {
                     deposit_amount: deposit_amount ? parseFloat(deposit_amount) : 0,
                     penalty_rate: penalty_rate ? parseFloat(penalty_rate) : null,
                     payment_cycle_months: payment_cycle_months ? parseInt(payment_cycle_months) : 1,
-                    status: CONTRACT_STATUS.PENDING,  // Luôn bắt đầu PENDING
+                    status: CONTRACT_STATUS.PENDING,
                     note,
                     ...fileData,
                     created_at: new Date(),
                     updated_at: new Date()
                 },
-                include: {
-                    room_history: { include: { building: true } },
-                    tenant: { include: { user: true } }
-                }
+                include: { room_history: { include: { building: true } }, tenant: { include: { user: true } } }
             });
-
-            return newContract;
         });
 
         return this.formatContractResponse(result);
@@ -337,7 +352,7 @@ class ContractService {
     }
 
     // ============================================
-    // UPDATE CONTRACT
+    // UPDATE CONTRACT (Logic mới xử lý file)
     // ============================================
     async updateContract(contractId, data, file = null, currentUser = null) {
         const existingContract = await prisma.contracts.findUnique({
@@ -348,65 +363,59 @@ class ContractService {
         if (!existingContract) throw new Error('Contract not found');
         if (currentUser) await this.checkContractPermission(existingContract, currentUser);
 
-        // Chỉ cho phép update khi PENDING hoặc REJECTED
         if (![CONTRACT_STATUS.PENDING, CONTRACT_STATUS.REJECTED].includes(existingContract.status)) {
             throw new Error('Only pending or rejected contracts can be updated');
         }
 
-        const {
-            room_id, tenant_user_id, start_date,
-            duration_months,
-            rent_amount, deposit_amount, penalty_rate,
-            payment_cycle_months,
-            note
-        } = data;
+        const { room_id, tenant_user_id, start_date, duration_months, rent_amount, deposit_amount, penalty_rate, payment_cycle_months, note } = data;
 
-        // Prepare data for calculation
         const targetRoomId = room_id ? parseInt(room_id) : existingContract.room_id;
         const targetStartDate = start_date ? new Date(start_date) : existingContract.start_date;
         const targetDuration = duration_months ? parseInt(duration_months) : existingContract.duration_months;
         const targetEndDate = this.calculateEndDate(targetStartDate, targetDuration);
 
-        // Check conflict
-        const conflictingContract = await this.checkContractConflict(
-            targetRoomId,
-            targetStartDate,
-            targetEndDate,
-            contractId
-        );
-
-        if (conflictingContract) {
-            throw new Error(`Room conflict with contract #${conflictingContract.contract_id}`);
-        }
+        const conflictingContract = await this.checkContractConflict(targetRoomId, targetStartDate, targetEndDate, contractId);
+        if (conflictingContract) throw new Error(`Room conflict with contract #${conflictingContract.contract_id}`);
 
         const updateData = { updated_at: new Date() };
-
         if (room_id) updateData.room_id = parseInt(room_id);
         if (tenant_user_id) updateData.tenant_user_id = parseInt(tenant_user_id);
-
         if (start_date || duration_months) {
             updateData.start_date = targetStartDate;
             updateData.duration_months = targetDuration;
             updateData.end_date = targetEndDate;
         }
-
         if (rent_amount !== undefined) updateData.rent_amount = parseFloat(rent_amount);
         if (deposit_amount !== undefined) updateData.deposit_amount = parseFloat(deposit_amount);
         if (penalty_rate !== undefined) updateData.penalty_rate = penalty_rate ? parseFloat(penalty_rate) : null;
         if (payment_cycle_months !== undefined) updateData.payment_cycle_months = parseInt(payment_cycle_months);
         if (note !== undefined) updateData.note = note;
 
-        // Nếu đang REJECTED và update, chuyển về PENDING để tenant xem lại
         if (existingContract.status === CONTRACT_STATUS.REJECTED) {
             updateData.status = CONTRACT_STATUS.PENDING;
             updateData.tenant_accepted_at = null;
         }
 
+        // --- FILE PROCESSING (UPDATED) ---
         if (file) {
             if (existingContract.s3_key) {
                 await s3Service.deleteFile(existingContract.s3_key);
             }
-            const uploadResult = await s3Service.uploadFile(file.buffer, file.originalname, 'contracts');
+
+            let bufferToUpload = file.buffer;
+            let originalName = file.originalname;
+
+            // Nếu là ảnh -> Convert sang PDF
+            if (file.mimetype.startsWith('image/')) {
+                try {
+                    bufferToUpload = await this._convertImageToPdf(file.buffer);
+                    originalName = originalName.replace(/\.[^/.]+$/, "") + ".pdf";
+                } catch (err) {
+                    throw new Error('Failed to convert image to PDF: ' + err.message);
+                }
+            }
+
+            const uploadResult = await s3Service.uploadFile(bufferToUpload, originalName, 'contracts');
             updateData.s3_key = uploadResult.s3_key;
             updateData.file_name = uploadResult.file_name;
             updateData.checksum = uploadResult.checksum;
@@ -416,10 +425,7 @@ class ContractService {
         const updatedContract = await prisma.contracts.update({
             where: { contract_id: contractId },
             data: updateData,
-            include: {
-                room_history: { include: { building: true } },
-                tenant: { include: { user: true } }
-            }
+            include: { room_history: { include: { building: true } }, tenant: { include: { user: true } } }
         });
 
         return this.formatContractResponse(updatedContract);
@@ -917,84 +923,7 @@ class ContractService {
         }
     }
 
-    // ============================================
-    // CONVERT IMAGES TO PDF AND UPLOAD
-    // ============================================
-    async convertAndUpload(contractId, files, currentUser = null) {
-        if (!files || files.length === 0) {
-            throw new Error('No images provided for conversion');
-        }
 
-        const contract = await prisma.contracts.findUnique({
-            where: { contract_id: parseInt(contractId) },
-            include: {
-                room_history: { include: { building: true } }
-            }
-        });
-
-        if (!contract) {
-            throw new Error('Contract not found');
-        }
-
-        if (currentUser) {
-            await this.checkContractPermission(contract, currentUser);
-        }
-
-        const tempDir = path.join(__dirname, '../temp');
-        if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
-
-        const outputFilePath = path.join(
-            tempDir,
-            `contract-${contractId}-${Date.now()}.pdf`
-        );
-
-        const doc = new PDFDocument({ autoFirstPage: false });
-        const output = fs.createWriteStream(outputFilePath);
-        doc.pipe(output);
-
-        for (const file of files) {
-            let imgPath;
-            if (file.path) {
-                imgPath = file.path;
-            } else {
-                imgPath = path.join(tempDir, `${Date.now()}-${file.originalname}`);
-                fs.writeFileSync(imgPath, file.buffer);
-            }
-
-            const img = doc.openImage(imgPath);
-            doc.addPage({ size: [img.width, img.height] });
-            doc.image(imgPath, 0, 0, { width: img.width, height: img.height });
-
-            if (!file.path && fs.existsSync(imgPath)) {
-                fs.unlinkSync(imgPath);
-            }
-        }
-
-        doc.end();
-        await new Promise((resolve) => output.on('finish', resolve));
-
-        const fileBuffer = fs.readFileSync(outputFilePath);
-        const uploadResult = await s3Service.uploadFile(
-            fileBuffer,
-            path.basename(outputFilePath),
-            'contracts'
-        );
-
-        await prisma.contracts.update({
-            where: { contract_id: parseInt(contractId) },
-            data: {
-                s3_key: uploadResult.s3_key,
-                file_name: uploadResult.file_name,
-                checksum: uploadResult.checksum,
-                uploaded_at: uploadResult.uploaded_at,
-                updated_at: new Date(),
-            },
-        });
-
-        if (fs.existsSync(outputFilePath)) fs.unlinkSync(outputFilePath);
-
-        return uploadResult;
-    }
 
     // ============================================
     // PROCESS CONTRACT WITH AI

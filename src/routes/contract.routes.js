@@ -1,11 +1,11 @@
-// Updated: 2025-12-29
-// By: DatNB & Gemini Refactor
+// Updated: 2025-12-30
+// Refactored: Removed standalone image upload route
 
 const express = require('express');
 const router = express.Router();
 const contractController = require('../controllers/contract.controller');
 const { authenticate, requireRole } = require('../middlewares/auth.middleware');
-const { upload, uploadImage, handleUploadError } = require('../middlewares/upload.middleware');
+const { upload, handleUploadError } = require('../middlewares/upload.middleware');
 const {
     validateCreateContract,
     validateUpdateContract,
@@ -16,42 +16,39 @@ const {
 router.use(authenticate);
 
 // --- CREATE ---
-// Tạo hợp đồng (Manager/Owner)
+// Tạo hợp đồng (Cho phép PDF hoặc Ảnh - Middleware upload tự handle)
 router.post('/',
     requireRole(['owner', 'manager']),
-    upload.single('contract_file'),
+    upload.single('contract_file'), // Chấp nhận PDF hoặc Ảnh
     handleUploadError,
     validateCreateContract,
     contractController.createContract
 );
 
 // --- READ ---
-// Lấy danh sách hợp đồng
 router.get('/',
     requireRole(['owner', 'manager', 'tenant']),
     contractController.getContracts
 );
 
-// Lấy chi tiết hợp đồng
 router.get('/:id',
     requireRole(['owner', 'manager', 'tenant']),
     validateContractId,
     contractController.getContractById
 );
 
-// --- UPDATE & PROCESS ---
-// Cập nhật thông tin/file hợp đồng (Chỉ sửa được khi Pending/Rejected)
+// --- UPDATE ---
+// Cập nhật (Cho phép PDF hoặc Ảnh)
 router.put('/:id',
     requireRole(['owner', 'manager']),
     validateContractId,
-    upload.single('contract_file'),
+    upload.single('contract_file'), // Chấp nhận PDF hoặc Ảnh
     handleUploadError,
     validateUpdateContract,
     contractController.updateContract
 );
 
-// --- APPROVAL FLOW (Tenant) ---
-// Tenant chấp nhận hoặc từ chối hợp đồng
+// --- APPROVAL FLOW ---
 router.post('/:id/approve',
     requireRole(['tenant']),
     validateContractId,
@@ -59,21 +56,18 @@ router.post('/:id/approve',
 );
 
 // --- TERMINATION FLOW ---
-// 1. Manager yêu cầu chấm dứt hợp đồng
 router.post('/:id/request-termination',
     requireRole(['owner', 'manager']),
     validateContractId,
     contractController.requestTermination
 );
 
-// 2. Tenant phản hồi yêu cầu chấm dứt (Đồng ý/Từ chối)
 router.post('/:id/respond-termination',
     requireRole(['tenant']),
     validateContractId,
     contractController.respondToTerminationRequest
 );
 
-// 3. Manager chốt giao dịch sau khi thanh toán hóa đơn
 router.post('/:id/complete-transaction',
     requireRole(['owner', 'manager']),
     validateContractId,
@@ -81,7 +75,6 @@ router.post('/:id/complete-transaction',
 );
 
 // --- DELETE ---
-// Xóa vĩnh viễn (Chỉ Owner - Dành cho HĐ đã kết thúc/hết hạn)
 router.delete('/:id/permanent',
     requireRole(['owner']),
     validateContractId,
@@ -89,34 +82,24 @@ router.delete('/:id/permanent',
 );
 
 // --- DOWNLOAD ---
-// Lấy URL tải xuống
 router.get('/:id/download',
     requireRole(['owner', 'manager', 'tenant']),
     validateContractId,
     contractController.downloadContract
 );
 
-// Tải file trực tiếp
 router.get('/:id/download/direct',
     requireRole(['owner', 'manager', 'tenant']),
     validateContractId,
     contractController.downloadContractDirect
 );
 
-// --- UTILITIES ---
-// Upload ảnh để convert sang PDF
-router.post('/:id/upload-images',
-    requireRole(['owner', 'manager']),
-    uploadImage.array('images', 10),
-    contractController.uploadContractImages
-);
-
-// Import hợp đồng bằng AI
+// --- AI IMPORT ---
+// Import vẫn chỉ nhận PDF (theo logic AI service hiện tại)
 router.post('/import',
     requireRole(['owner', 'manager']),
     upload.single('contract_file'),
     contractController.processContractWithAI
 );
-
 
 module.exports = router;
