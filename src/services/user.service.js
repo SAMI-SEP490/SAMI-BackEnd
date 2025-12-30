@@ -2,7 +2,7 @@
 // by: DatNB & MinhBH
 
 const prisma = require('../config/prisma');
-const { Role } = require('@prisma/client');
+const { Role } = require('../../generated/prisma/client.ts');
 
 
 class UserService {
