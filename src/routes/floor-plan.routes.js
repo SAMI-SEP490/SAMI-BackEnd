@@ -10,41 +10,47 @@ const {
     validateUpdateFloorPlan,
     validateFloorPlanId,
     validateBuildingId,
-    validateFloorNumber
+    validateFloorNumber,
+    validateBuildingIdQuery,
 } = require('../middlewares/floor-plan.validation');
 
 // Tất cả routes đều yêu cầu authentication
 router.use(authenticate);
 
-// CREATE - Tạo floor plan mới (owner và manager)
+// CREATE - Tạo floor plan mới
 router.post('/',
     requireRole(['owner', 'manager']),
     validateCreateFloorPlan,
     floorPlanController.createFloorPlan
 );
 
-// READ - Lấy danh sách floor plans
+// GET - Lấy danh sách floor plans (có thể filter)
 router.get('/',
     requireRole(['owner', 'manager']),
     floorPlanController.getFloorPlans
 );
 
-// READ - Lấy thông tin floor plan theo ID
+// NEXT FLOOR - Lấy tầng tiếp theo cần tạo cho một tòa nhà (dựa trên floor_plans)
+router.get('/next-floor',
+    requireRole(['owner', 'manager']),
+    floorPlanController.getNextFloorNumber
+);
+
+// GET - Lấy floor plan theo ID
 router.get('/:id',
-    requireRole(['owner', 'manager', 'tenant']),
+    requireRole(['owner', 'manager']),
     validateFloorPlanId,
     floorPlanController.getFloorPlanById
 );
 
-// READ - Lấy floor plans theo building
+// GET - Lấy floor plans theo building
 router.get('/building/:buildingId',
-    requireRole(['owner', 'manager', 'tenant']),
+    requireRole(['owner', 'manager']),
     validateBuildingId,
     floorPlanController.getFloorPlansByBuilding
 );
 
-
-// READ - Lấy thống kê floor plans của building
+// GET - Thống kê floor plans theo building
 router.get('/building/:buildingId/statistics',
     requireRole(['owner', 'manager']),
     validateBuildingId,
@@ -53,7 +59,7 @@ router.get('/building/:buildingId/statistics',
 
 // UPDATE - Cập nhật floor plan
 router.put('/:id',
-    requireRole(['owner', 'manager']),
+    requireRole(['owner']),
     validateFloorPlanId,
     validateUpdateFloorPlan,
     floorPlanController.updateFloorPlan
@@ -61,7 +67,7 @@ router.put('/:id',
 
 // PUBLISH - Publish floor plan
 router.post('/:id/publish',
-    requireRole(['owner', 'manager']),
+    requireRole(['owner']),
     validateFloorPlanId,
     floorPlanController.publishFloorPlan
 );
@@ -79,5 +85,14 @@ router.delete('/:id',
     validateFloorPlanId,
     floorPlanController.deleteFloorPlan
 );
+
+// ✅ NEW route: lấy tầng kế tiếp theo DB
+router.get(
+  '/next-floor',
+  requireRole(['owner', 'manager']),
+  validateBuildingIdQuery,
+  floorPlanController.getNextFloorNumber
+);
+
 
 module.exports = router;
