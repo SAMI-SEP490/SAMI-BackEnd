@@ -44,26 +44,40 @@ class FloorPlanService {
   }
 
   // Helper: Trích xuất rooms từ layout
-  extractRoomsFromLayout(layout, building_id, floor_number) {
-    if (!layout || !Array.isArray(layout.nodes)) return [];
+  extractRoomsFromLayout(layout, buildingId, floor_number) {
+  const nodes = layout?.nodes || [];
 
-    return layout.nodes
-      .filter(
-        (node) =>
-          node.type === "block" &&
-          node.data?.icon === "room" &&
-          node.data?.room_number
-      )
-      .map((node) => ({
-        building_id,
-        floor: floor_number,
-        room_number: String(node.data.room_number ?? "").trim(),
-        size: node.data.size || null,
-        description: node.data.description || null,
-        status: "available",
-        is_active: true,
-      }));
-  }
+  const normalizeSize = (raw) => {
+    if (raw === null || raw === undefined || raw === "") return null;
+
+    // number -> string decimal
+    if (typeof raw === "number") {
+      if (!Number.isFinite(raw)) return null;
+      return raw; // hoặc raw.toFixed(2) nếu schema bắt string
+    }
+
+    // string: "12m2", "12 m²" -> 12
+    const s = String(raw).trim().replace(",", ".");
+    const match = s.match(/(\d+(\.\d+)?)/);
+    if (!match) return null;
+
+    const num = Number(match[1]);
+    return Number.isFinite(num) ? num : null;
+  };
+
+  return nodes
+    .filter((node) => node.type === "block" && node.data?.icon === "room")
+    .map((node) => ({
+      building_id: buildingId,
+      floor: floor_number,
+      room_number: String(node.data.room_number ?? "").trim(),
+      size: normalizeSize(node.data.size),
+      description: node.data.description || null,
+      status: "available",
+      is_active: true,
+    }));
+}
+
 
   // CREATE - Tạo floor plan mới
   async createFloorPlan(data, createdBy, userRole) {
@@ -172,14 +186,14 @@ class FloorPlanService {
           updated_at: new Date(),
         },
         include: {
-          buildings: {
+          building: {
             select: {
               building_id: true,
               name: true,
               address: true,
             },
           },
-          users: {
+          creator: {
             select: {
               user_id: true,
               full_name: true,
@@ -220,7 +234,7 @@ class FloorPlanService {
     const floorPlan = await prisma.floor_plans.findUnique({
       where: { plan_id: planId },
       include: {
-        buildings: {
+        building: {
           select: {
             building_id: true,
             name: true,
@@ -228,7 +242,7 @@ class FloorPlanService {
             number_of_floors: true,
           },
         },
-        users: { select: { user_id: true, full_name: true, email: true } },
+        creator: { select: { user_id: true, full_name: true, email: true } },
       },
     });
 
@@ -339,14 +353,14 @@ class FloorPlanService {
       prisma.floor_plans.findMany({
         where,
         include: {
-          buildings: {
+          building: {
             select: {
               building_id: true,
               name: true,
               address: true,
             },
           },
-          users: {
+          creator: {
             select: {
               user_id: true,
               full_name: true,
@@ -417,7 +431,7 @@ class FloorPlanService {
       prisma.floor_plans.findMany({
         where,
         include: {
-          users: {
+          creator: {
             select: {
               user_id: true,
               full_name: true,
@@ -486,10 +500,10 @@ class FloorPlanService {
         where: { plan_id: planId },
         data: updateData,
         include: {
-          buildings: {
+          building: {
             select: { building_id: true, name: true, address: true },
           },
-          users: {
+          creator: {
             select: { user_id: true, full_name: true, email: true },
           },
         },
@@ -721,13 +735,13 @@ class FloorPlanService {
         updated_at: new Date(),
       },
       include: {
-        buildings: {
+        building: {
           select: {
             building_id: true,
             name: true,
           },
         },
-        users: {
+        creator: {
           select: {
             user_id: true,
             full_name: true,
@@ -768,13 +782,13 @@ class FloorPlanService {
         updated_at: new Date(),
       },
       include: {
-        buildings: {
+        building: {
           select: {
             building_id: true,
             name: true,
           },
         },
-        users: {
+        creator: {
           select: {
             user_id: true,
             full_name: true,
@@ -899,17 +913,17 @@ class FloorPlanService {
     return {
       plan_id: floorPlan.plan_id,
       building_id: floorPlan.building_id,
-      building_name: floorPlan.buildings?.name,
-      building_address: floorPlan.buildings?.address,
+      building_name: floorPlan.building?.name,
+      building_address: floorPlan.building?.address,
       name: floorPlan.name,
       floor_number: floorPlan.floor_number,
       layout: floorPlan.layout,
       file_url: floorPlan.file_url,
       is_published: floorPlan.is_published,
       created_by: {
-        user_id: floorPlan.users?.user_id,
-        full_name: floorPlan.users?.full_name,
-        email: floorPlan.users?.email,
+        user_id: floorPlan.creator?.user_id,
+        full_name: floorPlan.creator?.full_name,
+        email: floorPlan.creator?.email,
       },
       note: floorPlan.note,
       created_at: floorPlan.created_at,
@@ -921,13 +935,13 @@ class FloorPlanService {
     return {
       plan_id: floorPlan.plan_id,
       building_id: floorPlan.building_id,
-      building_name: floorPlan.buildings?.name,
+      building_name: floorPlan.building?.name,
       name: floorPlan.name,
       floor_number: floorPlan.floor_number,
       is_published: floorPlan.is_published,
       created_by: {
-        user_id: floorPlan.users?.user_id,
-        full_name: floorPlan.users?.full_name,
+        user_id: floorPlan.creator?.user_id,
+        full_name: floorPlan.creator?.full_name,
       },
       created_at: floorPlan.created_at,
       updated_at: floorPlan.updated_at,
@@ -938,10 +952,10 @@ class FloorPlanService {
     return {
       plan_id: floorPlan.plan_id,
       building: {
-        building_id: floorPlan.buildings?.building_id,
-        name: floorPlan.buildings?.name,
-        address: floorPlan.buildings?.address,
-        number_of_floors: floorPlan.buildings?.number_of_floors,
+        building_id: floorPlan.building?.building_id,
+        name: floorPlan.building?.name,
+        address: floorPlan.building?.address,
+        number_of_floors: floorPlan.building?.number_of_floors,
       },
       name: floorPlan.name,
       floor_number: floorPlan.floor_number,
@@ -949,9 +963,9 @@ class FloorPlanService {
       file_url: floorPlan.file_url,
       is_published: floorPlan.is_published,
       created_by: {
-        user_id: floorPlan.users?.user_id,
-        full_name: floorPlan.users?.full_name,
-        email: floorPlan.users?.email,
+        user_id: floorPlan.creator?.user_id,
+        full_name: floorPlan.creator?.full_name,
+        email: floorPlan.creator?.email,
       },
       note: floorPlan.note,
       created_at: floorPlan.created_at,
