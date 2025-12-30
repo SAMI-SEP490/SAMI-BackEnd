@@ -1,6 +1,7 @@
 // Updated: 2025-12-22
 // by: DatNB
-const prisma = require("../config/prisma");
+const { PrismaClient } = require("@prisma/client");
+const prisma = new PrismaClient();
 
 class FloorPlanService {
   // Helper: Kiểm tra quyền truy cập building
@@ -10,74 +11,122 @@ class FloorPlanService {
       return true;
     }
 
-    // Manager chỉ có quyền với building họ quản lý
+    // Manager: kiểm tra có được phân công cho building
     if (userRole === "MANAGER") {
-      const manager = await prisma.building_managers.findFirst({
+      const managerBuilding = await prisma.manager_buildings.findFirst({
         where: {
-          user_id: userId,
+          manager_id: userId,
           building_id: buildingId,
+          is_active: true,
         },
       });
-      return !!manager;
+      return !!managerBuilding;
     }
 
-    // Các role khác không có quyền
     return false;
   }
 
-  // Helper: Kiểm tra quyền với floor plan cụ thể
-  async checkFloorPlanAccess(userId, userRole, planId) {
-    const floorPlan = await prisma.floor_plans.findUnique({
-      where: { plan_id: planId },
-      select: { building_id: true },
-    });
+  // Helper: Parse layout JSON (đảm bảo đúng format)
+  parseLayout(layout) {
+    if (!layout) return null;
+    if (typeof layout === "object") return layout;
 
-    if (!floorPlan) {
-      throw new Error("Floor plan not found");
+    try {
+      return JSON.parse(layout);
+    } catch (err) {
+      throw new Error("Invalid layout JSON format");
     }
-
-    return await this.checkBuildingAccess(
-      userId,
-      userRole,
-      floorPlan.building_id
-    );
   }
 
-  // Helper: Trích xuất rooms từ layout
-  extractRoomsFromLayout(layout, buildingId, floor_number) {
-  const nodes = layout?.nodes || [];
+  // Helper: Tạo rooms data từ layout nodes
+  extractRoomsFromLayout(layout, buildingId, floorNumber) {
+    if (!layout || !layout.nodes) return [];
 
-  const normalizeSize = (raw) => {
-    if (raw === null || raw === undefined || raw === "") return null;
+    const nodes = layout.nodes || [];
+    const rooms = nodes
+      .filter((n) => n?.type === "room")
+      .map((node) => {
+        const label =
+          node?.data?.label ||
+          node?.data?.room_number ||
+          node?.data?.roomNumber;
 
-    // number -> string decimal
-    if (typeof raw === "number") {
-      if (!Number.isFinite(raw)) return null;
-      return raw; // hoặc raw.toFixed(2) nếu schema bắt string
+        const roomNumber = label ? String(label).trim() : null;
+
+        // size đang là DECIMAL trong Prisma => phải lưu số, không phải "12m2"
+        // (logic cũ của bạn có thể đã normalize trước khi gọi service)
+        const rawSize =
+          node?.data?.size ?? node?.data?.area ?? node?.data?.room_size;
+
+        let size = null;
+        if (rawSize !== undefined && rawSize !== null && rawSize !== "") {
+          const s = String(rawSize)
+            .replace(",", ".")
+            .match(/(\d+(\.\d+)?)/);
+          if (s) size = parseFloat(s[1]);
+        }
+
+        return {
+          building_id: parseInt(buildingId),
+          floor: parseInt(floorNumber),
+          room_number: roomNumber,
+          size: size,
+          description: node?.data?.description || null,
+          status: "available",
+          is_active: true,
+        };
+      });
+
+    return rooms.filter((r) => r.room_number);
+  }
+
+  // NEXT FLOOR - Lấy tầng tiếp theo cần tạo cho building (dựa trên dữ liệu floor_plans)
+  async getNextFloorNumber(buildingId, userId, userRole) {
+    if (!buildingId) {
+      throw new Error("Missing required field: building_id");
+    }
+    if (!userId) {
+      throw new Error("Missing required field: user_id");
     }
 
-    // string: "12m2", "12 m²" -> 12
-    const s = String(raw).trim().replace(",", ".");
-    const match = s.match(/(\d+(\.\d+)?)/);
-    if (!match) return null;
+    const bId = parseInt(buildingId);
+    if (isNaN(bId)) {
+      throw new Error("building_id must be a valid number");
+    }
 
-    const num = Number(match[1]);
-    return Number.isFinite(num) ? num : null;
-  };
+    // Kiểm tra quyền truy cập building (giống create)
+    const hasAccess = await this.checkBuildingAccess(userId, userRole, bId);
+    if (!hasAccess) {
+      throw new Error(
+        "Access denied: You do not have permission to access floor plans for this building"
+      );
+    }
 
-  return nodes
-    .filter((node) => node.type === "block" && node.data?.icon === "room")
-    .map((node) => ({
-      building_id: buildingId,
-      floor: floor_number,
-      room_number: String(node.data.room_number ?? "").trim(),
-      size: normalizeSize(node.data.size),
-      description: node.data.description || null,
-      status: "available",
-      is_active: true,
-    }));
-}
+    // Kiểm tra building tồn tại
+    const building = await prisma.buildings.findUnique({
+      where: { building_id: bId },
+    });
+    if (!building) {
+      throw new Error("Building not found");
+    }
+    if (!building.is_active) {
+      throw new Error("Building is inactive");
+    }
 
+    const agg = await prisma.floor_plans.aggregate({
+      where: { building_id: bId },
+      _max: { floor_number: true },
+    });
+
+    const maxFloor = agg?._max?.floor_number || 0;
+    const nextFloor = maxFloor + 1;
+
+    return {
+      building_id: bId,
+      max_floor_number: maxFloor,
+      next_floor_number: nextFloor,
+    };
+  }
 
   // CREATE - Tạo floor plan mới
   async createFloorPlan(data, createdBy, userRole) {
@@ -457,6 +506,24 @@ class FloorPlanService {
     };
   }
 
+  // ✅ NEW: Lấy số tầng kế tiếp theo DB floor_plans
+async getNextFloorNumber(buildingId, userId, userRole) {
+  // check quyền building (đang có sẵn helper)
+  const hasAccess = await this.checkBuildingAccess(userId, userRole, buildingId);
+  if (!hasAccess) {
+    throw new Error("Access denied: You do not have permission to access this building");
+  }
+
+  // lấy max floor_number theo building_id
+  const agg = await prisma.floor_plans.aggregate({
+    where: { building_id: buildingId },
+    _max: { floor_number: true },
+  });
+
+  const maxFloor = agg?._max?.floor_number ?? 0;
+  return { next_floor_number: maxFloor + 1 };
+}
+
   // UPDATE - Cập nhật floor plan
   async updateFloorPlan(planId, data, userId, userRole) {
     const { name, layout, file_url, is_published, note } = data;
@@ -576,7 +643,9 @@ class FloorPlanService {
 
             if (needUpdate) {
               const [tenantCount, activeContractCount] = await Promise.all([
-                tx.tenants.count({ where: { room_id: found.room_id } }),
+                tx.room_tenants.count({
+                  where: { room_id: found.room_id, is_current: true },
+                }),
                 tx.contracts.count({
                   where: {
                     room_id: found.room_id,
@@ -622,7 +691,9 @@ class FloorPlanService {
           if (stillExists) continue;
 
           const [tenantCount, activeContractCount] = await Promise.all([
-            tx.tenants.count({ where: { room_id: db.room_id } }),
+            tx.room_tenants.count({
+              where: { room_id: db.room_id, is_current: true },
+            }),
             tx.contracts.count({
               where: {
                 room_id: db.room_id,
@@ -802,15 +873,15 @@ class FloorPlanService {
 
   // DELETE - Xóa floor plan
   async deleteFloorPlan(planId, userId, userRole) {
-    const floorPlan = await prisma.floor_plans.findUnique({
+    // 1) Floor plan tồn tại?
+    const existingPlan = await prisma.floor_plans.findUnique({
       where: { plan_id: planId },
     });
-
-    if (!floorPlan) {
+    if (!existingPlan) {
       throw new Error("Floor plan not found");
     }
 
-    // Kiểm tra quyền truy cập
+    // 2) Check quyền
     const hasAccess = await this.checkFloorPlanAccess(userId, userRole, planId);
     if (!hasAccess) {
       throw new Error(
@@ -818,36 +889,88 @@ class FloorPlanService {
       );
     }
 
-    if (floorPlan.is_published) {
-      throw new Error("Cannot delete published floor plan. Unpublish it first");
-    }
+    const buildingId = existingPlan.building_id;
+    const floorNumber = existingPlan.floor_number;
 
-    // ✅ CHỈ ĐƯỢC XÓA TẦNG CAO NHẤT
-    const agg = await prisma.floor_plans.aggregate({
-      where: { building_id: floorPlan.building_id },
-      _max: { floor_number: true },
-    });
+    return prisma.$transaction(async (tx) => {
+      // 3) Lấy tất cả phòng thuộc building + floor
+      const rooms = await tx.rooms.findMany({
+        where: {
+          building_id: buildingId,
+          floor_number: floorNumber,
+          is_active: true,
+        },
+        select: { room_id: true },
+      });
 
-    const maxFloor = agg?._max?.floor_number || 0;
+      const roomIds = rooms.map((r) => r.room_id);
 
-    if (floorPlan.floor_number !== maxFloor) {
-      throw new Error(`Chỉ được xóa tầng cao nhất (tầng ${maxFloor}).`);
-    }
+      if (roomIds.length > 0) {
+        // 4) Chặn xóa nếu có người đang ở (room_tenants.is_current = true)
+        const livingCount = await tx.room_tenants.count({
+          where: {
+            room_id: { in: roomIds },
+            is_current: true,
+          },
+        });
+        if (livingCount > 0) {
+          throw new Error("Không thể xóa tầng vì có phòng đang có người ở.");
+        }
 
-    await prisma.$transaction(async (tx) => {
+        // 5) Chặn xóa nếu có hợp đồng active (tùy schema bạn)
+        // Nếu schema contracts của bạn dùng status = 'active' thì giữ như dưới.
+        // Nếu dùng field khác (is_active) thì đổi đúng tên field.
+        const activeContractCount = await tx.contracts.count({
+          where: {
+            room_id: { in: roomIds },
+            status: "active",
+          },
+        });
+        if (activeContractCount > 0) {
+          throw new Error(
+            "Không thể xóa tầng vì có phòng đang có hợp đồng active."
+          );
+        }
+
+        // 6) Xóa các bảng phụ thuộc (nếu DB bạn chưa cascade đủ)
+        // Nếu bạn đã ON DELETE CASCADE hết thì các deleteMany này vẫn an toàn.
+        await tx.room_tenants.deleteMany({
+          where: { room_id: { in: roomIds } },
+        });
+
+        // Nếu có bảng khác FK tới rooms mà không cascade, thêm ở đây (guest_registrations, bills, etc.)
+        // Ví dụ:
+        // await tx.guest_registrations.deleteMany({ where: { room_id: { in: roomIds } } });
+
+        // 7) Xóa rooms
+        await tx.rooms.deleteMany({
+          where: { room_id: { in: roomIds } },
+        });
+      }
+
+      // 8) Xóa floor plan
       await tx.floor_plans.delete({
         where: { plan_id: planId },
       });
 
-      await tx.buildings.update({
-        where: { building_id: floorPlan.building_id },
-        data: {
-          number_of_floors: Math.max(0, maxFloor - 1),
-        },
+      // 9) (Tuỳ bạn) cập nhật number_of_floors nếu bạn đang dùng field này
+      // Gợi ý: set = max floor_number còn lại, hoặc 0 nếu không còn.
+      const agg = await tx.floor_plans.aggregate({
+        where: { building_id: buildingId },
+        _max: { floor_number: true },
       });
-    });
+      const maxFloor = agg?._max?.floor_number ?? 0;
 
-    return { success: true, message: "Floor plan deleted successfully" };
+      // Nếu bảng buildings có number_of_floors
+      await tx.buildings.update({
+        where: { building_id: buildingId },
+        data: { number_of_floors: maxFloor },
+      });
+
+      return {
+        message: "Deleted floor plan and all rooms on that floor successfully",
+      };
+    });
   }
 
   // STATISTICS - Thống kê floor plans

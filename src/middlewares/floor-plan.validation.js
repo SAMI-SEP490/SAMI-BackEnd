@@ -271,10 +271,33 @@ const validateFloorNumber = (req, res, next) => {
     next();
 };
 
+// ✅ NEW: validate building_id trong query (?building_id=...)
+const validateBuildingIdQuery = (req, res, next) => {
+  const { building_id } = req.query;
+  const id = parseInt(building_id);
+
+  if (!building_id) {
+    return res.status(400).json({
+      success: false,
+      message: "Missing required field: building_id",
+    });
+  }
+
+  if (isNaN(id) || id <= 0) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid building ID",
+    });
+  }
+
+  next();
+};
+
 module.exports = {
     validateCreateFloorPlan,
     validateUpdateFloorPlan,
     validateFloorPlanId,
     validateBuildingId,
-    validateFloorNumber
+    validateFloorNumber,
+    validateBuildingIdQuery,
 };
