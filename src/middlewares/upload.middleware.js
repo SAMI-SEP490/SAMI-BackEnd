@@ -1,5 +1,5 @@
-// Updated: 2024-17-10
-// by: DatNB
+// Updated: 2025-12-30
+// Refactored: Allow PDF and Images for contract creation
 
 const multer = require('multer');
 const path = require('path');
@@ -7,38 +7,30 @@ const path = require('path');
 // Cấu hình multer với memory storage
 const storage = multer.memoryStorage();
 
-// File filter - chỉ cho phép PDF
-const fileFilter = (req, file, cb) => {
-    const allowedTypes = ['application/pdf'];
+// File filter - Cho phép PDF và Ảnh
+const combinedFilter = (req, file, cb) => {
+    const allowedMimeTypes = [
+        'application/pdf',
+        'image/jpeg',
+        'image/png',
+        'image/jpg'
+    ];
+
+    // Kiểm tra đuôi file để chắc chắn
+    const allowedExts = ['.pdf', '.jpg', '.jpeg', '.png'];
     const ext = path.extname(file.originalname).toLowerCase();
 
-    if (allowedTypes.includes(file.mimetype) && ext === '.pdf') {
+    if (allowedMimeTypes.includes(file.mimetype) && allowedExts.includes(ext)) {
         cb(null, true);
     } else {
-        cb(new Error('Only PDF files are allowed!'), false);
+        cb(new Error('Only PDF and Image files (jpg, png) are allowed!'), false);
     }
 };
 
-const imageFilter = (req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg'];
-    if (allowedTypes.includes(file.mimetype)) {
-        cb(null, true);
-    } else {
-        cb(new Error('Only image files (jpg, png) are allowed!'), false);
-    }
-};
-// Cấu hình upload
+// Cấu hình upload (Dùng chung cho cả Create/Update contract)
 const upload = multer({
     storage: storage,
-    fileFilter: fileFilter,
-    limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB max file size
-    }
-});
-
-const uploadImage = multer({
-    storage: storage,
-    fileFilter: imageFilter,
+    fileFilter: combinedFilter,
     limits: {
         fileSize: 10 * 1024 * 1024, // 10MB max file size
     }
@@ -68,6 +60,5 @@ const handleUploadError = (err, req, res, next) => {
 
 module.exports = {
     upload,
-    uploadImage,
     handleUploadError
 };
