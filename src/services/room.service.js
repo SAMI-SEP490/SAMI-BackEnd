@@ -286,18 +286,16 @@ class RoomService {
     const skip = (page - 1) * limit;
     const where = {};
 
+    /* =======================
+     * 1️⃣ PHÂN QUYỀN THEO ROLE
+     * ======================= */
     if (normalizedRole === "MANAGER") {
       const managedBuildingIds = await this.getManagedBuildingIds(userId);
 
-      if (managedBuildingIds.length === 0) {
+      if (!managedBuildingIds || managedBuildingIds.length === 0) {
         return {
           data: [],
-          pagination: {
-            total: 0,
-            page,
-            limit,
-            pages: 0,
-          },
+          pagination: { total: 0, page, limit, pages: 0 },
         };
       }
 
@@ -321,22 +319,22 @@ class RoomService {
       const tenant = await prisma.tenants.findUnique({
         where: { user_id: userId },
       });
+
       if (!tenant || !tenant.room_id) {
         return {
           data: [],
-          pagination: {
-            total: 0,
-            page,
-            limit,
-            pages: 0,
-          },
+          pagination: { total: 0, page, limit, pages: 0 },
         };
       }
+
       where.room_id = tenant.room_id;
     } else {
       throw new Error("Unauthorized access");
     }
 
+    /* =======================
+     * 2️⃣ FILTER
+     * ======================= */
     if (room_number) {
       where.room_number = {
         contains: room_number,
@@ -351,40 +349,51 @@ class RoomService {
       }
     }
 
-    // Lưu ý: Filter theo status sẽ filter theo DB status trước, sau đó cập nhật động
     if (status) {
       where.status = status;
     }
 
     if (is_active !== undefined) {
-      where.is_active = is_active === "true" || is_active === true;
+      where.is_active = is_active === true || is_active === "true";
     }
 
+    /* =======================
+     * 3️⃣ QUERY DATABASE
+     * ======================= */
     const [rooms, total] = await Promise.all([
       prisma.rooms.findMany({
         where,
         include: {
-          buildings: {
+          // 🏢 Tòa nhà
+          building: {
             select: {
               building_id: true,
               name: true,
               address: true,
             },
           },
-          tenants: {
+
+          // 👤 Người ở: rooms → room_tenants → tenant → users
+          room_tenants: {
             include: {
-              users: {
-                select: {
-                  user_id: true,
-                  full_name: true,
-                  phone: true,
+              tenant: {
+                include: {
+                  user: {
+                    select: {
+                      user_id: true,
+                      full_name: true,
+                      phone: true,
+                    },
+                  },
                 },
               },
             },
           },
+
+          // 🔢 Đếm liên quan
           _count: {
             select: {
-              contracts: {
+              contracts_history: {
                 where: {
                   status: "active",
                   deleted_at: null,
@@ -408,15 +417,17 @@ class RoomService {
           { room_number: "asc" },
         ],
       }),
+
       prisma.rooms.count({ where }),
     ]);
 
-    // Cập nhật status động cho từng phòng
+    /* =======================
+     * 4️⃣ CẬP NHẬT STATUS ĐỘNG
+     * ======================= */
     const roomsWithDynamicStatus = await Promise.all(
       rooms.map(async (room) => {
         const dynamicStatus = await this.calculateRoomStatus(room.room_id);
 
-        // Cập nhật DB nếu status khác
         if (room.status !== dynamicStatus) {
           await this.updateRoomStatus(room.room_id);
           room.status = dynamicStatus;
@@ -426,8 +437,13 @@ class RoomService {
       })
     );
 
+    /* =======================
+     * 5️⃣ RESPONSE
+     * ======================= */
     return {
-      data: roomsWithDynamicStatus.map((r) => this.formatRoomListResponse(r)),
+      data: roomsWithDynamicStatus.map((room) =>
+        this.formatRoomListResponse(room)
+      ),
       pagination: {
         total,
         page,

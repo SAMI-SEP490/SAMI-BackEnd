@@ -2,6 +2,7 @@
 // by: DatNB
 
 const prisma = require("../config/prisma");
+const NotificationService = require("./notification.service");
 
 class BuildingService {
   // CREATE - Tạo tòa nhà mới
@@ -214,7 +215,7 @@ class BuildingService {
   }
   // UPDATE - Cập nhật thông tin tòa nhà
   // UPDATE - Cập nhật thông tin tòa nhà
-  async updateBuilding(buildingId, data) {
+  async updateBuilding(buildingId, data, senderId) {
     const {
       name,
       address,
@@ -226,7 +227,7 @@ class BuildingService {
       service_fee,
       bill_due_day,
     } = data;
-
+    console.log("🔥🔥🔥 RUNNING updateBuilding WITH DATA:", data);
     // 1️⃣ Verify building exists
     const existingBuilding = await prisma.buildings.findUnique({
       where: { building_id: buildingId },
@@ -236,7 +237,7 @@ class BuildingService {
       throw new Error("Building not found");
     }
 
-    // 2️⃣ Check duplicate name (if changing name)
+    // 2️⃣ Check duplicate name
     if (name && name.trim() !== existingBuilding.name) {
       const duplicateName = await prisma.buildings.findFirst({
         where: {
@@ -256,15 +257,14 @@ class BuildingService {
       updated_at: new Date(),
     };
 
+    // Track changed billing-related fields
+    const billingChanges = [];
+
     // Name
-    if (name !== undefined) {
-      updateData.name = name.trim();
-    }
+    if (name !== undefined) updateData.name = name.trim();
 
     // Address
-    if (address !== undefined) {
-      updateData.address = address?.trim() || null;
-    }
+    if (address !== undefined) updateData.address = address?.trim() || null;
 
     // Number of floors
     if (number_of_floors !== undefined) {
@@ -294,54 +294,74 @@ class BuildingService {
 
     // Electric unit price
     if (electric_unit_price !== undefined) {
-      if (electric_unit_price === null || electric_unit_price === "") {
-        updateData.electric_unit_price = null;
-      } else {
-        const price = parseFloat(electric_unit_price);
-        if (isNaN(price) || price < 0) {
-          throw new Error("electric_unit_price must be a non-negative number");
-        }
-        updateData.electric_unit_price = price;
+      const newValue =
+        electric_unit_price === "" || electric_unit_price === null
+          ? null
+          : parseFloat(electric_unit_price);
+
+      if (newValue !== existingBuilding.electric_unit_price) {
+        billingChanges.push(
+          `💡 Tiền điện: ${existingBuilding.electric_unit_price ?? "—"} → ${
+            newValue ?? "—"
+          }`
+        );
       }
+
+      updateData.electric_unit_price = newValue;
     }
 
     // Water unit price
     if (water_unit_price !== undefined) {
-      if (water_unit_price === null || water_unit_price === "") {
-        updateData.water_unit_price = null;
-      } else {
-        const price = parseFloat(water_unit_price);
-        if (isNaN(price) || price < 0) {
-          throw new Error("water_unit_price must be a non-negative number");
-        }
-        updateData.water_unit_price = price;
+      const newValue =
+        water_unit_price === "" || water_unit_price === null
+          ? null
+          : parseFloat(water_unit_price);
+
+      if (newValue !== existingBuilding.water_unit_price) {
+        billingChanges.push(
+          `🚿 Tiền nước: ${existingBuilding.water_unit_price ?? "—"} → ${
+            newValue ?? "—"
+          }`
+        );
       }
+
+      updateData.water_unit_price = newValue;
     }
 
     // Service fee
     if (service_fee !== undefined) {
-      if (service_fee === null || service_fee === "") {
-        updateData.service_fee = null;
-      } else {
-        const fee = parseFloat(service_fee);
-        if (isNaN(fee) || fee < 0) {
-          throw new Error("service_fee must be a non-negative number");
-        }
-        updateData.service_fee = fee;
+      const newValue =
+        service_fee === "" || service_fee === null
+          ? null
+          : parseFloat(service_fee);
+
+      if (newValue !== existingBuilding.service_fee) {
+        billingChanges.push(
+          `🧾 Phí dịch vụ: ${existingBuilding.service_fee ?? "—"} → ${
+            newValue ?? "—"
+          }`
+        );
       }
+
+      updateData.service_fee = newValue;
     }
 
-    // Bill due day (1–31)
+    // Bill due day
     if (bill_due_day !== undefined) {
-      if (bill_due_day === null || bill_due_day === "") {
-        updateData.bill_due_day = null;
-      } else {
-        const day = parseInt(bill_due_day);
-        if (isNaN(day) || day < 1 || day > 31) {
-          throw new Error("bill_due_day must be between 1 and 31");
-        }
-        updateData.bill_due_day = day;
+      const newValue =
+        bill_due_day === "" || bill_due_day === null
+          ? null
+          : parseInt(bill_due_day);
+
+      if (newValue !== existingBuilding.bill_due_day) {
+        billingChanges.push(
+          `📅 Ngày thanh toán: ${existingBuilding.bill_due_day ?? "—"} → ${
+            newValue ?? "—"
+          }`
+        );
       }
+
+      updateData.bill_due_day = newValue;
     }
 
     // Active status
@@ -353,20 +373,25 @@ class BuildingService {
     const building = await prisma.buildings.update({
       where: { building_id: buildingId },
       data: updateData,
-      include: {
-        building_managers: {
-          include: {
-            user: {
-              select: {
-                user_id: true,
-                full_name: true,
-                email: true,
-              },
-            },
-          },
-        },
-      },
     });
+
+    // 5️⃣ Send notification if billing-related fields changed
+    if (billingChanges.length > 0) {
+      const title = `Cập nhật chi phí tòa nhà ${existingBuilding.name}`;
+      const body =
+        `Các thông tin sau đã được cập nhật:\n\n` + billingChanges.join("\n");
+
+      await NotificationService.createBroadcastNotification(
+        senderId,
+        title,
+        body,
+        {
+          building_id: buildingId,
+          type: "BUILDING_BILLING_UPDATE",
+        }
+      );
+    }
+    console.log("🔥 UPDATED BUILDING:", building);
 
     return this.formatBuildingResponse(building);
   }
