@@ -178,7 +178,12 @@ class ContractService {
         if (!room_id || !tenant_user_id || !start_date || !duration_months || !rent_amount) {
             throw new Error('Missing required fields');
         }
-
+        if (penalty_rate === undefined || penalty_rate === null) {
+            throw new Error('Penalty rate is required');
+        }
+        if (parseFloat(penalty_rate) < 1) {
+            throw new Error('Penalty rate must be at least 1%');
+        }
         const roomId = parseInt(room_id);
         const tenantUserId = parseInt(tenant_user_id);
         const startDate = new Date(start_date);
@@ -366,8 +371,11 @@ class ContractService {
         if (![CONTRACT_STATUS.PENDING, CONTRACT_STATUS.REJECTED].includes(existingContract.status)) {
             throw new Error('Only pending or rejected contracts can be updated');
         }
-
-        const { room_id, tenant_user_id, start_date, duration_months, rent_amount, deposit_amount, penalty_rate, payment_cycle_months, note } = data;
+        if (penalty_rate !== undefined) {
+            if (parseFloat(penalty_rate) < 1) {
+                throw new Error('Penalty rate must be at least 1%');
+            }
+        }        const { room_id, tenant_user_id, start_date, duration_months, rent_amount, deposit_amount, penalty_rate, payment_cycle_months, note } = data;
 
         const targetRoomId = room_id ? parseInt(room_id) : existingContract.room_id;
         const targetStartDate = start_date ? new Date(start_date) : existingContract.start_date;
@@ -561,40 +569,55 @@ class ContractService {
         return this.formatContractResponse(result);
     }
     // ============================================
-    // COMPLETE PENDING TRANSACTION
+    //  AUTO RESOLVE PENDING TRANSACTION
     // ============================================
-    async completePendingTransaction(contractId, finalStatus, currentUser = null) {
-        // finalStatus: 'terminated' | 'expired'
 
+
+    async checkAndResolvePendingTransaction(contractId) {
         const contract = await prisma.contracts.findUnique({
             where: { contract_id: contractId },
             include: { room_history: { include: { building: true } } }
         });
 
         if (!contract) throw new Error('Contract not found');
-        if (currentUser) await this.checkContractPermission(contract, currentUser);
 
+        // Chỉ xử lý nếu đang chờ thanh toán
         if (contract.status !== CONTRACT_STATUS.PENDING_TRANSACTION) {
-            throw new Error('Contract is not in pending transaction status');
+            return {
+                success: false,
+                message: `Contract status is ${contract.status}, not pending_transaction`
+            };
         }
 
-        // Validate finalStatus
-        if (![CONTRACT_STATUS.TERMINATED, CONTRACT_STATUS.EXPIRED].includes(finalStatus)) {
-            throw new Error('Invalid final status');
-        }
-
-        // Check bills đã thanh toán hết
+        // Check bills
         const hasUnpaid = await this.hasUnpaidBills(contractId);
         if (hasUnpaid) {
-            throw new Error('Cannot complete: There are still unpaid bills');
+            return {
+                success: false,
+                message: 'Cannot complete: There are still unpaid bills'
+            };
         }
+
+        // --- AUTOMATIC STATUS DETERMINATION ---
+        // Nếu ngày hiện tại >= ngày kết thúc hợp đồng -> EXPIRED
+        // Nếu ngày hiện tại < ngày kết thúc (chấm dứt sớm) -> TERMINATED
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const endDate = new Date(contract.end_date);
+        endDate.setHours(0, 0, 0, 0);
+
+        // Nếu là yêu cầu chấm dứt (thường sẽ có note), nhưng logic đơn giản nhất là check date
+        // Hoặc kiểm tra xem trước đó nó đến từ luồng nào?
+        // Tuy nhiên, Expired hay Terminated đều có nghĩa là kết thúc, khác nhau ở semantic.
+        const finalStatus = (today >= endDate) ? CONTRACT_STATUS.EXPIRED : CONTRACT_STATUS.TERMINATED;
 
         const result = await prisma.$transaction(async (tx) => {
             const updated = await tx.contracts.update({
                 where: { contract_id: contractId },
                 data: {
                     status: finalStatus,
-                    updated_at: new Date()
+                    updated_at: new Date(),
+                    note: `${contract.note || ''}\n[AUTO] Bills cleared. Status updated to ${finalStatus}`.trim()
                 },
                 include: {
                     room_history: { include: { building: true } },
@@ -602,12 +625,40 @@ class ContractService {
                 }
             });
 
+            // Clean room & tenant
             await this._clearRoomAndTenant(tx, contract.room_id, contract.tenant_user_id, contractId);
 
             return updated;
         });
 
-        return this.formatContractResponse(result);
+        console.log(`✓ Contract ${contractId} auto-resolved to ${finalStatus}`);
+        return {
+            success: true,
+            message: `Transaction completed. Contract auto-updated to ${finalStatus}.`,
+            data: this.formatContractResponse(result)
+        };
+    }
+
+    /**
+     * [LEGACY SUPPORT] - Complete Pending Transaction
+     * Bây giờ chỉ gọi vào logic auto-resolve.
+     * Không cần truyền finalStatus manual nữa.
+     */
+    async completePendingTransaction(contractId, _unusedFinalStatus, currentUser = null) {
+        // Kiểm tra quyền (Optional vì hàm checkAndResolvePendingTransaction đã check logic)
+        if (currentUser) {
+            const contract = await prisma.contracts.findUnique({ where: { contract_id: contractId } });
+            // Reuse existing permission check
+            if(contract) await this.checkContractPermission(contract, currentUser);
+        }
+
+        const result = await this.checkAndResolvePendingTransaction(contractId);
+
+        if (!result.success) {
+            throw new Error(result.message);
+        }
+
+        return result.data;
     }
 
     // ============================================
@@ -720,7 +771,35 @@ class ContractService {
             console.log(`✓ Contract ${contract.contract_id} auto-updated to ${newStatus}`);
         }
     }
+    async autoUpdateExpiredContracts() {
+        try {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
 
+            const expiredContracts = await prisma.contracts.findMany({
+                where: {
+                    end_date: { lt: today },
+                    status: { in: ['active', 'pending'] },
+                    deleted_at: null
+                }
+            });
+
+            if (expiredContracts.length === 0) return 0;
+
+            // Run in transaction for consistency (looping inside logic)
+            // Note: UpdateMany doesn't support relation updates, so we iterate
+            let count = 0;
+            for (const contract of expiredContracts) {
+                await this.autoUpdateExpiredStatus(contract); // Reuse the transactional logic above
+                count++;
+            }
+
+            return count;
+        } catch (error) {
+            console.error('Error auto-updating expired contracts:', error);
+            return 0;
+        }
+    }
     // ============================================
     // GET METHODS
     // ============================================
