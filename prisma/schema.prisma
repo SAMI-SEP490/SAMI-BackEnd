@@ -204,11 +204,8 @@ enum vehicle_status {
 }
 
 enum vehicle_type {
-  car
-  motorcycle
-  truck
-  van
-  other
+  two_wheeler
+  four_wheeler
 }
 
 enum tenant_type {
