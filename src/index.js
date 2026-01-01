@@ -31,6 +31,7 @@ const parkingSlotRoutes = require('./routes/parking-slot.routes.js');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
 const cron = require('node-cron');
 const BillService = require('./services/bill.service');
+const utilityRoutes = require('./routes/utility.routes');
 
 const app = express();
 
@@ -143,6 +144,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/bot', botRoutes);
 app.use('/api/chatbot', chatbotRoutes);
 app.use('/api/parking-slots', parkingSlotRoutes);
+app.use('/api/utility', utilityRoutes);
 // 404 handler
 app.use(notFound);
 
