@@ -17,6 +17,7 @@ enum Role {
   OWNER
   USER
 }
+
 enum ConsentType {
   TERM_OF_SERVICE
   PRIVACY_POLICY
@@ -26,18 +27,20 @@ enum ConsentType {
 
   @@map("consent_type")
 }
+
 enum addendum_status {
   draft
   pending_approval
   approved
   rejected
-  cancelled
 }
+
 enum ConsentAction {
   ACCEPTED
   REVOKED
   UPDATED
 }
+
 enum addendum_type {
   extension
   rent_change
@@ -45,6 +48,7 @@ enum addendum_type {
   general
   other
 }
+
 enum bill_status {
   draft
   issued
@@ -485,6 +489,7 @@ model consent_logs {
   @@index([data_hash]) // Verify integrity, detect duplicates
   @@map("consent_logs")
 }
+
 // ============================================
 // BẢNG PHỤ: Lưu các version của Terms/Policy
 // ============================================
@@ -515,6 +520,7 @@ model consent_versions {
   @@index([content_hash]) // Verify integrity
   @@map("consent_versions")
 }
+
 // ============================================
 // BILLING SYSTEM
 // ============================================
