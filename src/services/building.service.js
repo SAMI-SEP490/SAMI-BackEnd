@@ -550,7 +550,7 @@ class BuildingService {
         },
         skip,
         take: limit,
-        orderBy: { assigned_from: "desc" },
+        orderBy: { manager_id: "desc" },
       }),
       prisma.building_managers.count({ where }),
     ]);
