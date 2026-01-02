@@ -40,7 +40,9 @@ class FloorPlanService {
 
   // Helper: Tạo rooms data từ layout nodes
   extractRoomsFromLayout(layout, buildingId, floorNumber) {
-    if (!layout || !layout.nodes) return [];
+    if (!layout || !Array.isArray(layout.nodes)) return [];
+
+    const nodes = layout.nodes; // ✅ FIX QUAN TRỌNG
 
     const rooms = nodes
       .filter(
@@ -49,38 +51,34 @@ class FloorPlanService {
           (n?.type === "block" && n?.data?.icon === "room")
       )
       .map((node) => {
-        const label =
-          node?.data?.label ||
-          node?.data?.room_number ||
-          node?.data?.roomNumber;
+        const roomNumber = String(
+          node?.data?.room_number ?? node?.data?.label ?? ""
+        ).trim();
 
-        const roomNumber = label ? String(label).trim() : null;
+        if (!roomNumber) return null;
 
-        // size đang là DECIMAL trong Prisma => phải lưu số, không phải "12m2"
-        // (logic cũ của bạn có thể đã normalize trước khi gọi service)
-        const rawSize =
-          node?.data?.size ?? node?.data?.area ?? node?.data?.room_size;
-
+        // size (m²) – FE đang truyền size = 4*3
         let size = null;
-        if (rawSize !== undefined && rawSize !== null && rawSize !== "") {
-          const s = String(rawSize)
-            .replace(",", ".")
-            .match(/(\d+(\.\d+)?)/);
+        if (node?.data?.size !== undefined && node?.data?.size !== null) {
+          const s = String(node.data.size).match(/(\d+(\.\d+)?)/);
           if (s) size = parseFloat(s[1]);
         }
 
         return {
-          building_id: parseInt(buildingId),
-          floor: parseInt(floorNumber),
+          building_id: Number(buildingId),
+          floor: Number(floorNumber),
           room_number: roomNumber,
-          size: size,
+          size,
           description: node?.data?.description || null,
           status: "available",
           is_active: true,
+          created_at: new Date(),
+          updated_at: new Date(),
         };
-      });
+      })
+      .filter(Boolean);
 
-    return rooms.filter((r) => r.room_number);
+    return rooms;
   }
 
   // NEXT FLOOR - Lấy tầng tiếp theo cần tạo cho building (dựa trên dữ liệu floor_plans)
@@ -276,8 +274,74 @@ class FloorPlanService {
           skipDuplicates: true,
         });
       }
+      // ===== PATCH START: sync room_id back into layout after CREATE =====
+      let finalLayout = layout;
 
-      return this.formatFloorPlanResponse(floorPlan);
+      // Chỉ sync khi layout có nodes
+      if (layout && Array.isArray(layout.nodes) && roomsToCreate.length > 0) {
+        // Lấy lại rooms vừa tạo trong tầng này
+        const createdRooms = await tx.rooms.findMany({
+          where: {
+            building_id: buildingId,
+            floor: floorNum,
+            is_active: true,
+          },
+          select: {
+            room_id: true,
+            room_number: true,
+            size: true,
+          },
+        });
+
+        // Map room_number -> room
+        const roomByNumber = new Map(
+          createdRooms.map((r) => [String(r.room_number).trim(), r])
+        );
+
+        finalLayout = {
+          ...layout,
+          nodes: layout.nodes.map((node) => {
+            // chỉ xử lý node ROOM
+            if (
+              (node.type === "room" ||
+                (node.type === "block" && node.data?.icon === "room")) &&
+              node.data?.room_number
+            ) {
+              const key = String(node.data.room_number).trim();
+              const matchedRoom = roomByNumber.get(key);
+
+              if (!matchedRoom) return node;
+
+              return {
+                ...node,
+                data: {
+                  ...node.data,
+                  room_id: matchedRoom.room_id,
+                  size: node.data.size ?? matchedRoom.size ?? null,
+                },
+              };
+            }
+
+            // các node khác giữ nguyên
+            return node;
+          }),
+        };
+
+        // Update lại layout đã gắn room_id
+        await tx.floor_plans.update({
+          where: { plan_id: floorPlan.plan_id },
+          data: {
+            layout: finalLayout,
+            updated_at: new Date(),
+          },
+        });
+      }
+      // ===== PATCH END =====
+
+      return this.formatFloorPlanResponse({
+        ...floorPlan,
+        layout: finalLayout ?? floorPlan.layout,
+      });
     });
   }
 
@@ -1015,29 +1079,29 @@ class FloorPlanService {
   }
 
   async checkFloorPlanAccess(userId, role, floorPlanId) {
-  if (!userId || !floorPlanId) return false;
+    if (!userId || !floorPlanId) return false;
 
-  const normalizedRole = String(role || "").toUpperCase();
+    const normalizedRole = String(role || "").toUpperCase();
 
-  // Owner toàn quyền
-  if (normalizedRole === "OWNER") return true;
+    // Owner toàn quyền
+    if (normalizedRole === "OWNER") return true;
 
-  const planId = parseInt(floorPlanId);
-  if (isNaN(planId)) return false;
+    const planId = parseInt(floorPlanId);
+    if (isNaN(planId)) return false;
 
-  const floorPlan = await prisma.floor_plans.findUnique({
-    where: { plan_id: planId },
-    select: { building_id: true },
-  });
+    const floorPlan = await prisma.floor_plans.findUnique({
+      where: { plan_id: planId },
+      select: { building_id: true },
+    });
 
-  if (!floorPlan || !floorPlan.building_id) return false;
+    if (!floorPlan || !floorPlan.building_id) return false;
 
-  return this.checkBuildingAccess(
-    userId,
-    normalizedRole,
-    floorPlan.building_id
-  );
-}
+    return this.checkBuildingAccess(
+      userId,
+      normalizedRole,
+      floorPlan.building_id
+    );
+  }
 
   // Helper functions - Format response
   formatFloorPlanResponse(floorPlan) {
