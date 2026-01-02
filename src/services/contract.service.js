@@ -142,7 +142,7 @@ class ContractService {
         return true;
     }
 
-    async _convertImageToPdf(imageBuffer) {
+    async _convertImagesToPdf(files) {
         return new Promise((resolve, reject) => {
             try {
                 const doc = new PDFDocument({ autoFirstPage: false });
@@ -152,16 +152,59 @@ class ContractService {
                 doc.on('end', () => resolve(Buffer.concat(chunks)));
                 doc.on('error', err => reject(err));
 
-                // Load image to get dimensions
-                const img = doc.openImage(imageBuffer);
-                doc.addPage({ size: [img.width, img.height] });
-                doc.image(imageBuffer, 0, 0);
+                // Duyệt qua từng file ảnh và thêm vào PDF
+                for (const file of files) {
+                    const img = doc.openImage(file.buffer);
+                    doc.addPage({ size: [img.width, img.height] });
+                    doc.image(file.buffer, 0, 0);
+                }
 
                 doc.end();
             } catch (error) {
                 reject(error);
             }
         });
+    }
+
+    /**
+     * Helper xử lý file upload (PDF hoặc Multi-Image)
+     */
+    async _processUploadFiles(fileOrFiles) {
+        if (!fileOrFiles) return null;
+
+        // Chuẩn hóa thành mảng
+        const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
+        if (files.length === 0) return null;
+
+        let bufferToUpload;
+        let originalName = files[0].originalname;
+
+        // Kiểm tra loại file
+        const isPdf = files[0].mimetype === 'application/pdf';
+        const isImage = files[0].mimetype.startsWith('image/');
+
+        if (isPdf) {
+            // Nếu là PDF, chỉ lấy file đầu tiên (theo logic frontend gửi)
+            bufferToUpload = files[0].buffer;
+        } else if (isImage) {
+            // Nếu là ảnh (có thể nhiều ảnh), merge hết vào 1 PDF
+            try {
+                bufferToUpload = await this._convertImagesToPdf(files);
+                originalName = originalName.replace(/\.[^/.]+$/, "") + ".pdf";
+            } catch (err) {
+                throw new Error('Failed to convert images to PDF: ' + err.message);
+            }
+        } else {
+            throw new Error('Unsupported file type');
+        }
+
+        const uploadResult = await s3Service.uploadFile(bufferToUpload, originalName, 'contracts');
+        return {
+            s3_key: uploadResult.s3_key,
+            file_name: uploadResult.file_name,
+            checksum: uploadResult.checksum,
+            uploaded_at: uploadResult.uploaded_at
+        };
     }
 
     // ============================================
@@ -178,11 +221,10 @@ class ContractService {
         if (!room_id || !tenant_user_id || !start_date || !duration_months || !rent_amount) {
             throw new Error('Missing required fields');
         }
-        if (penalty_rate === undefined || penalty_rate === null) {
-            throw new Error('Penalty rate is required');
-        }
-        if (parseFloat(penalty_rate) < 1) {
-            throw new Error('Penalty rate must be at least 1%');
+        if (penalty_rate === undefined || penalty_rate === null) throw new Error('Penalty rate is required');
+        const rate = parseFloat(penalty_rate);
+        if (isNaN(rate) || rate < 0.01 || rate > 1) {
+            throw new Error('Penalty rate must be between 0.01% and 1%');
         }
         const roomId = parseInt(room_id);
         const tenantUserId = parseInt(tenant_user_id);
@@ -371,12 +413,18 @@ class ContractService {
         if (![CONTRACT_STATUS.PENDING, CONTRACT_STATUS.REJECTED].includes(existingContract.status)) {
             throw new Error('Only pending or rejected contracts can be updated');
         }
-        if (penalty_rate !== undefined) {
-            if (parseFloat(penalty_rate) < 1) {
-                throw new Error('Penalty rate must be at least 1%');
-            }
-        }        const { room_id, tenant_user_id, start_date, duration_months, rent_amount, deposit_amount, penalty_rate, payment_cycle_months, note } = data;
 
+        const { room_id, tenant_user_id, start_date, duration_months, rent_amount, deposit_amount, penalty_rate, payment_cycle_months, note } = data;
+
+        // --- VALIDATE PENALTY RATE ---
+        let validRate = undefined;
+        if (penalty_rate !== undefined) {
+            const rate = parseFloat(penalty_rate);
+            if (isNaN(rate) || rate < 0.01 || rate > 1) {
+                throw new Error('Penalty rate must be between 0.01% and 1%');
+            }
+            validRate = rate;
+        }
         const targetRoomId = room_id ? parseInt(room_id) : existingContract.room_id;
         const targetStartDate = start_date ? new Date(start_date) : existingContract.start_date;
         const targetDuration = duration_months ? parseInt(duration_months) : existingContract.duration_months;
@@ -395,7 +443,7 @@ class ContractService {
         }
         if (rent_amount !== undefined) updateData.rent_amount = parseFloat(rent_amount);
         if (deposit_amount !== undefined) updateData.deposit_amount = parseFloat(deposit_amount);
-        if (penalty_rate !== undefined) updateData.penalty_rate = penalty_rate ? parseFloat(penalty_rate) : null;
+        if (validRate !== undefined) updateData.penalty_rate = validRate;
         if (payment_cycle_months !== undefined) updateData.payment_cycle_months = parseInt(payment_cycle_months);
         if (note !== undefined) updateData.note = note;
 

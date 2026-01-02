@@ -19,7 +19,7 @@ router.use(authenticate);
 // Tạo hợp đồng (Cho phép PDF hoặc Ảnh - Middleware upload tự handle)
 router.post('/',
     requireRole(['owner', 'manager']),
-    upload.single('contract_file'), // Chấp nhận PDF hoặc Ảnh
+    upload.array('contract_file'), // Chấp nhận PDF hoặc Ảnh
     handleUploadError,
     validateCreateContract,
     contractController.createContract
@@ -42,7 +42,7 @@ router.get('/:id',
 router.put('/:id',
     requireRole(['owner', 'manager']),
     validateContractId,
-    upload.single('contract_file'), // Chấp nhận PDF hoặc Ảnh
+    upload.array('contract_file'), // Chấp nhận PDF hoặc Ảnh
     handleUploadError,
     validateUpdateContract,
     contractController.updateContract
