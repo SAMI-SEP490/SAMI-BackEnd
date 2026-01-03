@@ -1015,6 +1015,64 @@ class RoomService {
     };
   }
 
+
+
+  async getSimpleRoomsByBuilding(buildingId, onlyEmpty) {
+    const bId = parseInt(buildingId);
+    if (isNaN(bId)) throw new Error('Building ID must be a number');
+
+    const where = {
+      building_id: bId,
+      is_active: true
+    };
+
+    // Logic lọc phòng trống
+    if (onlyEmpty === 'true' || onlyEmpty === true) {
+      // [FIX] Sử dụng NOT + some thay vì none
+      // Ý nghĩa: Loại bỏ phòng nếu tìm thấy (some) hợp đồng thỏa mãn điều kiện bên trong
+      where.NOT = {
+        contracts_history: {
+          some: {
+            // 1. Chỉ chặn bởi các hợp đồng chưa bị xóa (quan trọng)
+            deleted_at: null,
+
+            // 2. Các trạng thái được coi là "Đang chiếm chỗ"
+            status: {
+              in: [
+                'active',               // Đang ở
+                'pending',              // Đang chờ duyệt -> Phòng này phải ẩn
+                'pending_transaction',  // Đang chờ cọc -> Phòng này phải ẩn
+                'requested_termination' // Đang xin hủy nhưng chưa đi
+              ]
+            }
+          }
+        }
+      };
+    }
+
+    const rooms = await prisma.rooms.findMany({
+      where: where,
+      select: {
+        room_id: true,
+        room_number: true,
+        floor: true,
+        size: true,
+        max_tenants: true,
+        status: true,
+        description: true,
+        current_contract_id: true, // FE có thể dùng để check lại lần nữa
+        building: {
+          select: { name: true }
+        }
+      },
+      orderBy: [
+        { floor: 'asc' },
+        { room_number: 'asc' }
+      ]
+    });
+
+    return rooms;
+  }
   // Helper functions - Format response
   formatRoomResponse(room) {
     return {
