@@ -18,6 +18,7 @@ class ParkingSlotService {
             throw new Error('Building not found');
         }
 
+        // 1. Check trùng slot_number trong building
         const existedSlot = await prisma.parking_slots.findFirst({
             where: {
                 building_id,
@@ -29,6 +30,28 @@ class ParkingSlotService {
             throw new Error('Slot number already exists in this building');
         }
 
+        // 2. Đếm số slot hiện tại theo loại
+        const currentCount = await prisma.parking_slots.count({
+            where: {
+                building_id,
+                slot_type
+            }
+        });
+
+        // 3. Check quota theo loại xe
+        if (slot_type === 'two_wheeler') {
+            if (building.max_2_wheel_slot !== null && currentCount >= building.max_2_wheel_slot) {
+                throw new Error('Đã đạt số lượng slot tối đa cho xe 2 bánh');
+            }
+        }
+
+        if (slot_type === 'four_wheeler') {
+            if (building.max_4_wheel_slot !== null && currentCount >= building.max_4_wheel_slot) {
+                throw new Error('Đã đạt số lượng slot tối đa cho xe 4 bánh');
+            }
+        }
+
+        // 4. Tạo slot
         return prisma.parking_slots.create({
             data: {
                 building_id,
@@ -83,6 +106,12 @@ class ParkingSlotService {
             throw new Error('Parking slot not found');
         }
 
+        // ❌ Không cho đổi loại xe
+        if (data.slot_type && data.slot_type !== slot.slot_type) {
+            throw new Error('Cannot change parking slot type');
+        }
+
+        // Check trùng số slot trong building
         if (data.slot_number && data.slot_number !== slot.slot_number) {
             const duplicated = await prisma.parking_slots.findFirst({
                 where: {
@@ -102,7 +131,37 @@ class ParkingSlotService {
             data
         });
     }
+   async getBuildingsForParking(user) {
+  const where = {};
 
+  if (user.role === "MANAGER") {
+    const managerBuilding = await prisma.building_managers.findFirst({
+      where: {
+        user_id: user.user_id,
+      },
+      select: {
+        building_id: true,
+      },
+    });
+
+    if (!managerBuilding) {
+      throw new Error("Manager has no building assigned");
+    }
+
+    where.building_id = managerBuilding.building_id;
+  }
+
+  return prisma.buildings.findMany({
+    where,
+    select: {
+      building_id: true,
+      name: true,
+      max_2_wheel_slot: true,
+      max_4_wheel_slot: true,
+    },
+    orderBy: { name: "asc" },
+  });
+}
     // Xóa parking slot
     async deleteParkingSlot(slotId) {
         const slot = await prisma.parking_slots.findUnique({
