@@ -65,4 +65,11 @@ router.post('/search',
     requireRole(['owner', 'manager']),
     tenantController.searchTenant);
 
+// GET /api/tenants/lookup?q=0905123456
+router.get(
+    '/lookup',
+    requireRole(['owner', 'manager']),
+    tenantController.lookupTenant
+);
+
 module.exports = router;
