@@ -1,163 +1,131 @@
-// Updated: 2025-12-29
-// by: Assistant
+const parkingSlotService = require('../services/parking-slot.service');
 
-const prisma = require('../config/prisma');
+class ParkingSlotController {
 
-class ParkingSlotService {
-
+    // =========================
     // CREATE
-    async createParkingSlot(data) {
-        const { building_id, slot_number, slot_type } = data;
+    // =========================
+    async createParkingSlot(req, res, next) {
+        try {
+            const slot = await parkingSlotService.createParkingSlot(req.body);
 
-        if (!building_id || !slot_number || !slot_type) {
-            throw new Error('Missing required fields');
+            res.status(201).json({
+                success: true,
+                message: 'Parking slot created successfully',
+                data: { slot }
+            });
+        } catch (err) {
+            next(err);
         }
+    }
 
-        const building = await prisma.buildings.findUnique({
-            where: { building_id }
-        });
+    // =========================
+    // READ - LIST
+    // =========================
+    async getParkingSlots(req, res, next) {
+        try {
+            const slots = await parkingSlotService.getParkingSlots(req.query);
 
-        if (!building) {
-            throw new Error('Building not found');
+            res.json({
+                success: true,
+                data: { slots }
+            });
+        } catch (err) {
+            next(err);
         }
+    }
 
-        const existedSlot = await prisma.parking_slots.findFirst({
-            where: {
-                building_id,
-                slot_number
-            }
-        });
+  // GET buildings for parking slot page
+  async getBuildingsForParking(req, res, next) {
+    try {
+      const buildings = await parkingSlotService.getBuildingsForParking(req.user);
 
-        if (existedSlot) {
-            throw new Error('Slot number already exists in this building');
-        }
+      res.json({
+        success: true,
+        data: buildings
+      });
+    } catch (err) {
+        console.log("REQ USER:", req.user);
+      next(err);
+    }
+  }
 
-        return prisma.parking_slots.create({
-            data: {
-                building_id,
-                slot_number,
-                slot_type,
+    // =========================
+    // READ - AVAILABLE
+    // =========================
+    async getAvailableParkingSlots(req, res, next) {
+        try {
+            const filters = {
+                building_id: req.query.building_id,
                 is_available: true
-            }
-        });
-    }
+            };
 
-    // READ - CRUD
-    async getParkingSlots(query) {
-        const { building_id, is_available } = query;
-        const where = {};
+            const slots = await parkingSlotService.getParkingSlots(filters);
 
-        if (building_id) {
-            where.building_id = parseInt(building_id);
-        }
-
-        if (is_available !== undefined) {
-            where.is_available = is_available === 'true';
-        }
-
-        return prisma.parking_slots.findMany({
-            where,
-            orderBy: { slot_number: 'asc' }
-        });
-    }
-
-    // READ - BUSINESS (slot trống)
-    async getAvailableParkingSlots(filters, userId, userRole) {
-        const { building_id, vehicle_type } = filters;
-
-        const where = {
-            building_id,
-            is_available: true
-        };
-
-        if (vehicle_type) {
-            where.slot_type = vehicle_type;
-        }
-
-        // Manager chỉ được xem slot trong building của mình
-        if (userRole === 'MANAGER') {
-            const managerBuildings = await prisma.building_managers.findFirst({
-                where: {
-                    user_id: userId,
-                    building_id
-                }
+            res.json({
+                success: true,
+                data: { slots }
             });
-
-            if (!managerBuildings) {
-                throw new Error('Unauthorized to view parking slots in this building');
-            }
+        } catch (err) {
+            next(err);
         }
-
-        return prisma.parking_slots.findMany({
-            where,
-            orderBy: { slot_number: 'asc' }
-        });
     }
 
-    // READ - By ID
-    async getParkingSlotById(slotId) {
-        const slot = await prisma.parking_slots.findUnique({
-            where: { slot_id: slotId }
-        });
+    // =========================
+    // READ - BY ID
+    // =========================
+    async getParkingSlotById(req, res, next) {
+        try {
+            const slot = await parkingSlotService.getParkingSlotById(
+                parseInt(req.params.id)
+            );
 
-        if (!slot) {
-            throw new Error('Parking slot not found');
+            res.json({
+                success: true,
+                data: { slot }
+            });
+        } catch (err) {
+            next(err);
         }
-
-        return slot;
     }
 
+    // =========================
     // UPDATE
-    async updateParkingSlot(slotId, data) {
-        const slot = await prisma.parking_slots.findUnique({
-            where: { slot_id: slotId }
-        });
+    // =========================
+    async updateParkingSlot(req, res, next) {
+        try {
+            const slot = await parkingSlotService.updateParkingSlot(
+                parseInt(req.params.id),
+                req.body
+            );
 
-        if (!slot) {
-            throw new Error('Parking slot not found');
-        }
-
-        if (data.slot_number && data.slot_number !== slot.slot_number) {
-            const duplicated = await prisma.parking_slots.findFirst({
-                where: {
-                    building_id: slot.building_id,
-                    slot_number: data.slot_number,
-                    NOT: { slot_id: slotId }
-                }
+            res.json({
+                success: true,
+                message: 'Parking slot updated successfully',
+                data: { slot }
             });
-
-            if (duplicated) {
-                throw new Error('Slot number already exists in this building');
-            }
+        } catch (err) {
+            next(err);
         }
-
-        return prisma.parking_slots.update({
-            where: { slot_id: slotId },
-            data
-        });
     }
 
+    // =========================
     // DELETE
-    async deleteParkingSlot(slotId) {
-        const slot = await prisma.parking_slots.findUnique({
-            where: { slot_id: slotId },
-            include: { vehicles: true }
-        });
+    // =========================
+    async deleteParkingSlot(req, res, next) {
+        try {
+            await parkingSlotService.deleteParkingSlot(
+                parseInt(req.params.id)
+            );
 
-        if (!slot) {
-            throw new Error('Parking slot not found');
+            res.json({
+                success: true,
+                message: 'Parking slot deleted successfully'
+            });
+        } catch (err) {
+            next(err);
         }
-
-        if (slot.vehicles.length > 0) {
-            throw new Error('Cannot delete parking slot with assigned vehicles');
-        }
-
-        await prisma.parking_slots.delete({
-            where: { slot_id: slotId }
-        });
-
-        return { message: 'Parking slot deleted successfully' };
     }
 }
 
-module.exports = new ParkingSlotService();
+module.exports = new ParkingSlotController();

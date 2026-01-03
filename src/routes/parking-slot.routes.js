@@ -9,14 +9,23 @@ const {
 } = require('../middlewares/parking-slot.validation');
 // All routes require authentication
 router.use(authenticate);
-
+router.get(
+  "/buildings",
+  requireRole(["owner", "manager"]),
+  parkingSlotController.getBuildingsForParking
+);
+// GET available parking slots
+router.get(
+    '/available',
+    requireRole(['owner', 'manager']),
+    parkingSlotController.getAvailableParkingSlots
+);
 // CREATE - Tạo parking slot
 router.post('/',
     requireRole(['owner', 'manager']),
     validateCreateParkingSlot,
     parkingSlotController.createParkingSlot
 );
-
 // READ - Lấy danh sách parking slot
 router.get('/',
     requireRole(['owner', 'manager', 'tenant']),
@@ -42,10 +51,5 @@ router.delete('/:id',
     validateParkingSlotId,
     parkingSlotController.deleteParkingSlot
 );
-// GET available parking slots
-router.get(
-    '/available',
-    requireRole(['OWNER', 'MANAGER']),
-    parkingSlotController.getAvailableParkingSlots
-);
+
 module.exports = router;

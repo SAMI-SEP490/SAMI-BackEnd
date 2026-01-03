@@ -242,92 +242,86 @@ class VehicleRegistrationController {
             next(err);
         }
     }
-// Deactivate vehicle (Manager/Owner)
-async deactivateVehicle(req, res, next) {
-    try {
-        const { id } = req.params;
-        const { reason } = req.body;
+    // Deactivate vehicle (Manager/Owner)
+    async deactivateVehicle(req, res, next) {
+        try {
+            const { id } = req.params;
+            const { reason } = req.body;
 
-        const vehicle = await vehicleRegistrationService.deactivateVehicle(
-            parseInt(id),
-            req.user.user_id,
-            req.user.role,
-            reason
-        );
+            const vehicle = await vehicleRegistrationService.deactivateVehicle(
+                parseInt(id),
+    req.user.user_id
+            );
 
-        res.json({
-            success: true,
-            message: 'Vehicle deactivated successfully',
-            data: { vehicle }
-        });
-    } catch (err) {
-        next(err);
+            res.json({
+                success: true,
+                message: 'Vehicle deactivated successfully',
+                data: { vehicle }
+            });
+        } catch (err) {
+            next(err);
+        }
     }
-}
-async reactivateVehicle(req, res, next) {
-    try {
-        const { id } = req.params;
-        const { slot_id } = req.body;
+    async reactivateVehicle(req, res, next) {
+        try {
+            const { id } = req.params;
+            const { slot_id } = req.body;
 
-        const vehicle = await vehicleRegistrationService.reactivateVehicle(
-            parseInt(id),
-            req.user.user_id,
-            req.user.role,
-            slot_id
-        );
+            const vehicle = await vehicleRegistrationService.reactivateVehicle(
+                parseInt(id),
+                slot_id
+            );
 
-        res.json({
-            success: true,
-            message: 'Vehicle reactivated successfully',
-            data: { vehicle }
-        });
-    } catch (err) {
-        next(err);
+            res.json({
+                success: true,
+                message: 'Vehicle reactivated successfully',
+                data: { vehicle }
+            });
+        } catch (err) {
+            next(err);
+        }
     }
-}
-async changeVehicleSlot(req, res, next) {
-    try {
-        const { id } = req.params;
-        const { new_slot_id } = req.body;
+    async changeVehicleSlot(req, res, next) {
+        try {
+            const { id } = req.params;
+            const { new_slot_id } = req.body;
 
-        const vehicle = await vehicleRegistrationService.changeVehicleSlot(
-            parseInt(id),
-            req.user.user_id,
-            req.user.role,
-            new_slot_id
-        );
+            const vehicle = await vehicleRegistrationService.changeVehicleSlot(
+                parseInt(id),
+                new_slot_id
+            );
 
-        res.json({
-            success: true,
-            message: 'Vehicle slot changed successfully',
-            data: { vehicle }
-        });
-    } catch (err) {
-        next(err);
+            res.json({
+                success: true,
+                message: 'Vehicle slot changed successfully',
+                data: { vehicle }
+            });
+        } catch (err) {
+            next(err);
+        }
     }
-}
-// Assign vehicle to parking slot (Manager/Owner)
-async assignVehicleToSlot(req, res, next) {
-    try {
-        const { id } = req.params; // vehicle_id
-        const { slot_id } = req.body;
+    // Assign vehicle to parking slot (Manager/Owner)
+    async assignVehicleToSlot(req, res, next) {
+        try {
+            const { id } = req.params; // vehicle_id
+            const { slot_id } = req.body;
 
-        const vehicle = await vehicleRegistrationService.assignVehicleToSlot(
-            parseInt(id),
-            slot_id,
-            req.user.user_id,
-            req.user.role
-        );
+            const vehicle = await vehicleRegistrationService.assignVehicleToSlot(
+                parseInt(id),
+                slot_id,
+                req.user.user_id,
+                req.user.role
+            );
 
-        res.json({
-            success: true,
-            message: 'Vehicle assigned to parking slot successfully',
-            data: { vehicle }
-        });
-    } catch (err) {
-        next(err);
+            res.json({
+                success: true,
+                message: 'Vehicle assigned to parking slot successfully',
+                data: { vehicle }
+            });
+        } catch (err) {
+            next(err);
+        }
     }
-}
 
     // ============ BOT ENDPOINTS ============
     // (Giữ nguyên các bot endpoints như cũ)
