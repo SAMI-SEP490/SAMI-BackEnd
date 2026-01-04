@@ -105,24 +105,30 @@ app.get('/health', async (req, res) => {
 // Schedule: Runs at 00:00:00 every day
 // Format: Seconds(optional) Minutes Hours DayOfMonth Month DayOfWeek
 cron.schedule('0 0 0 * * *', async () => {
-    console.log('🌙 [CRON] Starting daily scan for overdue bills...');
+    console.log('🌙 [CRON] Starting daily billing tasks...');
     try {
-        const count = await BillService.scanAndMarkOverdueBills();
-        if (count > 0) {
-            console.log(`✅ [CRON] Marked ${count} bills as OVERDUE.`);
-            
-            // Optional: You could trigger push notifications here too!
-            // const userIds = ... get users who own these bills ...
-            // await PushService.sendPushToUsers(userIds, "Thông báo quá hạn", "Hóa đơn của bạn đã quá hạn...");
-        } else {
-            console.log('✨ [CRON] No new overdue bills found today.');
+        // 1. Scan for Overdue Bills
+        const overdueCount = await BillService.scanAndMarkOverdueBills();
+        if (overdueCount > 0) {
+            console.log(`✅ [CRON] Marked ${overdueCount} bills as OVERDUE.`);
+            // TODO: Send push notification to users here
         }
+
+        // 2. Auto-Create Monthly Bills (Rent + Utility)
+        const created = await BillService.autoCreateMonthlyBills();
+        if (created.rent_created > 0 || created.utility_created > 0) {
+            console.log(`✨ [CRON] Created ${created.rent_created} Rent Bills and ${created.utility_created} Utility Batches.`);
+            // TODO: Send "New Bill" notification to users here
+        } else {
+            console.log('💤 [CRON] No new bills created today.');
+        }
+
     } catch (error) {
-        console.error('❌ [CRON] Error during daily scan:', error);
+        console.error('❌ [CRON] Error during daily billing tasks:', error);
     }
 }, {
     scheduled: true,
-    timezone: "Asia/Ho_Chi_Minh" // Critical: Ensures it runs at VN Midnight
+    timezone: "Asia/Ho_Chi_Minh" // Critical: Runs at VN Midnight
 });
 
 // API routes

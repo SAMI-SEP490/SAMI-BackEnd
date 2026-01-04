@@ -1,4 +1,4 @@
-// Updated: 2025-23-11
+// Updated: 2026-01-04
 // by: MinhBH
 
 const express = require('express');
@@ -13,39 +13,87 @@ const {
     updateIssuedBillSchema 
 } = require('../middlewares/validation.middleware');
 
-// We need authentication for everyone (Tenants AND Managers)
+// Áp dụng xác thực cho tất cả các routes
 router.use(authenticate);
 
-// Only Tenants can access these
+// ==========================================
+// 1. ROUTES DÀNH CHO NGƯỜI THUÊ (TENANT)
+// ==========================================
+
+// Xem danh sách hóa đơn của chính mình (đã phát hành, đã trả, quá hạn)
 router.get(
     '/list', 
     requireRole(['tenant']), 
     billController.getMyBills
 );
 
+// Xem danh sách hóa đơn chưa thanh toán (để hiện cảnh báo đỏ)
 router.get(
     '/list/unpaid', 
     requireRole(['tenant']), 
     billController.getMyUnpaidBills
 );
 
-// All bill management routes require owner or manager role
+// ==========================================
+// 2. ROUTES DÀNH CHO QUẢN LÝ (MANAGER/OWNER)
+// ==========================================
 router.use(requireRole(['owner', 'manager']));
 
-// --- LISTING ---
-router.get('/all', billController.getAllBills);
-router.get('/draft', billController.getDraftBills);
-router.get('/deleted', billController.getDeletedBills);
-router.get('/detail/:id', billController.getBillById);                     // View Detail
-router.get('/unbilled-rooms', billController.getUnbilledRooms);            // Get unbilled rooms
+// --- XEM DANH SÁCH (LISTING) ---
 
-// --- ACTIONS ---
-router.post('/create/draft', validate(createDraftBillSchema), billController.createDraftBill); // Create Draft Bills
-router.post('/create/issue', validate(createIssuedBillSchema), billController.createIssuedBill); // Create Bills
-router.put('/edit/draft/:id', validate(updateDraftBillSchema), billController.updateDraftBill); // Edit Bills
-router.put('/edit/issue/:id', validate(updateIssuedBillSchema), billController.updateIssuedBill); //Edit Issued Bills
-router.delete('/delete/:id', billController.deleteOrCancelBill);           // Soft Delete Draft/Master, Cancel Issued/Overdue
-router.post('/restore/:id', billController.restoreBill);                 // Restore soft-deleted draft/master bill
-router.post('/refresh-status', billController.refreshBillStatuses);      // Trigger Overdue Scan
+// Xem tất cả hóa đơn trong hệ thống (có thể lọc theo ?status=... hoặc ?room_id=...)
+router.get('/all', billController.getAllBills);
+
+// Xem các hóa đơn đang ở trạng thái Nháp (Draft)
+router.get('/draft', billController.getDraftBills);
+
+// Xem các hóa đơn đã bị xóa mềm (Soft Deleted)
+router.get('/deleted', billController.getDeletedBills);
+
+// Xem chi tiết một hóa đơn cụ thể (bao gồm các khoản phí dịch vụ, lịch sử trả tiền)
+router.get('/detail/:id', billController.getBillById);
+
+// Lấy danh sách các phòng CHƯA có hóa đơn trong tháng này (để tránh tạo trùng)
+// Query: ?period_start=2026-01-01
+router.get('/unbilled-rooms', billController.getUnbilledRooms);
+
+// --- TẠO MỚI (CREATE) ---
+
+// Tạo hóa đơn Nháp (Chưa gửi cho khách, có thể sửa thoải mái)
+router.post('/create/draft', validate(createDraftBillSchema), billController.createDraftBill);
+
+// Tạo và Phát hành ngay (Gửi cho khách luôn, yêu cầu dữ liệu phải chuẩn)
+// Có validate: Tổng tiền không được lớn hơn tiền hợp đồng
+router.post('/create/issue', validate(createIssuedBillSchema), billController.createIssuedBill);
+
+// --- CHỈNH SỬA (EDIT) ---
+
+// Sửa hóa đơn Nháp (Có thể sửa tiền, dịch vụ, hoặc chuyển trạng thái sang 'issued' để phát hành)
+router.put('/edit/draft/:id', validate(updateDraftBillSchema), billController.updateDraftBill);
+
+// Sửa hóa đơn Đã phát hành (Chỉ được sửa ngày, ghi chú. KHÔNG được sửa số tiền)
+router.put('/edit/issue/:id', validate(updateIssuedBillSchema), billController.updateIssuedBill);
+
+// --- GIA HẠN (EXTENSION) - [NEW] ---
+
+// Gia hạn cho hóa đơn Quá hạn (Overdue)
+// Logic: Cộng thêm 5 ngày vào Due Date, chuyển trạng thái về 'Issued' để khách đóng tiền
+// Body: { "penalty_amount": 50000 } (Tùy chọn phạt thêm)
+router.post('/extend/:id', billController.extendBill);
+
+// --- XÓA / KHÔI PHỤC (DELETE/RESTORE) ---
+
+// Xóa mềm (nếu là Draft) hoặc Hủy bỏ (nếu là Issued/Overdue)
+router.delete('/delete/:id', billController.deleteOrCancelBill);
+
+// Khôi phục hóa đơn đã bị xóa mềm
+router.post('/restore/:id', billController.restoreBill);
+
+// --- HỆ THỐNG (SYSTEM) ---
+
+// Chạy thủ công tool quét tự động (Thay vì chờ đến nửa đêm)
+// 1. Quét các bill quá hạn -> Chuyển thành Overdue
+// 2. Tự động tạo bill cho tháng tới (nếu đến ngày)
+router.post('/refresh-status', billController.refreshBillStatuses);
 
 module.exports = router;
