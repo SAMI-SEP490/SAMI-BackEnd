@@ -1,6 +1,5 @@
-// Updated: 2025-12-29
-// By: DatNB & Gemini Refactor
-// Status: Synced with contract.service.js
+// Updated: 2025-12-30
+// Fix: Handle req.files (array) instead of req.file
 
 const contractService = require('../services/contract.service');
 
@@ -8,8 +7,13 @@ class ContractController {
     // 1. Tạo hợp đồng mới
     async createContract(req, res, next) {
         try {
-            const file = req.file;
-            const contract = await contractService.createContract(req.body, file, req.user);
+            const files = req.files;
+
+            // Log để debug xem body đã nhận được chưa
+             console.log("Body:", req.body);
+             console.log("Files:", files);
+
+            const contract = await contractService.createContract(req.body, files, req.user);
 
             res.status(201).json({
                 success: true,
@@ -21,11 +25,11 @@ class ContractController {
         }
     }
 
-    // 2. Tenant Duyệt/Từ chối hợp đồng (MỚI)
+    // 2. Tenant Duyệt/Từ chối hợp đồng
     async approveContract(req, res, next) {
         try {
             const { id } = req.params;
-            const { action, reason } = req.body; // action: 'accept' | 'reject'
+            const { action, reason } = req.body;
 
             if (!['accept', 'reject'].includes(action)) {
                 return res.status(400).json({
@@ -87,15 +91,17 @@ class ContractController {
         }
     }
 
-    // 5. Cập nhật hợp đồng (Chỉ khi Pending/Rejected)
+    // 5. Cập nhật hợp đồng
     async updateContract(req, res, next) {
         try {
             const { id } = req.params;
-            const file = req.file;
+            // FIX: Dùng req.files
+            const files = req.files;
+
             const contract = await contractService.updateContract(
                 parseInt(id),
                 req.body,
-                file,
+                files,
                 req.user
             );
 
@@ -109,7 +115,7 @@ class ContractController {
         }
     }
 
-    // 6. Yêu cầu chấm dứt hợp đồng (Manager/Owner gửi request) (MỚI)
+    // 6. Yêu cầu chấm dứt hợp đồng
     async requestTermination(req, res, next) {
         try {
             const { id } = req.params;
@@ -131,11 +137,11 @@ class ContractController {
         }
     }
 
-    // 7. Tenant phản hồi yêu cầu chấm dứt (MỚI)
+    // 7. Tenant phản hồi yêu cầu chấm dứt
     async respondToTerminationRequest(req, res, next) {
         try {
             const { id } = req.params;
-            const { action } = req.body; // 'approve' | 'reject'
+            const { action } = req.body;
 
             if (!['approve', 'reject'].includes(action)) {
                 return res.status(400).json({
@@ -160,11 +166,13 @@ class ContractController {
         }
     }
 
-    // 8. Hoàn tất giao dịch chấm dứt (Sau khi thanh toán hóa đơn) (MỚI)
+    // 8. Hoàn tất giao dịch chấm dứt
     async completePendingTransaction(req, res, next) {
         try {
             const { id } = req.params;
-            const { final_status } = req.body; // 'terminated' | 'expired'
+            // final_status không còn bắt buộc phải gửi từ client vì logic auto-resolve
+            // nhưng giữ lại để tương thích ngược nếu cần
+            const { final_status } = req.body;
 
             const contract = await contractService.completePendingTransaction(
                 parseInt(id),
@@ -182,7 +190,7 @@ class ContractController {
         }
     }
 
-    // 9. Xóa vĩnh viễn hợp đồng (Chỉ OWNER)
+    // 9. Xóa vĩnh viễn hợp đồng
     async hardDeleteContract(req, res, next) {
         try {
             const { id } = req.params;
@@ -238,10 +246,10 @@ class ContractController {
     }
 
 
-    // 13. AI Processing
+    // 13. AI Processing (Vẫn dùng single file)
     async processContractWithAI(req, res, next) {
         try {
-            const file = req.file;
+            const file = req.file; // Route này dùng upload.single nên req.file đúng
 
             if (!file) return res.status(400).json({ success: false, message: 'Missing PDF file' });
             if (file.mimetype !== 'application/pdf') return res.status(400).json({ success: false, message: 'PDF only' });
@@ -251,10 +259,7 @@ class ContractController {
                 file.mimetype
             );
 
-            if (!result.success) {
-                return res.status(200).json(result); // Return 200 with error data for frontend handling
-            }
-
+            // AI có thể trả về success: false nhưng vẫn 200 OK để frontend hiện lỗi
             res.json(result);
         } catch (err) {
             next(err);
@@ -270,11 +275,9 @@ class ContractController {
 
             const mockUser = { role: 'TENANT', user_id: parseInt(tenant_user_id) };
 
-            // Tìm hợp đồng active
             let result = await contractService.getContracts({ status: 'active', page: 1, limit: 1 }, mockUser);
             let contract = result.data?.[0];
 
-            // Nếu không có active, tìm pending
             if (!contract || !contract.s3_key) {
                 result = await contractService.getContracts({ status: 'pending', page: 1, limit: 1 }, mockUser);
                 contract = result.data?.[0];
