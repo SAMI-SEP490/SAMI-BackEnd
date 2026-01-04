@@ -1,12 +1,12 @@
-// Updated: 2025-23-11
+// Updated: 2026-01-04
 // by: MinhBH
 
 const BillService = require('../services/bill.service');
-const { billSchema } = require('../middlewares/validation.middleware'); // Assuming schema is imported
 
 class BillController {
 
-    // --- LISTING ---
+    // --- LISTING (GETTERS) ---
+    
     async getMyBills(req, res, next) {
         try {
             const tenantUserId = req.user.user_id;
@@ -25,24 +25,26 @@ class BillController {
 
     async getAllBills(req, res, next) {
         try {
-            // Optional: Add filtering from query params if needed later
-            const bills = await BillService.getAllBills();
+            // Allows filtering via ?status=overdue&room_id=101
+            const filters = req.query; 
+            const bills = await BillService.getAllBills(filters);
             res.status(200).json({ success: true, data: bills });
         } catch (err) { next(err); }
     }
+
     async getDraftBills(req, res, next) {
         try {
             const bills = await BillService.getDraftBills();
             res.status(200).json({ success: true, data: bills });
         } catch (err) { next(err); }
     }
-     async getDeletedBills(req, res, next) {
+
+    async getDeletedBills(req, res, next) {
         try {
             const bills = await BillService.getDeletedBills();
             res.status(200).json({ success: true, data: bills });
         } catch (err) { next(err); }
     }
-
 
     // --- VIEW DETAIL ---
     async getBillById(req, res, next) {
@@ -54,7 +56,8 @@ class BillController {
         } catch (err) { next(err); }
     }
 
-    // --- CREATE ---
+    // --- CREATE ACTIONS ---
+    
     async createDraftBill(req, res, next) {
         try {
             const createdById = req.user.user_id;
@@ -66,17 +69,20 @@ class BillController {
     async createIssuedBill(req, res, next) {
         try {
             const createdById = req.user.user_id;
+            // Now supports validation for 'service_charges' and 'rent cap' logic
             const newBill = await BillService.createIssuedBill(req.body, createdById);
             res.status(201).json({ success: true, message: "Bill created and issued", data: newBill });
         } catch (err) { next(err); }
     }
 
-    // --- EDIT ---
+    // --- EDIT ACTIONS ---
+
     async updateDraftBill(req, res, next) {
         try {
             const billId = parseInt(req.params.id, 10);
             if (isNaN(billId)) return res.status(400).json({ success: false, message: "Invalid Bill ID" });
             
+            // Handles updating Draft AND Publishing (Draft -> Issued)
             const updatedBill = await BillService.updateDraftBill(billId, req.body);
             const message = req.body.status === 'issued' ? "Bill published successfully" : "Draft bill updated";
             res.status(200).json({ success: true, message: message, data: updatedBill });
@@ -88,12 +94,32 @@ class BillController {
             const billId = parseInt(req.params.id, 10);
             if (isNaN(billId)) return res.status(400).json({ success: false, message: "Invalid Bill ID" });
             
+            // Restricted update (only dates/notes, no money changes)
             const updatedBill = await BillService.updateIssuedBill(billId, req.body);
             res.status(200).json({ success: true, message: "Issued bill updated", data: updatedBill });
         } catch (err) { next(err); }
     }
 
-    // --- GET UNBILLED ROOMS ---
+    // --- EXTEND OVERDUE (New Task) ---
+    async extendBill(req, res, next) {
+        try {
+            const billId = parseInt(req.params.id, 10);
+            const { penalty_amount } = req.body; // Optional additional penalty
+
+            if (isNaN(billId)) return res.status(400).json({ success: false, message: "Invalid Bill ID" });
+
+            const extendedBill = await BillService.extendBill(billId, penalty_amount);
+            
+            res.status(200).json({ 
+                success: true, 
+                message: "Bill extended (+5 days). Status reverted to 'Issued'.", 
+                data: extendedBill 
+            });
+        } catch (err) { next(err); }
+    }
+
+    // --- UTILITIES & SYSTEM ---
+
     async getUnbilledRooms(req, res, next) {
         try {
             const { period_start } = req.query; // e.g., ?period_start=2025-11-01
@@ -105,18 +131,22 @@ class BillController {
         } catch (err) { next(err); }
     }
 
-    // --- DELETE / CANCEL ---
     async deleteOrCancelBill(req, res, next) {
         try {
             const billId = parseInt(req.params.id, 10);
             if (isNaN(billId)) return res.status(400).json({ success: false, message: "Invalid Bill ID" });
+            
             const result = await BillService.deleteOrCancelBill(billId);
             const message = result.deleted_at ? "Bill soft-deleted successfully" : "Bill cancelled successfully";
-            res.status(200).json({ success: true, message: message, data: { bill_id: billId, status: result.status, deleted_at: result.deleted_at } });
+            
+            res.status(200).json({ 
+                success: true, 
+                message: message, 
+                data: { bill_id: billId, status: result.status, deleted_at: result.deleted_at } 
+            });
         } catch (err) { next(err); }
     }
 
-    // --- RESTORE ---
     async restoreBill(req, res, next) {
         try {
             const billId = parseInt(req.params.id, 10);
@@ -127,14 +157,22 @@ class BillController {
         } catch (err) { next(err); }
     }
 
-    // Manual trigger to scan for overdue bills
+    // [UPDATED] Trigger Full Auto-Billing Cycle (Manual)
     async refreshBillStatuses(req, res, next) {
         try {
-            const count = await BillService.scanAndMarkOverdueBills();
+            // 1. Mark Overdue
+            const overdueCount = await BillService.scanAndMarkOverdueBills();
+            // 2. Create New Bills
+            const createdCounts = await BillService.autoCreateMonthlyBills();
+
             res.status(200).json({ 
                 success: true, 
-                message: `Scan complete. ${count} bills marked as Overdue.`,
-                data: { updated_count: count }
+                message: `Auto-scan complete.`,
+                data: { 
+                    bills_marked_overdue: overdueCount,
+                    rent_bills_created: createdCounts.rent_created,
+                    utility_bills_created: createdCounts.utility_created
+                }
             });
         } catch (err) { next(err); }
     }
