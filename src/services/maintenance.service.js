@@ -5,74 +5,90 @@ const prisma = require("../config/prisma");
 const NotificationService = require("./notification.service");
 
 class MaintenanceService {
-  // CREATE - Tạo yêu cầu bảo trì mới
+  // CREATE - Tenant tạo yêu cầu bảo trì cho phòng đang ở
   async createMaintenanceRequest(data, currentUser) {
     const { room_id, title, description, category, priority, note } = data;
 
-    // Validate required fields
-    if (!title) {
+    /* ======================
+     * 1. VALIDATION CƠ BẢN
+     * ====================== */
+    if (!title || title.trim() === "") {
       throw new Error("Missing required field: title");
     }
 
-    // Parse room_id if provided
-    const roomId = room_id ? parseInt(room_id) : null;
-
-    // Check if room exists if room_id is provided
-    if (roomId) {
-      const room = await prisma.rooms.findUnique({
-        where: { room_id: roomId },
-      });
-
-      if (!room || !room.is_active) {
-        throw new Error("Room not found or is inactive");
-      }
+    if (!room_id) {
+      throw new Error("Missing required field: room_id");
     }
 
-    // Nếu là tenant, lấy tenant_user_id từ currentUser
-    let tenantUserId;
-    if (currentUser.role === "TENANT") {
-      const tenant = await prisma.tenants.findUnique({
-        where: { user_id: currentUser.user_id },
-      });
+    const roomId = parseInt(room_id);
+    if (isNaN(roomId)) {
+      throw new Error("room_id must be a valid number");
+    }
 
-      if (!tenant) {
-        throw new Error("Tenant information not found");
-      }
-
-      tenantUserId = tenant.user_id;
-    } else {
+    /* ======================
+     * 2. KIỂM TRA ROLE
+     * ====================== */
+    if (currentUser.role !== "TENANT") {
       throw new Error("Only tenants can create maintenance requests");
     }
 
-    // Create maintenance request
+    /* ======================
+     * 3. KIỂM TRA PHÒNG + CONTRACT ACTIVE
+     * ====================== */
+    const room = await prisma.rooms.findFirst({
+      where: {
+        room_id: roomId,
+        is_active: true,
+        current_contract: {
+          tenant_user_id: currentUser.user_id,
+          status: "active",
+          deleted_at: null,
+        },
+      },
+      select: {
+        room_id: true,
+      },
+    });
+
+    if (!room) {
+      throw new Error(
+        "You are not allowed to create maintenance request for this room"
+      );
+    }
+
+    /* ======================
+     * 4. TẠO YÊU CẦU BẢO TRÌ
+     * ====================== */
     const maintenanceRequest = await prisma.maintenance_requests.create({
       data: {
-        tenant_user_id: tenantUserId,
+        tenant_user_id: currentUser.user_id,
         room_id: roomId,
-        title,
-        description,
+        title: title.trim(),
+        description: description || null,
         category: category || null,
         priority: priority || "normal",
         status: "pending",
-        note,
+        note: note || null,
         created_at: new Date(),
         updated_at: new Date(),
       },
       include: {
-        rooms: {
+        room: {
           select: {
             room_number: true,
             building_id: true,
-            buildings: {
+            building: {
               select: {
                 name: true,
               },
             },
           },
         },
-        tenants: {
-          include: {
-            users: {
+        tenant: {
+          // include tenant relation
+          select: {
+            user: {
+              // ✅ phải include user từ tenant
               select: {
                 full_name: true,
                 email: true,
@@ -81,7 +97,13 @@ class MaintenanceService {
             },
           },
         },
-        users: {
+        assignee: {
+          select: {
+            full_name: true,
+            email: true,
+          },
+        },
+        approver: {
           select: {
             full_name: true,
             email: true,
@@ -90,6 +112,9 @@ class MaintenanceService {
       },
     });
 
+    /* ======================
+     * 5. FORMAT RESPONSE
+     * ====================== */
     return this.formatMaintenanceResponse(maintenanceRequest);
   }
 
@@ -98,17 +123,34 @@ class MaintenanceService {
     const maintenanceRequest = await prisma.maintenance_requests.findUnique({
       where: { request_id: requestId },
       include: {
-        rooms: {
+        room: {
+          // ✅ sửa từ rooms
           include: {
-            buildings: true,
+            building: true, // ✅ sửa từ buildings
           },
         },
-        tenants: {
-          include: {
-            users: true,
+        tenant: {
+          // ✅ sửa từ tenants
+          select: {
+            user: {
+              // phải include user để lấy thông tin
+              select: {
+                full_name: true,
+                email: true,
+                phone: true,
+              },
+            },
           },
         },
-        users: {
+        assignee: {
+          // nếu muốn trả về người được giao
+          select: {
+            full_name: true,
+            email: true,
+          },
+        },
+        approver: {
+          // nếu muốn trả về người duyệt
           select: {
             full_name: true,
             email: true,
@@ -291,17 +333,34 @@ class MaintenanceService {
       where: { request_id: requestId },
       data: updateData,
       include: {
-        rooms: {
+        room: {
+          // ✅ sửa từ rooms
           include: {
-            buildings: true,
+            building: true, // ✅ sửa từ buildings
           },
         },
-        tenants: {
-          include: {
-            users: true,
+        tenant: {
+          // ✅ sửa từ tenants
+          select: {
+            user: {
+              // phải include user để lấy thông tin
+              select: {
+                full_name: true,
+                email: true,
+                phone: true,
+              },
+            },
           },
         },
-        users: {
+        assignee: {
+          // nếu muốn trả về người được giao
+          select: {
+            full_name: true,
+            email: true,
+          },
+        },
+        approver: {
+          // nếu muốn trả về người duyệt
           select: {
             full_name: true,
             email: true,
@@ -657,7 +716,8 @@ class MaintenanceService {
     const room = await prisma.rooms.findUnique({
       where: { room_id: roomId },
       include: {
-        buildings: {
+        building: {
+          // ✅ sửa từ 'buildings' thành 'building'
           select: {
             name: true,
             address: true,
@@ -671,9 +731,10 @@ class MaintenanceService {
     }
 
     const skip = (page - 1) * limit;
+
+    // Build where clause
     const where = { room_id: roomId };
 
-    // Apply filters
     if (category) where.category = category;
     if (priority) where.priority = priority;
     if (status) where.status = status;
@@ -681,21 +742,19 @@ class MaintenanceService {
     // Date range filter
     if (from_date || to_date) {
       where.created_at = {};
-      if (from_date) {
-        where.created_at.gte = new Date(from_date);
-      }
-      if (to_date) {
-        where.created_at.lte = new Date(to_date);
-      }
+      if (from_date) where.created_at.gte = new Date(from_date);
+      if (to_date) where.created_at.lte = new Date(to_date);
     }
 
     const [requests, total, statistics] = await Promise.all([
       prisma.maintenance_requests.findMany({
         where,
         include: {
-          tenants: {
-            include: {
-              users: {
+          tenant: {
+            // ✅ đúng tên quan hệ
+            select: {
+              user: {
+                // phải include user để lấy thông tin
                 select: {
                   full_name: true,
                   email: true,
@@ -704,7 +763,13 @@ class MaintenanceService {
               },
             },
           },
-          users: {
+          assignee: {
+            select: {
+              full_name: true,
+              email: true,
+            },
+          },
+          approver: {
             select: {
               full_name: true,
               email: true,
@@ -716,7 +781,6 @@ class MaintenanceService {
         orderBy: { created_at: "desc" },
       }),
       prisma.maintenance_requests.count({ where }),
-      // Get statistics
       prisma.maintenance_requests.groupBy({
         by: ["status"],
         where: { room_id: roomId },
@@ -743,9 +807,7 @@ class MaintenanceService {
     });
 
     categoryStats.forEach((stat) => {
-      if (stat.category) {
-        stats.by_category[stat.category] = stat._count;
-      }
+      if (stat.category) stats.by_category[stat.category] = stat._count;
     });
 
     return {
@@ -753,8 +815,8 @@ class MaintenanceService {
         room_id: room.room_id,
         room_number: room.room_number,
         floor: room.floor,
-        building_name: room.buildings?.name,
-        building_address: room.buildings?.address,
+        building_name: room.building?.name, // ✅ sửa từ buildings
+        building_address: room.building?.address,
       },
       statistics: stats,
       data: requests.map((r) => this.formatMaintenanceResponse(r)),
