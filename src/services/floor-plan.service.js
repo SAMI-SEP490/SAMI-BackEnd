@@ -489,7 +489,7 @@ class FloorPlanService {
       floor_number,
       is_published,
       page = 1,
-      limit = 20,
+      limit = 10,
     } = filters;
 
     const skip = (page - 1) * limit;
@@ -581,7 +581,7 @@ class FloorPlanService {
 
   // READ - Lấy floor plans theo building
   async getFloorPlansByBuilding(buildingId, filters = {}, userId, userRole) {
-    const { floor_number, is_published, page = 1, limit = 20 } = filters;
+    const { floor_number, is_published, page = 1, limit = 10 } = filters;
 
     // Kiểm tra quyền truy cập building
     if (userRole === "MANAGER") {
