@@ -203,11 +203,6 @@ const baseBillSchema = z.object({
         return val;
     }, z.number().int().positive({ message: 'tenant_user_id must be a positive integer' })).optional(),
     
-    room_id: z.preprocess((val) => {
-        if (typeof val === 'string' && val.trim() !== '') return Number(val);
-        return val;
-    }, z.number().int().positive({ message: 'room_id must be a positive integer' })).optional(),
-    
     // Validate Bill Type
     bill_type: z.enum([
         'monthly_rent', 'utilities', 'maintenance', 
@@ -242,7 +237,6 @@ const createDraftBillSchema = baseBillSchema.partial();
 const createIssuedBillSchema = baseBillSchema.required({
     contract_id: true, // Now required to link to contract
     tenant_user_id: true,
-    room_id: true,
     total_amount: true,
     bill_type: true,   // Now required
     billing_period_start: true,
@@ -262,7 +256,6 @@ const updateDraftBillSchema = baseBillSchema.partial().superRefine((data, ctx) =
         // Validation logic for Publishing
         if (!data.contract_id) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "contract_id is required to publish", path: ["contract_id"] });
         if (!data.tenant_user_id) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "tenant_user_id is required to publish", path: ["tenant_user_id"] });
-        if (!data.room_id) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "room_id is required to publish", path: ["room_id"] });
         if (!data.total_amount) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "total_amount is required to publish", path: ["total_amount"] });
         if (!data.bill_type) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "bill_type is required to publish", path: ["bill_type"] });
         if (!data.billing_period_start) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "billing_period_start is required to publish", path: ["billing_period_start"] });
@@ -274,7 +267,6 @@ const updateDraftBillSchema = baseBillSchema.partial().superRefine((data, ctx) =
 const updateIssuedBillSchema = baseBillSchema.partial().omit({
     // 🚫 FORBIDDEN FIELDS (Immutable once issued)
     tenant_user_id: true,
-    room_id: true,
     contract_id: true,     // Cannot re-assign to another contract
     bill_type: true,       // Cannot change Rent to Utility
     billing_period_start: true,
