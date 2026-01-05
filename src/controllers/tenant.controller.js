@@ -219,6 +219,36 @@ class TenantController {
             next(err);
         }
     }
+    async lookupTenant(req, res, next) {
+        try {
+            const { q } = req.query; // 'q' là từ khóa (SĐT hoặc CCCD)
+
+            if (!q) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Query parameter "q" (Phone or ID Number) is required',
+                });
+            }
+
+            const tenant = await TenantService.lookupTenantByExactInfo(q);
+
+            if (!tenant) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Tenant not found',
+                    data: null
+                });
+            }
+
+            res.status(200).json({
+                success: true,
+                message: 'Tenant found successfully',
+                data: tenant,
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
 }
 
 module.exports = new TenantController();

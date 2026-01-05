@@ -210,22 +210,27 @@ class ContractService {
     // ============================================
     // CREATE CONTRACT (Logic mới xử lý file)
     // ============================================
-    async createContract(data, file = null, currentUser = null) {
+    async createContract(data, files = null, currentUser = null) {
         const {
             room_id, tenant_user_id, start_date,
             duration_months, rent_amount, deposit_amount, penalty_rate,
             payment_cycle_months, note
         } = data;
 
-        // 1. Validation
+        // 1. Validation Basics
         if (!room_id || !tenant_user_id || !start_date || !duration_months || !rent_amount) {
-            throw new Error('Missing required fields');
+            throw new Error('Missing required fields: room_id, tenant_user_id, start_date, duration_months, rent_amount');
         }
-        if (penalty_rate === undefined || penalty_rate === null) throw new Error('Penalty rate is required');
-        const rate = parseFloat(penalty_rate);
-        if (isNaN(rate) || rate < 0.01 || rate > 1) {
-            throw new Error('Penalty rate must be between 0.01% and 1%');
+
+        let validPenalty = 0;
+        if (penalty_rate) {
+            const rate = parseFloat(penalty_rate);
+            if (isNaN(rate) || rate < 0.01 || rate > 1) {
+                throw new Error('Penalty rate must be between 0.01% and 1%');
+            }
+            validPenalty = rate;
         }
+
         const roomId = parseInt(room_id);
         const tenantUserId = parseInt(tenant_user_id);
         const startDate = new Date(start_date);
@@ -235,45 +240,25 @@ class ContractService {
         const endDate = this.calculateEndDate(startDate, duration);
         if (startDate >= endDate) throw new Error('Calculated end date is invalid');
 
-        // Check Permissions & Conflict (Giữ nguyên logic cũ)
+        // 2. Logic Check
         const room = await prisma.rooms.findUnique({ where: { room_id: roomId }, include: { building: true } });
         if (!room || !room.is_active) throw new Error('Room not found or inactive');
+
         if (currentUser && currentUser.role === 'MANAGER') {
             const hasAccess = await this.checkManagerBuildingAccess(currentUser.user_id, room.building_id);
             if (!hasAccess) throw new Error('No permission for this building');
         }
-        const tenant = await prisma.tenants.findUnique({ where: { user_id: tenantUserId } });
-        if (!tenant) throw new Error('Tenant not found');
+
         const conflictingContract = await this.checkContractConflict(roomId, startDate, endDate);
         if (conflictingContract) throw new Error(`Room conflict: Contract #${conflictingContract.contract_id}`);
 
-        // --- FILE PROCESSING (UPDATED) ---
+        // 3. FILE PROCESSING (FIXED: Sử dụng helper chung)
         let fileData = {};
-        if (file) {
-            let bufferToUpload = file.buffer;
-            let originalName = file.originalname;
-
-            // Nếu là ảnh -> Convert sang PDF
-            if (file.mimetype.startsWith('image/')) {
-                try {
-                    bufferToUpload = await this._convertImageToPdf(file.buffer);
-                    // Đổi đuôi file thành .pdf
-                    originalName = originalName.replace(/\.[^/.]+$/, "") + ".pdf";
-                } catch (err) {
-                    throw new Error('Failed to convert image to PDF: ' + err.message);
-                }
-            }
-
-            const uploadResult = await s3Service.uploadFile(bufferToUpload, originalName, 'contracts');
-            fileData = {
-                s3_key: uploadResult.s3_key,
-                file_name: uploadResult.file_name,
-                checksum: uploadResult.checksum,
-                uploaded_at: uploadResult.uploaded_at
-            };
+        if (files && files.length > 0) {
+            fileData = await this._processUploadFiles(files);
         }
 
-        // Create DB Record
+        // 4. DB Creation
         const result = await prisma.$transaction(async (tx) => {
             const count = await tx.contracts.count();
             const contract_number = `CT${Date.now()}-${count + 1}`;
@@ -288,11 +273,11 @@ class ContractService {
                     duration_months: duration,
                     rent_amount: parseFloat(rent_amount),
                     deposit_amount: deposit_amount ? parseFloat(deposit_amount) : 0,
-                    penalty_rate: penalty_rate ? parseFloat(penalty_rate) : null,
+                    penalty_rate: validPenalty,
                     payment_cycle_months: payment_cycle_months ? parseInt(payment_cycle_months) : 1,
                     status: CONTRACT_STATUS.PENDING,
                     note,
-                    ...fileData,
+                    ...fileData, // Spread file info (s3_key, checksum, etc.)
                     created_at: new Date(),
                     updated_at: new Date()
                 },
@@ -401,7 +386,7 @@ class ContractService {
     // ============================================
     // UPDATE CONTRACT (Logic mới xử lý file)
     // ============================================
-    async updateContract(contractId, data, file = null, currentUser = null) {
+    async updateContract(contractId, data, files = null, currentUser = null) {
         const existingContract = await prisma.contracts.findUnique({
             where: { contract_id: contractId },
             include: { room_history: { include: { building: true } } }
@@ -416,24 +401,24 @@ class ContractService {
 
         const { room_id, tenant_user_id, start_date, duration_months, rent_amount, deposit_amount, penalty_rate, payment_cycle_months, note } = data;
 
-        // --- VALIDATE PENALTY RATE ---
+        // Logic check conflict, validate rate... (tương tự Create)
         let validRate = undefined;
         if (penalty_rate !== undefined) {
             const rate = parseFloat(penalty_rate);
-            if (isNaN(rate) || rate < 0.01 || rate > 1) {
-                throw new Error('Penalty rate must be between 0.01% and 1%');
-            }
+            if (isNaN(rate) || rate < 0.01 || rate > 1) throw new Error('Invalid penalty rate');
             validRate = rate;
         }
+
         const targetRoomId = room_id ? parseInt(room_id) : existingContract.room_id;
         const targetStartDate = start_date ? new Date(start_date) : existingContract.start_date;
         const targetDuration = duration_months ? parseInt(duration_months) : existingContract.duration_months;
         const targetEndDate = this.calculateEndDate(targetStartDate, targetDuration);
 
-        const conflictingContract = await this.checkContractConflict(targetRoomId, targetStartDate, targetEndDate, contractId);
-        if (conflictingContract) throw new Error(`Room conflict with contract #${conflictingContract.contract_id}`);
+        const conflicting = await this.checkContractConflict(targetRoomId, targetStartDate, targetEndDate, contractId);
+        if (conflicting) throw new Error(`Room conflict with contract #${conflicting.contract_id}`);
 
         const updateData = { updated_at: new Date() };
+        // Map fields...
         if (room_id) updateData.room_id = parseInt(room_id);
         if (tenant_user_id) updateData.tenant_user_id = parseInt(tenant_user_id);
         if (start_date || duration_months) {
@@ -441,10 +426,10 @@ class ContractService {
             updateData.duration_months = targetDuration;
             updateData.end_date = targetEndDate;
         }
-        if (rent_amount !== undefined) updateData.rent_amount = parseFloat(rent_amount);
-        if (deposit_amount !== undefined) updateData.deposit_amount = parseFloat(deposit_amount);
+        if (rent_amount) updateData.rent_amount = parseFloat(rent_amount);
+        if (deposit_amount) updateData.deposit_amount = parseFloat(deposit_amount);
         if (validRate !== undefined) updateData.penalty_rate = validRate;
-        if (payment_cycle_months !== undefined) updateData.payment_cycle_months = parseInt(payment_cycle_months);
+        if (payment_cycle_months) updateData.payment_cycle_months = parseInt(payment_cycle_months);
         if (note !== undefined) updateData.note = note;
 
         if (existingContract.status === CONTRACT_STATUS.REJECTED) {
@@ -452,30 +437,15 @@ class ContractService {
             updateData.tenant_accepted_at = null;
         }
 
-        // --- FILE PROCESSING (UPDATED) ---
-        if (file) {
+        // --- FILE PROCESSING (FIXED) ---
+        if (files && files.length > 0) {
+            // Delete old file
             if (existingContract.s3_key) {
                 await s3Service.deleteFile(existingContract.s3_key);
             }
-
-            let bufferToUpload = file.buffer;
-            let originalName = file.originalname;
-
-            // Nếu là ảnh -> Convert sang PDF
-            if (file.mimetype.startsWith('image/')) {
-                try {
-                    bufferToUpload = await this._convertImageToPdf(file.buffer);
-                    originalName = originalName.replace(/\.[^/.]+$/, "") + ".pdf";
-                } catch (err) {
-                    throw new Error('Failed to convert image to PDF: ' + err.message);
-                }
-            }
-
-            const uploadResult = await s3Service.uploadFile(bufferToUpload, originalName, 'contracts');
-            updateData.s3_key = uploadResult.s3_key;
-            updateData.file_name = uploadResult.file_name;
-            updateData.checksum = uploadResult.checksum;
-            updateData.uploaded_at = uploadResult.uploaded_at;
+            // Process new files
+            const uploadResult = await this._processUploadFiles(files);
+            Object.assign(updateData, uploadResult);
         }
 
         const updatedContract = await prisma.contracts.update({

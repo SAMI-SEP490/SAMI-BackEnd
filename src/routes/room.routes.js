@@ -39,7 +39,7 @@ router.get('/statistics/building/:buildingId',
 router.get('/building/:buildingId',
     requireRole(['owner', 'manager']),
     validateBuildingId,
-    roomController.getRoomsByBuilding
+    roomController.getSimpleBuildingRooms
 );
 
 // READ - Lấy thông tin phòng theo userID (MORE SPECIFIC - before :id)

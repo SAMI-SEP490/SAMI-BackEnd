@@ -488,11 +488,16 @@ class UserService {
     });
   }
 
+
   /**
    * Change user to TENANT role
+   * UPDATED:
+   * - Removed room_id (Tenant creates profile first, Room assigned via Contract later)
+   * - Removed emergency_contact_phone (Not present in current Schema)
    */
   async changeToTenant(data) {
-    const { userId, roomId, idNumber, emergencyContactPhone, note } = data;
+    // Loại bỏ roomId ra khỏi đầu vào vì chưa cần xếp phòng lúc này
+    const { userId, idNumber, emergencyContactPhone, note } = data;
 
     // Check if user exists
     const user = await prisma.users.findUnique({
@@ -500,7 +505,7 @@ class UserService {
     });
 
     if (!user) {
-      throw new AppError("User not found");
+      throw new Error("User not found");
     }
 
     // Block changing OWNER role
@@ -516,12 +521,12 @@ class UserService {
     });
 
     if (existingTenant) {
-      throw new AppError("User is already a tenant");
+      throw new Error("User is already a tenant");
     }
 
     // Update user role and create tenant record in transaction
     const result = await prisma.$transaction(async (tx) => {
-      // Update user role
+      // 1. Update user role
       const updatedUser = await tx.users.update({
         where: { user_id: userId },
         data: {
@@ -530,16 +535,18 @@ class UserService {
         },
       });
 
-      // Create tenant record
+      // 2. Create tenant record
+      // NOTE: Không truyền room_id vào đây vì bảng tenants không có cột room_id
+      const tenantData = {
+        user_id: userId,
+        id_number: idNumber,
+        tenant_since: new Date(),
+        note,
+      };
+
+
       const tenant = await tx.tenants.create({
-        data: {
-          user_id: userId,
-          room_id: roomId,
-          id_number: idNumber,
-          emergency_contact_phone: emergencyContactPhone,
-          tenant_since: new Date(),
-          note,
-        },
+        data: tenantData,
       });
 
       return { updatedUser, tenant };

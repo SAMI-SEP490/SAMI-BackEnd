@@ -735,7 +735,6 @@ class RoomService {
 
     return { success: true, message: "Room permanently deleted" };
   }
-
   // READ - Tìm phòng theo user_id (dành cho TENANT)
   async getRoomsByUserId(userId, requestUserRole, requestUserId) {
     const userIdInt = parseInt(userId);
@@ -756,143 +755,88 @@ class RoomService {
     const user = await prisma.users.findUnique({
       where: { user_id: userIdInt },
     });
-
-    if (!user) {
-      throw new Error("User not found");
-    }
+    if (!user) throw new Error("User not found");
 
     const tenant = await prisma.tenants.findUnique({
       where: { user_id: userIdInt },
       include: {
-        rooms: {
+        contracts: {
+          where: { deleted_at: null },
           include: {
-            buildings: {
-              select: {
-                building_id: true,
-                name: true,
-                address: true,
-              },
-            },
-            contracts: {
-              where: {
-                tenant_user_id: userIdInt,
-                status: "active",
-                deleted_at: null,
-              },
-              select: {
-                contract_id: true,
-                start_date: true,
-                end_date: true,
-                rent_amount: true,
-                deposit_amount: true,
-                status: true,
-              },
-            },
-            maintenance_requests: {
-              where: {
-                tenant_user_id: userIdInt,
-                status: {
-                  in: ["pending", "in_progress"],
+            room_history: {
+              include: {
+                building: {
+                  select: { building_id: true, name: true, address: true },
                 },
               },
-              select: {
-                request_id: true,
-                title: true,
-                category: true,
-                priority: true,
-                status: true,
-                created_at: true,
-              },
-              orderBy: { created_at: "desc" },
             },
           },
+          orderBy: { created_at: "desc" },
         },
       },
     });
+    if (!tenant) throw new Error("User is not a tenant");
 
-    if (!tenant) {
-      throw new Error("User is not a tenant");
-    }
-
-    let currentRoom = null;
-    if (tenant.room_id) {
-      currentRoom = await prisma.rooms.findUnique({
-        where: { room_id: tenant.room_id },
-        include: {
-          buildings: {
-            select: {
-              building_id: true,
-              name: true,
-              address: true,
-            },
-          },
-          contracts: {
-            where: {
-              tenant_user_id: userIdInt,
-              status: "active",
-              deleted_at: null,
-            },
-            select: {
-              contract_id: true,
-              start_date: true,
-              end_date: true,
-              rent_amount: true,
-              deposit_amount: true,
-              status: true,
-            },
-          },
-          maintenance_requests: {
-            where: {
-              tenant_user_id: userIdInt,
-              status: {
-                in: ["pending", "in_progress"],
-              },
-            },
-            select: {
-              request_id: true,
-              title: true,
-              category: true,
-              priority: true,
-              status: true,
-              created_at: true,
-            },
-            orderBy: { created_at: "desc" },
+    // 🟢 PHÒNG HIỆN TẠI
+    const currentRoom = await prisma.rooms.findFirst({
+      where: {
+        current_contract: {
+          is: {
+            tenant_user_id: userIdInt,
+            status: "active",
+            deleted_at: null,
           },
         },
-      });
-
-      // Cập nhật status động cho current room
-      if (currentRoom) {
-        const dynamicStatus = await this.calculateRoomStatus(
-          currentRoom.room_id
-        );
-        if (currentRoom.status !== dynamicStatus) {
-          await this.updateRoomStatus(currentRoom.room_id);
-          currentRoom.status = dynamicStatus;
-        }
-      }
-    }
-
-    const contractHistory = await prisma.contracts.findMany({
-      where: {
-        tenant_user_id: userIdInt,
-        deleted_at: null,
+        is_active: true,
       },
       include: {
-        rooms: {
-          include: {
-            buildings: {
-              select: {
-                building_id: true,
-                name: true,
-                address: true,
-              },
-            },
+        building: { select: { building_id: true, name: true, address: true } },
+        current_contract: {
+          select: {
+            contract_id: true,
+            start_date: true,
+            end_date: true,
+            rent_amount: true,
+            deposit_amount: true,
+            status: true,
+          },
+        },
+        maintenance_requests: {
+          where: {
+            tenant_user_id: userIdInt,
+            status: { in: ["pending", "in_progress"] },
+          },
+          orderBy: { created_at: "desc" },
+          select: {
+            request_id: true,
+            title: true,
+            category: true,
+            priority: true,
+            status: true,
+            created_at: true,
           },
         },
       },
-      orderBy: { created_at: "desc" },
     });
+
+    // 🟢 LỊCH SỬ HỢP ĐỒNG
+    const contractHistory = tenant.contracts.map((c) => ({
+      contract_id: c.contract_id,
+      room: {
+        room_id: c.room_history.room_id,
+        room_number: c.room_history.room_number,
+        floor: c.room_history.floor,
+        size: c.room_history.size,
+        building_name: c.room_history.building?.name,
+        building_address: c.room_history.building?.address,
+      },
+      start_date: c.start_date,
+      end_date: c.end_date,
+      rent_amount: c.rent_amount,
+      deposit_amount: c.deposit_amount,
+      status: c.status,
+      created_at: c.created_at,
+    }));
 
     return {
       user_id: userIdInt,
@@ -905,28 +849,22 @@ class RoomService {
       tenant_info: {
         id_number: tenant.id_number,
         tenant_since: tenant.tenant_since,
-        emergency_contact_phone: tenant.emergency_contact_phone,
+        note: tenant.note,
       },
       current_room: currentRoom
-        ? this.formatRoomDetailForTenant(currentRoom, userIdInt)
+        ? {
+            room_id: currentRoom.room_id,
+            room_number: currentRoom.room_number,
+            floor: currentRoom.floor,
+            size: currentRoom.size,
+            building_name: currentRoom.building?.name,
+            building_address: currentRoom.building?.address,
+            current_contract: currentRoom.current_contract,
+            maintenance_requests: currentRoom.maintenance_requests,
+            status: currentRoom.status,
+          }
         : null,
-      contract_history: contractHistory.map((c) => ({
-        contract_id: c.contract_id,
-        room: {
-          room_id: c.rooms.room_id,
-          room_number: c.rooms.room_number,
-          building_name: c.rooms.buildings?.name,
-          building_address: c.rooms.buildings?.address,
-          floor: c.rooms.floor,
-          size: c.rooms.size,
-        },
-        start_date: c.start_date,
-        end_date: c.end_date,
-        rent_amount: c.rent_amount,
-        deposit_amount: c.deposit_amount,
-        status: c.status,
-        created_at: c.created_at,
-      })),
+      contract_history: contractHistory,
     };
   }
 
@@ -1015,6 +953,59 @@ class RoomService {
     };
   }
 
+  async getSimpleRoomsByBuilding(buildingId, onlyEmpty) {
+    const bId = parseInt(buildingId);
+    if (isNaN(bId)) throw new Error("Building ID must be a number");
+
+    const where = {
+      building_id: bId,
+      is_active: true,
+    };
+
+    // Logic lọc phòng trống
+    if (onlyEmpty === "true" || onlyEmpty === true) {
+      // [FIX] Sử dụng NOT + some thay vì none
+      // Ý nghĩa: Loại bỏ phòng nếu tìm thấy (some) hợp đồng thỏa mãn điều kiện bên trong
+      where.NOT = {
+        contracts_history: {
+          some: {
+            // 1. Chỉ chặn bởi các hợp đồng chưa bị xóa (quan trọng)
+            deleted_at: null,
+
+            // 2. Các trạng thái được coi là "Đang chiếm chỗ"
+            status: {
+              in: [
+                "active", // Đang ở
+                "pending", // Đang chờ duyệt -> Phòng này phải ẩn
+                "pending_transaction", // Đang chờ cọc -> Phòng này phải ẩn
+                "requested_termination", // Đang xin hủy nhưng chưa đi
+              ],
+            },
+          },
+        },
+      };
+    }
+
+    const rooms = await prisma.rooms.findMany({
+      where: where,
+      select: {
+        room_id: true,
+        room_number: true,
+        floor: true,
+        size: true,
+        max_tenants: true,
+        status: true,
+        description: true,
+        current_contract_id: true, // FE có thể dùng để check lại lần nữa
+        building: {
+          select: { name: true },
+        },
+      },
+      orderBy: [{ floor: "asc" }, { room_number: "asc" }],
+    });
+
+    return rooms;
+  }
   // Helper functions - Format response
   formatRoomResponse(room) {
     return {
