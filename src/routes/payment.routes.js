@@ -1,4 +1,4 @@
-// Updated: 2025-28-10
+// Updated: 2026-01-05
 // by: MinhBH
 
 const express = require('express');
@@ -7,26 +7,9 @@ const paymentController = require('../controllers/payment.controller');
 const { authenticate, requireRole } = require('../middlewares/auth.middleware');
 const { validate, createPaymentSchema } = require('../middlewares/validation.middleware');
 
-// --- Create Payment (Tenant) ---
-router.post(
-    '/create',
-    authenticate,
-    requireRole(['tenant']),
-    validate(createPaymentSchema),
-    paymentController.createPayment
-);
+// --- TENANT ROUTES ---
 
-// --- VNPay Callbacks (Public) ---
-router.get(
-    '/vnpay_return',
-    paymentController.handleVnpayReturn
-);
-
-router.get(
-    '/vnpay_ipn',
-    paymentController.handleVnpayIpn
-);
-
+// 1. Get History
 router.get(
     '/history',
     authenticate,
@@ -34,35 +17,7 @@ router.get(
     paymentController.getTenantPaymentHistory
 );
 
-router.get(
-    '/list-all',
-    authenticate,
-    requireRole(['owner', 'manager']),
-    paymentController.getAllPaymentHistory
-);
-
-router.get(
-    '/revenue/yearly',
-    authenticate,
-    requireRole(['owner', 'manager']),
-    paymentController.getYearlyRevenueReport
-);
-
-router.get(
-    '/revenue/monthly',
-    authenticate,
-    requireRole(['owner', 'manager']),
-    paymentController.getMonthlyRevenueDetails
-);
-
-router.get(
-    '/revenue/export',
-    authenticate,
-    requireRole(['owner', 'manager']),
-    paymentController.exportRevenue
-);
-
-// Create PayOS (Tenant)
+// 2. Create PayOS Link
 router.post(
     '/create-payos',
     authenticate,
@@ -71,19 +26,27 @@ router.post(
     paymentController.createPayOS
 );
 
-// PayOS Webhook (Public)
-router.post('/payos-webhook', paymentController.handlePayOSWebhook);
+// --- PUBLIC CALLBACKS (No Auth) ---
 
-// Return Pages (Public)
+router.post('/payos-webhook', paymentController.handlePayOSWebhook);
 router.get('/success', paymentController.renderSuccessPage);
 router.get('/cancel', paymentController.renderCancelPage);
 
-// Cash Payment (Manager/Owner only)
+// --- MANAGER/OWNER ROUTES ---
+
+router.use(authenticate);
+router.use(requireRole(['owner', 'manager']));
+
+// 1. Manual Cash Payment
 router.post(
     '/cash', 
-    authenticate, 
-    requireRole(['MANAGER', 'OWNER']), 
     paymentController.createCashPayment
 );
+
+// 2. Reporting
+router.get('/list-all', paymentController.getAllPaymentHistory);
+router.get('/revenue/yearly', paymentController.getYearlyRevenueReport);
+router.get('/revenue/monthly', paymentController.getMonthlyRevenueDetails);
+router.get('/revenue/export', paymentController.exportRevenue);
 
 module.exports = router;

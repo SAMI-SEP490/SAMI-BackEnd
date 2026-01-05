@@ -66,12 +66,6 @@ module.exports = {
         returnUrl: process.env.PAYOS_RETURN_URL,
         cancelUrl: process.env.PAYOS_CANCEL_URL
     },
-    vnpay: {
-        tmnCode: process.env.VNP_TMNCODE,
-        hashSecret: process.env.VNP_HASHSECRET,
-        url: process.env.VNP_URL,
-        returnUrl: process.env.VNP_RETURN_URL
-    },
     firebase: {
         // Resolves to root_folder/firebase-adminsdk.json by default
         serviceAccountPath: path.resolve(process.cwd(), process.env.FIREBASE_SERVICE_ACCOUNT_PATH

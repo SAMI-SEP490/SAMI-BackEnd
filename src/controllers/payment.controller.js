@@ -1,77 +1,100 @@
-// Updated: 2025-28-10
+// Updated: 2026-01-05
 // by: MinhBH
 
 const PaymentService = require('../services/payment.service');
 const excelJS = require('exceljs');
 const fastcsv = require('fast-csv');
-const fs = require('fs');
 const prisma = require('../config/prisma');
 
 class PaymentController {
 
-    /**
-     * Create a new payment and get redirect URL.
-     */
-    async createPayment(req, res, next) {
+    // --- PAYOS (ONLINE) ---
+
+    async createPayOS(req, res, next) {
         try {
             const { billIds } = req.body;
             const tenantUserId = req.user.user_id;
-            const ipAddr = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+            const result = await PaymentService.createPayOSLink(tenantUserId, billIds);
+            res.status(200).json({ success: true, data: result });
+        } catch (err) { next(err); }
+    }
 
-            const result = await PaymentService.createPaymentUrl(tenantUserId, billIds, ipAddr); 
-            
-            res.status(200).json({
+    async handlePayOSWebhook(req, res, next) {
+        try {
+            await PaymentService.handlePayOSWebhook(req.body);
+            res.status(200).json({ success: true });
+        } catch (err) {
+            console.error("PayOS Webhook Error:", err);
+            // Always return 200 to webhook sender to prevent retries on logic errors
+            res.status(200).json({ success: false }); 
+        }
+    }
+
+    async createPayOSLinkByBot(req, res, next) {
+        try {
+            // 1. Get data from Bot request
+            // Note: Bot might send bill_id as a single number or string
+            const { tenant_user_id, bill_id } = req.body;
+
+            if (!tenant_user_id || !bill_id) {
+                return res.status(400).json({ success: false, message: "Missing required fields" });
+            }
+
+            // 2. Ensure billIds is an array (Bot might send just one ID)
+            const billIds = Array.isArray(bill_id) ? bill_id : [parseInt(bill_id)];
+
+            // 3. Call the existing service
+            const result = await PaymentService.createPayOSLink(tenant_user_id, billIds);
+
+            // 4. Return URL
+            res.json({
                 success: true,
-                message: 'Payment URL created successfully',
-                data: result,
+                data: {
+                    checkoutUrl: result.checkoutUrl,
+                    message: "Payment link created successfully."
+                }
             });
         } catch (err) {
             next(err);
         }
     }
 
-    /**
-     * Handle VNPay Return (for user's browser).
-     */
-    async handleVnpayReturn(req, res, next) {
-        const vnpParams = req.query;
-        const vnp_ResponseCode = vnpParams['vnp_ResponseCode'];
-        const vnp_TxnRef = vnpParams['vnp_TxnRef'];
+    // --- CASH (MANUAL) ---
 
-        if (vnp_ResponseCode === '00') {
-            console.log(`[PaymentReturn] Success for Order: ${vnp_TxnRef}`);
-            res.status(200).json({
-                success: true,
-                message: 'Payment return received (Success). Check console.',
-                orderId: vnp_TxnRef
-            });
-        } else {
-            console.log(`[PaymentReturn] Failed for Order: ${vnp_TxnRef}. (Code: ${vnp_ResponseCode})`);
-            res.status(200).json({
-                success: false,
-                message: 'Payment return received (Failed). Check console.',
-                orderId: vnp_TxnRef,
-                code: vnp_ResponseCode
-            });
-        }
-    }
-
-    /**
-     * Handle VNPay IPN (for VNPay's server).
-     */
-    async handleVnpayIpn(req, res, next) {
+    async createCashPayment(req, res, next) {
         try {
-            const vnpParams = req.query;
-            // Call the imported singleton directly (no 'this')
-            const result = await PaymentService.handleVnpayIpn(vnpParams); 
+            const { bill_ids, note } = req.body;
+
+            if (!bill_ids || !Array.isArray(bill_ids) || bill_ids.length === 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Please provide a list of bill_ids to pay.'
+                });
+            }
+
+            // req.user.user_id is the Manager/Owner calling the API
+            const result = await PaymentService.createCashPayment(
+                req.user.user_id, 
+                bill_ids, 
+                note
+            );
             
-            res.status(200).json(result);
+            // Send Notification (Optional hook)
+            const NotificationService = require('../services/notification.service');
+            await NotificationService.sendPaymentSuccessNotification(result);
+
+            res.status(201).json({
+                success: true,
+                message: 'Cash payment recorded successfully',
+                data: result
+            });
         } catch (err) {
-            res.status(200).json({ RspCode: '99', Message: 'Unknown error' });
+            next(err);
         }
     }
 
-    // --- TENANT HISTORY ---
+    // --- HISTORY & REPORTING ---
+
     async getTenantPaymentHistory(req, res, next) {
         try {
             const tenantUserId = req.user.user_id;
@@ -80,7 +103,13 @@ class PaymentController {
         } catch (err) { next(err); }
     }
 
-    // --- OWNER/MANAGER REVENUE REPORTING ---
+    async getAllPaymentHistory(req, res, next) {
+        try {
+            const history = await PaymentService.getAllPaymentHistory();
+            res.status(200).json({ success: true, data: history });
+        } catch (err) { next(err); }
+    }
+
     async getYearlyRevenueReport(req, res, next) {
         try {
             const year = parseInt(req.query.year, 10);
@@ -104,23 +133,14 @@ class PaymentController {
          } catch (err) { next(err); }
     }
     
-    // --- REVENUE EXPORT ---
     async exportRevenue(req, res, next) {
          try {
             const year = parseInt(req.query.year, 10);
             const month = req.query.month ? parseInt(req.query.month, 10) : null;
-            const format = req.query.format || 'csv'; // Default to CSV
+            const format = req.query.format || 'csv';
 
-            if (isNaN(year) || year < 2000 || year > 2100) {
-                 return res.status(400).json({ success: false, message: "Valid 'year' query parameter is required." });
-            }
-            if (month && (isNaN(month) || month < 1 || month > 12)) {
-                 return res.status(400).json({ success: false, message: "Invalid 'month' query parameter." });
-            }
-            if (format !== 'csv' && format !== 'xlsx') {
-                 return res.status(400).json({ success: false, message: "Invalid 'format' query parameter. Use 'csv' or 'xlsx'." });
-            }
-
+            if (isNaN(year)) return res.status(400).json({ success: false, message: "Valid 'year' required." });
+            
             const data = await PaymentService.exportRevenueData(year, month);
             
             let filename = `revenue-${year}`;
@@ -130,59 +150,19 @@ class PaymentController {
                  filename += '.xlsx';
                  const workbook = new excelJS.Workbook();
                  const worksheet = workbook.addWorksheet('Revenue');
-                 
-                 // Define columns based on exportData keys
                  worksheet.columns = Object.keys(data[0] || {}).map(key => ({ header: key, key: key, width: 20 }));
-                 
-                 // Add rows
                  worksheet.addRows(data);
-
                  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
                  res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
-                 
                  await workbook.xlsx.write(res);
                  res.end();
-
-            } else { // CSV
+            } else {
                  filename += '.csv';
                  res.setHeader('Content-Type', 'text/csv');
                  res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
-
-                 fastcsv.write(data, { headers: true })
-                    .pipe(res);
+                 fastcsv.write(data, { headers: true }).pipe(res);
             }
-
          } catch (err) { next(err); }
-    }
-
-    /**
-     * Get all payment history (for Manager/Owner).
-     */
-    async getAllPaymentHistory(req, res, next) {
-        try {
-            // Optional: Add filtering based on req.query later
-            const history = await PaymentService.getAllPaymentHistory();
-            res.status(200).json({ success: true, data: history });
-        } catch (err) { next(err); }
-    }
-
-    async createPayOS(req, res, next) {
-        try {
-            const { billIds } = req.body;
-            const tenantUserId = req.user.user_id;
-            const result = await PaymentService.createPayOSLink(tenantUserId, billIds);
-            res.status(200).json({ success: true, data: result });
-        } catch (err) { next(err); }
-    }
-
-    async handlePayOSWebhook(req, res, next) {
-        try {
-            await PaymentService.handlePayOSWebhook(req.body);
-            res.status(200).json({ success: true });
-        } catch (err) {
-            console.error("PayOS Webhook Error:", err);
-            res.status(200).json({ success: false }); // Return 200 to stop retries on logic errors
-        }
     }
 
     // --- HTML Pages for Browser Flow ---
@@ -335,73 +315,6 @@ class PaymentController {
             </html>
         `;
         res.send(html);
-    }
-
-    /**
-     * Bot creates a PayOS Link
-     */
-    async createPayOSLinkByBot(req, res, next) {
-        try {
-            // 1. Get data from Bot request
-            // Note: Dify might send bill_id as a single number or string
-            const { tenant_user_id, bill_id } = req.body;
-
-            if (!tenant_user_id || !bill_id) {
-                return res.status(400).json({ success: false, message: "Missing required fields" });
-            }
-
-            // 2. Ensure billIds is an array (Bot might send just one ID)
-            const billIds = Array.isArray(bill_id) ? bill_id : [parseInt(bill_id)];
-
-            // 3. Call the existing service
-            const result = await PaymentService.createPayOSLink(tenant_user_id, billIds);
-
-            // 4. Return URL
-            res.json({
-                success: true,
-                data: {
-                    checkoutUrl: result.checkoutUrl,
-                    message: "Payment link created successfully."
-                }
-            });
-        } catch (err) {
-            next(err);
-        }
-    }
-
-    /**
-     * Paid as cash
-     */
-    async createCashPayment(req, res, next) {
-        try {
-            const { bill_ids, note } = req.body;
-
-            if (!bill_ids || !Array.isArray(bill_ids) || bill_ids.length === 0) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Please provide a list of bill_ids to pay.'
-                });
-            }
-
-            // req.user.user_id is the Manager/Owner calling the API
-            const result = await PaymentService.createCashPayment(
-                req.user.user_id, 
-                bill_ids, 
-                note
-            );
-            
-            // Optional: Send Push Notification to Tenant
-            const NotificationService = require('../services/notification.service');
-            await NotificationService.sendPaymentSuccessNotification(result);
-
-            res.status(201).json({
-                success: true,
-                message: 'Cash payment recorded successfully',
-                data: result
-            });
-        } catch (err) {
-            next(err);
-        }
     }
 }
 

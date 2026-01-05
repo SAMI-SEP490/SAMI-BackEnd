@@ -313,39 +313,33 @@ class NotificationService {
    */
   async sendPaymentSuccessNotification(payment) {
     try {
-      // 1. Find a bill linked to this payment to identify the tenant
-      const linkedBill = await prisma.bills.findFirst({
-        where: { payment_id: payment.payment_id },
-        include: {
-          tenants: { select: { user_id: true } },
-        },
-      });
+      // 1. Identify Recipient
+      // [OPTIMIZATION] Use the direct 'paid_by' field from the payment record
+      let recipientId = payment.paid_by;
 
-      if (!linkedBill || !linkedBill.tenants?.user_id) {
-        console.warn(
-          `[Notification] Could not find tenant for payment #${payment.payment_id}`
-        );
+      // Fallback: If paid_by is null (old data), try to find via bill
+      if (!recipientId) {
+        const linkedBill = await prisma.bills.findFirst({
+          where: { payment_id: payment.payment_id },
+          include: { tenants: { select: { user_id: true } } },
+        });
+        recipientId = linkedBill?.tenants?.user_id;
+      }
+
+      if (!recipientId) {
+        console.warn(`[Notification] No recipient found for payment #${payment.payment_id}`);
         return;
       }
 
-      const recipientId = linkedBill.tenants.user_id;
-      const amountFormatted = formatCurrency(Number(payment.amount));
+      const amountFormatted = new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(Number(payment.amount));
 
-      // --- Determine Payment Method Name ---
-      let methodLabel = "online"; // Default
+      // 2. Determine Payment Method Name
+      let methodLabel = "online";
+      if (payment.method === "cash") methodLabel = "Tiền mặt";
+      else if (payment.online_type === "PAYOS") methodLabel = "Cổng PayOS";
+      else if (payment.online_type === "VNPAY") methodLabel = "Cổng VNPay";
 
-      if (payment.method === "cash") {
-        methodLabel = "tiền mặt";
-      } else if (payment.online_type === "PAYOS") {
-        methodLabel = "cổng PayOS";
-      } else if (payment.online_type === "VNPAY") {
-        methodLabel = "cổng VNPay";
-      } else if (payment.method === "bank_transfer") {
-        methodLabel = "chuyển khoản";
-      }
-      // ------------------------------------------
-
-      // 2. Send the message
+      // 3. Send the message
       await this.createNotification(
         null, // System Sender
         recipientId,
@@ -360,11 +354,7 @@ class NotificationService {
 
       console.log(`[Notification] Payment success sent to user ${recipientId}`);
     } catch (error) {
-      // We catch errors here so the payment flow doesn't crash just because of a notification failure
-      console.error(
-        "[Notification] Failed to send payment success msg:",
-        error
-      );
+      console.error("[Notification] Failed to send payment success msg:", error);
     }
   }
 }
