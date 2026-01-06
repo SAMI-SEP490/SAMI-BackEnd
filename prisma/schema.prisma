@@ -32,6 +32,7 @@ enum addendum_status {
   draft
   pending_approval
   approved
+  expired
   rejected
 }
 

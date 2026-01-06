@@ -30,10 +30,7 @@ class ContractAddendumService {
         // Check if contract exists and is active
         const contract = await prisma.contracts.findUnique({
             where: { contract_id: contractId },
-            include: {
-                tenant: { include: { user: true } },
-                room_history: true
-            }
+            include: { room_history: true } // Load building logic omitted for brevity
         });
 
         if (!contract || contract.deleted_at) {
@@ -124,7 +121,7 @@ class ContractAddendumService {
 
     // READ - Lấy thông tin phụ lục theo ID
     async getAddendumById(addendumId, currentUser) {
-        const addendum = await prisma.contract_addendums.findUnique({
+        let addendum = await prisma.contract_addendums.findUnique({
             where: { addendum_id: addendumId },
             include: {
                 contract: {
@@ -157,6 +154,8 @@ class ContractAddendumService {
             throw new Error('You do not have permission to view this addendum');
         }
 
+        addendum = await this._checkAndProcessExpiration(addendum);
+
         // Load building info separately
         if (addendum.contract.room_history) {
             const building = await prisma.buildings.findUnique({
@@ -170,106 +169,51 @@ class ContractAddendumService {
 
     // READ - Lấy danh sách phụ lục (có phân trang và filter)
     async getAddendums(filters = {}, currentUser) {
-        const {
-            contract_id,
-            type,
-            status,
-            page = 1,
-            limit = 20,
-            effective_date_from,
-            effective_date_to
-        } = filters;
-
+        const { contract_id, type, status, page = 1, limit = 20, effective_date_from, effective_date_to } = filters;
         const skip = (page - 1) * limit;
         const where = {};
 
-        // Nếu là tenant, chỉ lấy phụ lục của hợp đồng mình
         if (currentUser.role === 'TENANT') {
             const tenantContracts = await prisma.contracts.findMany({
-                where: {
-                    tenant_user_id: currentUser.user_id,
-                    deleted_at: null
-                },
+                where: { tenant_user_id: currentUser.user_id, deleted_at: null },
                 select: { contract_id: true }
             });
-
-            where.contract_id = {
-                in: tenantContracts.map(c => c.contract_id)
-            };
+            where.contract_id = { in: tenantContracts.map(c => c.contract_id) };
         }
 
-        // Apply filters
-        if (contract_id) {
-            where.contract_id = parseInt(contract_id);
-        }
-
-        if (type) {
-            where.addendum_type = type;
-        }
-
-        if (status) {
-            where.status = status;
-        }
-
-        // Filter by effective date range
+        if (contract_id) where.contract_id = parseInt(contract_id);
+        if (type) where.addendum_type = type;
+        if (status) where.status = status;
         if (effective_date_from || effective_date_to) {
             where.effective_from = {};
-            if (effective_date_from) {
-                where.effective_from.gte = new Date(effective_date_from);
-            }
-            if (effective_date_to) {
-                where.effective_from.lte = new Date(effective_date_to);
-            }
+            if (effective_date_from) where.effective_from.gte = new Date(effective_date_from);
+            if (effective_date_to) where.effective_from.lte = new Date(effective_date_to);
         }
 
-        const [addendums, total] = await Promise.all([
-            prisma.contract_addendums.findMany({
-                where,
-                include: {
-                    contract: {
-                        select: {
-                            contract_id: true,
-                            contract_number: true,
-                            room_id: true,
-                            tenant_user_id: true,
-                            status: true,
-                            room_history: {
-                                select: {
-                                    room_number: true,
-                                    building_id: true
-                                }
-                            },
-                            tenant: {
-                                include: {
-                                    user: {
-                                        select: {
-                                            full_name: true,
-                                            email: true
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    creator: {
-                        select: {
-                            user_id: true,
-                            full_name: true,
-                            email: true
-                        }
+        let addendums = await prisma.contract_addendums.findMany({
+            where,
+            include: {
+                contract: {
+                    include: {
+                        room_history: true,
+                        tenant: { include: { user: true } }
                     }
                 },
-                skip,
-                take: limit,
-                orderBy: [
-                    { contract_id: 'desc' },
-                    { addendum_number: 'desc' }
-                ]
-            }),
-            prisma.contract_addendums.count({ where })
-        ]);
+                creator: true
+            },
+            skip,
+            take: limit,
+            orderBy: [{ contract_id: 'desc' }, { addendum_number: 'desc' }]
+        });
 
-        // Load buildings separately for each addendum
+        // --- NEW: Check Expiration for List ---
+        // Xử lý song song để đảm bảo performance
+        addendums = await Promise.all(addendums.map(ad => this._checkAndProcessExpiration(ad)));
+        // --------------------------------------
+
+        const total = await prisma.contract_addendums.count({ where });
+
+        // Load building info (giữ nguyên logic cũ)
         for (const addendum of addendums) {
             if (addendum.contract.room_history?.building_id) {
                 const building = await prisma.buildings.findUnique({
@@ -282,12 +226,7 @@ class ContractAddendumService {
 
         return {
             data: addendums.map(a => this.formatAddendumResponse(a)),
-            pagination: {
-                total,
-                page,
-                limit,
-                pages: Math.ceil(total / limit)
-            }
+            pagination: { total, page, limit, pages: Math.ceil(total / limit) }
         };
     }
 
@@ -307,7 +246,7 @@ class ContractAddendumService {
             throw new Error('You do not have permission to view addendums for this contract');
         }
 
-        const addendums = await prisma.contract_addendums.findMany({
+        let addendums = await prisma.contract_addendums.findMany({
             where: { contract_id: contractId },
             include: {
                 creator: {
@@ -326,7 +265,7 @@ class ContractAddendumService {
             },
             orderBy: { addendum_number: 'desc' }
         });
-
+        addendums = await Promise.all(addendums.map(ad => this._checkAndProcessExpiration(ad)));
         // Load buildings for each addendum
         for (const addendum of addendums) {
             if (addendum.contract.room_history?.building_id) {
@@ -389,7 +328,32 @@ class ContractAddendumService {
                 throw new Error('Invalid changes data in addendum');
             }
         }
+        const updateContractData = { updated_at: new Date() };
+        const previousState = {}; // Object để lưu giá trị cũ của hợp đồng
 
+        // Helper để map field và lưu giá trị cũ
+        const mapField = (changeField, contractField, parseFunc = (v) => v) => {
+            if (changesData[changeField] !== undefined) {
+                // Lưu giá trị cũ hiện tại của contract
+                previousState[contractField] = addendum.contract[contractField];
+                // Set giá trị mới cho update data
+                updateContractData[contractField] = parseFunc(changesData[changeField]);
+            }
+        };
+
+        mapField('rent_amount', 'rent_amount', parseFloat);
+        mapField('deposit_amount', 'deposit_amount', parseFloat);
+        mapField('end_date', 'end_date', (v) => new Date(v));
+        mapField('penalty_rate', 'penalty_rate', parseFloat);
+        mapField('payment_cycle_months', 'payment_cycle_months', parseInt);
+        mapField('start_date', 'start_date', (v) => new Date(v));
+
+        // Cập nhật snapshot với cả New Values và Previous Values
+        // Structure mới: { ...changes, previous_values: { ... } }
+        const updatedSnapshot = {
+            ...changesData,
+            previous_values: previousState // Lưu cái này để sau này Revert
+        };
         // Use transaction to atomically update both addendum and contract
         const result = await prisma.$transaction(async (tx) => {
             // 1. Parse changes and update parent contract
@@ -536,7 +500,7 @@ class ContractAddendumService {
         return this.formatAddendumResponse(rejectedAddendum);
     }
 
-    // UPDATE - Cập nhật phụ lục (chỉ khi pending_approval)
+    // UPDATE - Cập nhật phụ lục (cho phép khi Pending hoặc Rejected)
     async updateAddendum(addendumId, data, files = null, currentUser) {
         const { addendum_type, changes, effective_from, effective_to, note } = data;
 
@@ -552,10 +516,12 @@ class ContractAddendumService {
             throw new Error('Addendum not found');
         }
 
-        // Chỉ update được khi pending_approval
-        if (existingAddendum.status !== 'pending_approval') {
-            throw new Error('Only pending addendums can be updated');
+        // --- SỬA ĐỔI: Cho phép update cả khi 'pending_approval' HOẶC 'rejected' ---
+        const allowedStatuses = ['pending_approval', 'rejected'];
+        if (!allowedStatuses.includes(existingAddendum.status)) {
+            throw new Error(`Cannot update addendum. Status is '${existingAddendum.status}', but must be 'pending_approval' or 'rejected'.`);
         }
+        // -------------------------------------------------------------------------
 
         // Check if contract is still active
         if (existingAddendum.contract.status !== 'active') {
@@ -564,6 +530,14 @@ class ContractAddendumService {
 
         // Prepare update data
         const updateData = { updated_at: new Date() };
+
+        // --- SỬA ĐỔI: Nếu đang là Rejected mà sửa lại -> Tự động chuyển về Pending để duyệt lại ---
+        if (existingAddendum.status === 'rejected') {
+            updateData.status = 'pending_approval';
+            // Có thể xóa note từ chối cũ nếu muốn, hoặc giữ lại lịch sử
+            // updateData.note = note; // Nếu user gửi note mới thì ghi đè
+        }
+        // ---------------------------------------------------------------------------------------
 
         if (addendum_type) updateData.addendum_type = addendum_type;
         if (effective_from) updateData.effective_from = new Date(effective_from);
@@ -588,7 +562,11 @@ class ContractAddendumService {
         if (files && files.length > 0) {
             // Delete old file if exists
             if (existingAddendum.s3_key) {
-                await s3Service.deleteFile(existingAddendum.s3_key);
+                try {
+                    await s3Service.deleteFile(existingAddendum.s3_key);
+                } catch (e) {
+                    console.warn("Could not delete old file from S3", e);
+                }
             }
             // Upload new files
             const uploadResult = await this._processUploadFiles(files);
@@ -781,7 +759,89 @@ class ContractAddendumService {
     // ============================================
     // PRIVATE HELPERS
     // ============================================
+    /**
+     * Kiểm tra và xử lý hết hạn phụ lục
+     * Nếu effective_to < now và đang active -> Expire và Revert
+     */
+    async _checkAndProcessExpiration(addendum) {
+        // Chỉ xử lý nếu trạng thái là 'approved' và có ngày kết thúc
+        if (addendum.status === 'approved' && addendum.effective_to) {
+            const now = new Date();
+            const effectiveTo = new Date(addendum.effective_to);
 
+            // Kiểm tra xem đã hết hạn chưa (Ngày hiện tại > ngày effective_to)
+            // Lưu ý: So sánh ngày tùy thuộc business logic (cuối ngày hay đầu ngày).
+            // Ở đây giả sử effective_to là timestamp, so sánh trực tiếp.
+            if (now > effectiveTo) {
+                try {
+                    console.log(`Auto expiring addendum ${addendum.addendum_id}...`);
+                    return await this._expireAddendum(addendum);
+                } catch (error) {
+                    console.error(`Failed to auto-expire addendum ${addendum.addendum_id}:`, error);
+                    // Nếu lỗi, trả về addendum gốc để không crash API, nhưng log lại
+                    return addendum;
+                }
+            }
+        }
+        return addendum;
+    }
+
+    /**
+     * Logic thực hiện Revert contract và set status expired
+     */
+    async _expireAddendum(addendum) {
+        // Parse snapshot để lấy previous_values
+        let snapshot = addendum.changes_snapshot;
+        if (typeof snapshot === 'string') snapshot = JSON.parse(snapshot);
+
+        const previousValues = snapshot?.previous_values;
+
+        if (!previousValues) {
+            console.warn(`Addendum ${addendum.addendum_id} has no previous_values to revert.`);
+            // Vẫn set expired nhưng không revert được contract
+            const expired = await prisma.contract_addendums.update({
+                where: { addendum_id: addendum.addendum_id },
+                data: { status: 'expired', updated_at: new Date() },
+                include: { contract: { include: { room_history: true, tenant: { include: { user: true } } } }, creator: true }
+            });
+            return expired;
+        }
+
+        // Transaction: Revert Contract + Set Addendum Expired
+        const result = await prisma.$transaction(async (tx) => {
+            // 1. Revert Contract
+            await tx.contracts.update({
+                where: { contract_id: addendum.contract_id },
+                data: {
+                    ...previousValues, // Restore old values (rent, end_date, etc.)
+                    updated_at: new Date()
+                }
+            });
+
+            // 2. Set Addendum Expired
+            const expiredAddendum = await tx.contract_addendums.update({
+                where: { addendum_id: addendum.addendum_id },
+                data: {
+                    status: 'expired',
+                    updated_at: new Date(),
+                    note: addendum.note ? `${addendum.note}\n[SYSTEM] Auto-expired & Reverted on ${new Date().toISOString()}` : `[SYSTEM] Auto-expired on ${new Date().toISOString()}`
+                },
+                include: {
+                    contract: {
+                        include: {
+                            room_history: true,
+                            tenant: { include: { user: true } }
+                        }
+                    },
+                    creator: true
+                }
+            });
+
+            return expiredAddendum;
+        });
+
+        return result;
+    }
     /**
      * Process uploaded files (PDF or Images)
      * Reuse logic from contract.service.js
