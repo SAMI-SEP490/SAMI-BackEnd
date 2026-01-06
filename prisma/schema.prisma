@@ -339,6 +339,7 @@ model rooms {
   room_number         String       @db.VarChar(50)
   floor               Int?
   size                Decimal?     @db.Decimal(10, 2) // Area in square meters
+  max_occupants       Int?
   max_tenants         Int?         @default(1)
   current_contract_id Int?         @unique
   status              room_status? @default(available)
