@@ -53,24 +53,48 @@ class ParkingSlotController {
     // =========================
     // READ - AVAILABLE
     // =========================
-    async getAvailableParkingSlots(req, res, next) {
-        try {
-            const filters = {
-                building_id: req.query.building_id,
-                is_available: true
-            };
+    async getAvailableParkingSlotForRegistration(req, res, next) {
+    try {
+        const { registration_id } = req.query;
 
-            const slots = await parkingSlotService.getParkingSlots(filters);
-
-            res.json({
-                success: true,
-                data: { slots }
-            });
-        } catch (err) {
-            next(err);
+        if (!registration_id) {
+            throw new Error("registration_id is required");
         }
-    }
 
+        const slots = await parkingSlotService.getAvailableSlotForRegistration(
+            registration_id
+        );
+
+        res.json({
+            success: true,
+            data: { slots }
+        });
+    } catch (err) {
+        next(err);
+    }
+}
+async getAvailableSlotsForVehicle(req, res, next) {
+    try {
+        const { vehicle_id } = req.query;
+
+        if (!vehicle_id) {
+            throw new Error("vehicle_id is required");
+        }
+
+        const slots = await parkingSlotService.getAvailableSlotsForVehicle(
+            Number(vehicle_id),
+            req.user.user_id,
+            req.user.role
+        );
+
+        res.json({
+            success: true,
+            data: { slots }
+        });
+    } catch (err) {
+        next(err);
+    }
+}
     // =========================
     // READ - BY ID
     // =========================

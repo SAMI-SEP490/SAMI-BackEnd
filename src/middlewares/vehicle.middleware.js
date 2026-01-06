@@ -6,10 +6,10 @@ const Joi = require('joi');
 // Schema for creating vehicle registration
 const createVehicleRegistrationSchema = Joi.object({
     type: Joi.string()
-        .valid('car', 'motorcycle', 'truck', 'van', 'other')
+        .valid('two-wheeler', 'four-wheeler')
         .required()
         .messages({
-            'any.only': 'Vehicle type must be one of: car, motorcycle, truck, van, other',
+            'any.only': 'Vehicle type must be one of: two-wheeler, four-wheeler',
             'any.required': 'Vehicle type is required'
         }),
 

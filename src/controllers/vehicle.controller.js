@@ -288,7 +288,9 @@ class VehicleRegistrationController {
 
             const vehicle = await vehicleRegistrationService.changeVehicleSlot(
                 parseInt(id),
-                new_slot_id
+                new_slot_id,
+                req.user.user_id,
+                req.user.role
             );
 
             res.json({

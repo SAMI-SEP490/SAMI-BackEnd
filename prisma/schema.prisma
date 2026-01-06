@@ -662,8 +662,9 @@ model vehicle_registrations {
 model vehicles {
   vehicle_id      Int             @id @default(autoincrement())
   registration_id Int             @unique
+  license_plate   String?   @db.VarChar(20)
   tenant_user_id  Int
-  slot_id         Int
+  slot_id         Int?
   status          vehicle_status? @default(active)
   registered_at   DateTime?       @default(now()) @db.Timestamp(6)
   deactivated_at  DateTime?       @db.Timestamp(6)
@@ -673,7 +674,7 @@ model vehicles {
 
   registration vehicle_registrations @relation(fields: [registration_id], references: [registration_id])
   tenant       tenants               @relation("VehicleTenant", fields: [tenant_user_id], references: [user_id], onDelete: Cascade)
-  slot         parking_slots         @relation(fields: [slot_id], references: [slot_id])
+  slot         parking_slots?         @relation(fields: [slot_id], references: [slot_id])
   deactivator  users?                @relation("VehicleDeactivatedBy", fields: [deactivated_by], references: [user_id])
 
   @@index([tenant_user_id], map: "idx_vehicles_tenant_user_id")
