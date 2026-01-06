@@ -58,7 +58,7 @@ const validateCreateParkingSlot = (req, res, next) => {
         }
 
         // Validate slot_type (enum vehicle_type)
-        const allowedTypes = ['motorbike', 'car', 'bicycle'];
+        const allowedTypes = ['two_wheeler', 'four_wheeler'];
         if (!allowedTypes.includes(slot_type)) {
             return res.status(400).json({
                 success: false,
@@ -130,7 +130,7 @@ const validateUpdateParkingSlot = (req, res, next) => {
 
         // Validate slot_type if provided
         if (slot_type !== undefined) {
-            const allowedTypes = ['motorbike', 'car', 'bicycle'];
+            const allowedTypes = ['two_wheeler', 'four_wheeler'];
             if (!allowedTypes.includes(slot_type)) {
                 return res.status(400).json({
                     success: false,

@@ -18,8 +18,13 @@ router.get(
 router.get(
     '/available',
     requireRole(['owner', 'manager']),
-    parkingSlotController.getAvailableParkingSlots
+    parkingSlotController.getAvailableParkingSlotForRegistration
 );
+router.get(
+    '/available-for-vehicle',
+    requireRole(['owner', 'manager']),
+    parkingSlotController.getAvailableSlotsForVehicle
+)
 // CREATE - Tạo parking slot
 router.post('/',
     requireRole(['owner', 'manager']),
