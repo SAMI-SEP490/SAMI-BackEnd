@@ -8,6 +8,16 @@ const {
   contract_status,
   maintenance_status,
 } = require("../config/prisma");
+
+function calculateMaxTenants(size) {
+  const s = Number(size);
+  if (!s || Number.isNaN(s)) return 1;
+  if (s <= 15) return 1;
+  if (s <= 25) return 2;
+  if (s <= 35) return 3;
+  return 4;
+}
+
 class RoomService {
   // Helper: Tính toán status động của phòng
   async calculateRoomStatus(roomId) {
@@ -154,12 +164,17 @@ class RoomService {
       }
     }
 
+    const sizeNumber =
+      size === undefined || size === null || size === "" ? null : Number(size);
+    const maxTenants = calculateMaxTenants(sizeNumber);
+
     const room = await prisma.rooms.create({
       data: {
         building_id: buildingId,
         room_number: room_number.trim(),
         floor: floor ? parseInt(floor) : null,
-        size: size?.trim() || null,
+        size: sizeNumber,
+        max_tenants: maxTenants,
         description: description?.trim() || null,
         status: status || "available", // Mặc định available khi tạo mới
         is_active: true,
@@ -536,7 +551,29 @@ class RoomService {
       updateData.floor =
         floor === null || floor === "" ? null : parseInt(floor);
     }
-    if (size !== undefined) updateData.size = size?.trim() || null;
+    if (size !== undefined) {
+      const sizeNumber = size === null || size === "" ? null : Number(size);
+
+      const newMaxTenants = calculateMaxTenants(sizeNumber);
+
+      // Đếm số tenant hiện tại (chỉ tenant đang ở: is_current = true)
+      const currentTenantCount = await prisma.room_tenants.count({
+        where: {
+          room_id: roomId,
+          is_current: true,
+        },
+      });
+
+      // Nếu đang có nhiều tenant hơn giới hạn mới -> CHẶN
+      if (currentTenantCount > newMaxTenants) {
+        throw new Error(
+          "Không thể giảm diện tích vì phòng đang có quá nhiều người thuê"
+        );
+      }
+
+      updateData.size = sizeNumber;
+      updateData.max_tenants = newMaxTenants;
+    }
     if (description !== undefined)
       updateData.description = description?.trim() || null;
 

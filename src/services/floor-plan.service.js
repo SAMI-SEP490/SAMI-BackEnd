@@ -38,6 +38,136 @@ class FloorPlanService {
     }
   }
 
+  /* =========================================================
+   * RULES (FloorPlan):
+   * 1) Room không được đè lên nhau
+   * 2) Room phải nằm hoàn toàn trong "Tòa nhà" (node type="building")
+   * ========================================================= */
+
+  _pointInPolygon(point, polygon) {
+    // Ray-casting algorithm
+    const { x, y } = point;
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const xi = polygon[i].x,
+        yi = polygon[i].y;
+      const xj = polygon[j].x,
+        yj = polygon[j].y;
+
+      const intersect =
+        yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + 0.0) + xi;
+
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  _rectsOverlap(a, b) {
+    return (
+      a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+    );
+  }
+
+  _getBuildingPolygon(layoutObj) {
+    const nodes = Array.isArray(layoutObj?.nodes) ? layoutObj.nodes : [];
+    const building = nodes.find(
+      (n) => n?.type === "building" && Array.isArray(n?.data?.points)
+    );
+    if (!building) return null;
+
+    const bx = Number(building?.position?.x || 0);
+    const by = Number(building?.position?.y || 0);
+
+    // points là tọa độ tương đối trong node, cộng position để ra tọa độ tuyệt đối
+    const pts = building.data.points.map((p) => ({
+      x: bx + Number(p.x || 0),
+      y: by + Number(p.y || 0),
+    }));
+
+    // an toàn: nếu polygon quá ít điểm
+    if (!pts || pts.length < 3) return null;
+
+    return pts;
+  }
+
+  _getRoomRects(layoutObj) {
+    const nodes = Array.isArray(layoutObj?.nodes) ? layoutObj.nodes : [];
+    const roomNodes = nodes.filter(
+      (n) => n?.type === "block" && n?.data?.icon === "room"
+    );
+
+    return roomNodes.map((n) => {
+      const x = Number(n?.position?.x || 0);
+      const y = Number(n?.position?.y || 0);
+      const w = Number(n?.data?.w || 0);
+      const h = Number(n?.data?.h || 0);
+      const roomNo = String(n?.data?.room_number || "").trim();
+
+      return {
+        id: n?.id,
+        roomNo,
+        x,
+        y,
+        w,
+        h,
+      };
+    });
+  }
+
+  _validateRoomLayoutRules(layoutObj) {
+    const rooms = this._getRoomRects(layoutObj);
+
+    // Không có room thì khỏi check
+    if (!rooms || rooms.length === 0) return;
+
+    const buildingPoly = this._getBuildingPolygon(layoutObj);
+    if (!buildingPoly) {
+      throw new Error(
+        "Vui lòng tạo Tòa nhà (Building) trước khi lưu, vì phòng phải nằm trong tòa nhà."
+      );
+    }
+
+    // 1) Room phải nằm hoàn toàn trong building (4 góc)
+    for (const r of rooms) {
+      if (!r.w || !r.h) {
+        throw new Error(
+          `Phòng ${r.roomNo || "(chưa có số phòng)"} thiếu kích thước (w/h).`
+        );
+      }
+
+      const corners = [
+        { x: r.x, y: r.y },
+        { x: r.x + r.w, y: r.y },
+        { x: r.x + r.w, y: r.y + r.h },
+        { x: r.x, y: r.y + r.h },
+      ];
+
+      const ok = corners.every((pt) => this._pointInPolygon(pt, buildingPoly));
+      if (!ok) {
+        throw new Error(
+          `Phòng ${
+            r.roomNo || "(chưa có số phòng)"
+          } phải nằm hoàn toàn trong tòa nhà.`
+        );
+      }
+    }
+
+    // 2) Room không được overlap nhau
+    for (let i = 0; i < rooms.length; i++) {
+      for (let j = i + 1; j < rooms.length; j++) {
+        const a = rooms[i];
+        const b = rooms[j];
+        if (this._rectsOverlap(a, b)) {
+          throw new Error(
+            `Phòng ${a.roomNo || a.id} đang bị đè lên phòng ${
+              b.roomNo || b.id
+            }. Vui lòng sắp xếp lại.`
+          );
+        }
+      }
+    }
+  }
+
   // Helper: Tạo rooms data từ layout nodes
   extractRoomsFromLayout(layout, buildingId, floorNumber) {
     if (!layout || !Array.isArray(layout.nodes)) return [];
@@ -230,6 +360,12 @@ class FloorPlanService {
       );
     }
 
+    // ✅ Parse + validate rules (room không đè nhau, room trong building)
+    const layoutObj = this.parseLayout(layout);
+    if (layoutObj) {
+      this._validateRoomLayoutRules(layoutObj);
+    }
+
     // Sử dụng transaction để tạo floor plan và rooms
     return await prisma.$transaction(async (tx) => {
       // 1️⃣ Tạo floor plan
@@ -238,7 +374,7 @@ class FloorPlanService {
           building_id: buildingId,
           name: name?.trim() || null,
           floor_number: floorNum,
-          layout: layout || null,
+          layout: layoutObj || null,
           file_url: file_url?.trim() || null,
           is_published: is_published === true || is_published === "true",
           created_by: createdBy,
@@ -273,7 +409,7 @@ class FloorPlanService {
 
       // 2️⃣ Trích xuất rooms từ layout
       const roomsToCreate = this.extractRoomsFromLayout(
-        layout,
+        layoutObj,
         buildingId,
         floorNum
       );
@@ -356,8 +492,8 @@ class FloorPlanService {
         );
 
         finalLayout = {
-          ...layout,
-          nodes: layout.nodes.map((node) => {
+          ...layoutObj,
+          nodes: (layoutObj?.nodes || []).map((node) => {
             // chỉ xử lý node ROOM
             if (
               (node.type === "room" ||
@@ -709,7 +845,11 @@ class FloorPlanService {
       let finalLayout = undefined;
 
       if (layout !== undefined) {
-        const layoutObj = layout || {};
+        const layoutObj = this.parseLayout(layout) || {};
+
+        // ✅ Validate rules (room không đè nhau, room trong building)
+        this._validateRoomLayoutRules(layoutObj);
+
         const nodes = Array.isArray(layoutObj.nodes) ? layoutObj.nodes : [];
         // ✅ Helper: normalize size về số (DECIMAL) để lưu DB
         const normalizeSizeFromNode = (node) => {
