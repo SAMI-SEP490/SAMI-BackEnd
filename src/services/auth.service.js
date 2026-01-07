@@ -514,6 +514,42 @@ class AuthService {
           },
         });
         break;
+
+      case "MANAGER":
+        roleSpecificData = await prisma.building_managers.findFirst({
+          where: {
+            user_id: userId,
+          },
+          select: {
+            user_id: true,
+            building_id: true,
+            assigned_from: true,
+            assigned_to: true,
+            note: true,
+            building: {
+              // ❗ tên relation là `building` không phải `buildings`
+              select: {
+                building_id: true,
+                name: true,
+                address: true,
+                is_active: true,
+                created_at: true,
+              },
+            },
+          },
+        });
+        break;
+
+      case "OWNER":
+        // Hiện tại chưa có bảng building_owner
+        roleSpecificData = null;
+        break;
+
+      case "USER":
+      default:
+        // No additional role-specific data for USER role
+        roleSpecificData = null;
+        break;
     }
 
     // Return combined user profile with role-specific data
