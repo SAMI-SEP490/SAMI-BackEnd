@@ -1,20 +1,27 @@
-// Updated: 2025-24-10
-// By: Datnb
+// Updated: 2025-01-06
+// By: DatNB
+// Refactored: File handling + Tenant approval workflow
 
 const contractAddendumService = require('../services/addendum.service');
 
 class ContractAddendumController {
-    // Tạo phụ lục hợp đồng mới
+    // Tạo phụ lục hợp đồng mới (với file upload)
     async createAddendum(req, res, next) {
         try {
+            const files = req.files; // Hỗ trợ multi-file upload
+
+            console.log("Body:", req.body);
+            console.log("Files:", files);
+
             const addendum = await contractAddendumService.createAddendum(
                 req.body,
+                files,
                 req.user
             );
 
             res.status(201).json({
                 success: true,
-                message: 'Contract addendum created successfully',
+                message: 'Contract addendum created successfully (Pending Tenant Approval)',
                 data: addendum
             });
         } catch (err) {
@@ -76,13 +83,56 @@ class ContractAddendumController {
         }
     }
 
-    // Cập nhật phụ lục
+    // Tenant duyệt phụ lục (Apply changes to contract)
+    async approveAddendum(req, res, next) {
+        try {
+            const { id } = req.params;
+            const result = await contractAddendumService.approveAddendum(
+                parseInt(id),
+                req.user
+            );
+
+            res.json({
+                success: true,
+                message: 'Contract addendum approved successfully. Changes applied to contract.',
+                data: result
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    // Tenant từ chối phụ lục
+    async rejectAddendum(req, res, next) {
+        try {
+            const { id } = req.params;
+            const { reason } = req.body;
+            const addendum = await contractAddendumService.rejectAddendum(
+                parseInt(id),
+                reason || '',
+                req.user
+            );
+
+            res.json({
+                success: true,
+                message: 'Contract addendum rejected. No changes applied to contract.',
+                data: addendum
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    // Cập nhật phụ lục (có thể thay đổi file)
     async updateAddendum(req, res, next) {
         try {
             const { id } = req.params;
+            const files = req.files; // Hỗ trợ thay đổi file
+
             const addendum = await contractAddendumService.updateAddendum(
                 parseInt(id),
                 req.body,
+                files,
                 req.user
             );
 
@@ -100,12 +150,51 @@ class ContractAddendumController {
     async deleteAddendum(req, res, next) {
         try {
             const { id } = req.params;
-            const result = await contractAddendumService.deleteAddendum(parseInt(id));
+            const result = await contractAddendumService.deleteAddendum(
+                parseInt(id),
+                req.user
+            );
 
             res.json({
                 success: true,
                 message: result.message
             });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    // Download addendum - Presigned URL
+    async downloadAddendum(req, res, next) {
+        try {
+            const { id } = req.params;
+            const result = await contractAddendumService.downloadAddendum(
+                parseInt(id),
+                req.user
+            );
+
+            res.json({
+                success: true,
+                message: 'Download URL generated successfully',
+                data: result
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    // Download addendum - Direct stream
+    async downloadAddendumDirect(req, res, next) {
+        try {
+            const { id } = req.params;
+            const result = await contractAddendumService.downloadAddendumDirect(
+                parseInt(id),
+                req.user
+            );
+
+            res.setHeader('Content-Type', result.content_type);
+            res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(result.file_name)}"`);
+            res.send(result.buffer);
         } catch (err) {
             next(err);
         }
