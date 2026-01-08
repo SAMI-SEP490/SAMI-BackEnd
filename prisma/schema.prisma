@@ -434,14 +434,17 @@ model contract_addendums {
   addendum_type   addendum_type
   status          addendum_status
 
-  file_name String? @db.VarChar(255)
-  s3_key    String? @db.VarChar(500)
-  checksum  String? @db.VarChar(255)
+  file_name   String?   @db.VarChar(255)
+  s3_key      String?   @db.VarChar(500)
+  checksum    String?   @db.VarChar(255)
+  uploaded_at DateTime? @db.Timestamp(6)
 
   file_url         String
   effective_from   DateTime?
   effective_to     DateTime?
   changes_snapshot Json?
+
+  note String? @db.Text
 
   created_by Int
 
