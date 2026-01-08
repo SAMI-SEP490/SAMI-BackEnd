@@ -61,6 +61,15 @@ class ContractAddendumService {
             throw new Error('Invalid changes format. Must be valid JSON object');
         }
 
+        if (addendum_type !== 'early_termination') {
+            await this._validateOverlap(
+                contract, // Pass full contract to get contract end_date
+                addendum_type,
+                parsedChanges,
+                effective_from,
+                effective_to
+            );
+        }
         // Get the next addendum number
         const latestAddendum = await prisma.contract_addendums.findFirst({
             where: { contract_id: contractId },
@@ -89,7 +98,6 @@ class ContractAddendumService {
                 note,
                 created_at: new Date(),
                 updated_at: new Date(),
-                file_url: '', // Required field in schema
                 ...fileData // Add file info (s3_key, file_name, checksum, etc.)
             },
             include: {
@@ -342,8 +350,8 @@ class ContractAddendumService {
             }
         };
 
-        mapField('rent_amount', 'rent_amount', parseFloat);
-        mapField('deposit_amount', 'deposit_amount', parseFloat);
+        mapField('rent_amount', 'rent_amount', (v) => String(v));
+        mapField('deposit_amount', 'deposit_amount', (v) => String(v));
         mapField('end_date', 'end_date', (v) => new Date(v));
         mapField('penalty_rate', 'penalty_rate', parseFloat);
         mapField('payment_cycle_months', 'payment_cycle_months', parseInt);
@@ -529,6 +537,19 @@ class ContractAddendumService {
             throw new Error('Cannot update addendum for non-active contract');
         }
 
+        if (newType !== 'early_termination') {
+            // Need contract for end_date fallback
+            const contract = await prisma.contracts.findUnique({where: {contract_id: existingAddendum.contract_id}});
+
+            await this._validateOverlap(
+                contract,
+                newType,
+                newChanges,
+                newStart,
+                newEnd,
+                addendumId // Exclude self
+            );
+        }
         // Prepare update data
         const updateData = { updated_at: new Date() };
 
@@ -944,8 +965,65 @@ class ContractAddendumService {
             // early_termination thường không cần changes JSON phức tạp, hoặc chỉ cần ngày termination
         }
     }
+    async _validateOverlap(contract, newType, newChanges, newStart, newEnd, excludeId = null) {
+        const newKeys = Object.keys(newChanges || {});
+        if (newKeys.length === 0) return;
 
-    // Helper function - Format response
+        // 1. Xác định thời gian của Addendum mới
+        // Nếu không có effective_from -> Default là contract start (hoặc now)
+        // Nếu không có effective_to -> Default là contract end date (Áp dụng đến hết HĐ)
+        const range1Start = newStart ? new Date(newStart).getTime() : new Date().getTime();
+        const range1End = newEnd ? new Date(newEnd).getTime() : new Date(contract.end_date).getTime();
+
+        if (range1Start > range1End) {
+            throw new Error('Effective From date cannot be after Effective To date');
+        }
+
+        // 2. Lấy danh sách addendum có thể conflict
+        const existingAddendums = await prisma.contract_addendums.findMany({
+            where: {
+                contract_id: contract.contract_id,
+                status: { in: ['approved', 'pending_approval'] },
+                addendum_type: { not: 'early_termination' },
+                addendum_id: excludeId ? { not: excludeId } : undefined
+            }
+        });
+
+        for (const existing of existingAddendums) {
+            // 3. Xác định thời gian của Addendum cũ
+            const existingStart = existing.effective_from ? existing.effective_from.getTime() : 0;
+            // Nếu existing không có effective_to -> Nó kéo dài đến hết hợp đồng
+            const existingEnd = existing.effective_to ? existing.effective_to.getTime() : new Date(contract.end_date).getTime();
+
+            // 4. Kiểm tra trùng ngày (Date Overlap Check)
+            // Công thức: (StartA <= EndB) và (EndA >= StartB)
+            const isDateOverlap = (range1Start <= existingEnd) && (range1End >= existingStart);
+
+            if (isDateOverlap) {
+                // 5. Nếu trùng ngày -> Mới check nội dung bên trong
+                let existingChanges = existing.changes_snapshot;
+                if (typeof existingChanges === 'string') {
+                    try { existingChanges = JSON.parse(existingChanges); } catch (e) {}
+                }
+
+                const existingKeys = Object.keys(existingChanges || {});
+
+                // Tìm key bị trùng
+                const conflictKeys = newKeys.filter(key => existingKeys.includes(key));
+
+                if (conflictKeys.length > 0) {
+                    const startDateStr = new Date(existingStart).toLocaleDateString('vi-VN');
+                    const endDateStr = new Date(existingEnd).toLocaleDateString('vi-VN');
+
+                    throw new Error(
+                        `Conflict detected: You are modifying [${conflictKeys.join(', ')}] ` +
+                        `which is already modified by Addendum #${existing.addendum_number} ` +
+                        `in the overlapping period (${startDateStr} - ${endDateStr}).`
+                    );
+                }
+            }
+        }
+    }
     formatAddendumResponse(addendum) {
         const response = {
             addendum_id: addendum.addendum_id,
@@ -976,7 +1054,9 @@ class ContractAddendumService {
             const tenant = contract.tenant;
             const user = tenant?.user;
 
-            response.contract_info = {
+            // SỬA: Đổi key từ 'contract_info' thành 'contract'
+            // Điều này giúp Frontend gọi item.contract.contract_number sẽ có dữ liệu
+            response.contract = {
                 contract_id: contract.contract_id,
                 contract_number: contract.contract_number,
                 status: contract.status,
@@ -984,12 +1064,22 @@ class ContractAddendumService {
                 end_date: contract.end_date,
                 rent_amount: contract.rent_amount,
                 deposit_amount: contract.deposit_amount,
+                duration_months: contract.duration_months,             // <-- Thêm dòng này [cite: 39]
+                payment_cycle_months: contract.payment_cycle_months,   // <-- Thêm dòng này [cite: 41]
+                penalty_rate: contract.penalty_rate,
+                // Flat data cho dễ lấy
                 room_number: room?.room_number || null,
                 building_id: building?.building_id || null,
                 building_name: building?.name || null,
                 tenant_name: user?.full_name || null,
                 tenant_email: user?.email || null,
-                tenant_phone: user?.phone || null
+                tenant_phone: user?.phone || null,
+
+                // Support legacy structure if needed (Optional)
+                tenant: user ? {
+                    full_name: user.full_name,
+                    phone: user.phone
+                } : null
             };
         }
 

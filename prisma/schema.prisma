@@ -439,7 +439,6 @@ model contract_addendums {
   checksum    String?   @db.VarChar(255)
   uploaded_at DateTime? @db.Timestamp(6)
 
-  file_url         String
   effective_from   DateTime?
   effective_to     DateTime?
   changes_snapshot Json?
