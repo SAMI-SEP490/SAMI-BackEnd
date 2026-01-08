@@ -56,6 +56,7 @@ class ContractAddendumService {
             if (typeof parsedChanges !== 'object' || parsedChanges === null) {
                 throw new Error('Changes must be a valid JSON object');
             }
+            this._validateAddendumTypeAndChanges(addendum_type, parsedChanges);
         } catch (error) {
             throw new Error('Invalid changes format. Must be valid JSON object');
         }
@@ -557,7 +558,9 @@ class ContractAddendumService {
                 }
             }
         }
-
+        if (addendum_type || changes) {
+            this._validateAddendumTypeAndChanges(newType, newChanges);
+        }
         // FILE PROCESSING - Replace old file if new file uploaded
         if (files && files.length > 0) {
             // Delete old file if exists
@@ -906,6 +909,40 @@ class ContractAddendumService {
                 reject(error);
             }
         });
+    }
+    // Thêm hàm này xuống dưới cùng (khu vực PRIVATE HELPERS)
+    _validateAddendumTypeAndChanges(type, changes) {
+        const keys = Object.keys(changes);
+
+        // Nếu là sửa hỗn hợp, cho phép mọi trường
+        if (type === 'general_amendment') return;
+
+        // Logic validate cho từng loại đơn lẻ
+        switch (type) {
+            case 'extension':
+                // Phải có end_date, không được có rent_amount...
+                if (!keys.includes('end_date')) throw new Error('Extension addendum must include "end_date"');
+                if (keys.includes('rent_amount')) throw new Error('Extension type cannot change rent_amount. Use "general_amendment" instead.');
+                break;
+
+            case 'rent_adjustment':
+                if (!keys.includes('rent_amount')) throw new Error('Rent adjustment must include "rent_amount"');
+                if (keys.includes('end_date')) throw new Error('Rent adjustment cannot change end_date. Use "general_amendment" instead.');
+                break;
+
+            case 'deposit_adjustment':
+                if (!keys.includes('deposit_amount')) throw new Error('Deposit adjustment must include "deposit_amount"');
+                break;
+
+            case 'payment_terms_change':
+                // Kiểm tra xem có đổi chu kỳ hoặc phạt không
+                const validKeys = ['payment_cycle_months', 'penalty_rate'];
+                const hasValidKey = keys.some(k => validKeys.includes(k));
+                if (!hasValidKey) throw new Error('Payment terms change must include cycle or penalty rate');
+                break;
+
+            // early_termination thường không cần changes JSON phức tạp, hoặc chỉ cần ngày termination
+        }
     }
 
     // Helper function - Format response

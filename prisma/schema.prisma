@@ -44,10 +44,11 @@ enum ConsentAction {
 
 enum addendum_type {
   extension
-  rent_change
+  rent_adjustment
+  deposit_adjustment
+  payment_terms_change
   early_termination
-  general
-  other
+  general_amendment
 }
 
 enum bill_status {
@@ -664,7 +665,7 @@ model vehicle_registrations {
 model vehicles {
   vehicle_id      Int             @id @default(autoincrement())
   registration_id Int             @unique
-  license_plate   String?   @db.VarChar(20)
+  license_plate   String?         @db.VarChar(20)
   tenant_user_id  Int
   slot_id         Int?
   status          vehicle_status? @default(active)
@@ -676,7 +677,7 @@ model vehicles {
 
   registration vehicle_registrations @relation(fields: [registration_id], references: [registration_id])
   tenant       tenants               @relation("VehicleTenant", fields: [tenant_user_id], references: [user_id], onDelete: Cascade)
-  slot         parking_slots?         @relation(fields: [slot_id], references: [slot_id])
+  slot         parking_slots?        @relation(fields: [slot_id], references: [slot_id])
   deactivator  users?                @relation("VehicleDeactivatedBy", fields: [deactivated_by], references: [user_id])
 
   @@index([tenant_user_id], map: "idx_vehicles_tenant_user_id")
