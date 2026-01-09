@@ -6,7 +6,8 @@ const UserService = require('../services/user.service');
 class UserController {
     async getAllUsers(req, res, next) {
   try {
-    const users = await UserService.getAllUsers();
+    const users = await UserService.getAllUsers(req.user.user_id);
+
     res.status(200).json({
       success: true,
       data: users,
