@@ -670,46 +670,41 @@ class BuildingService {
   async updateManagerAssignment(buildingId, userId, data) {
     const { note } = data;
 
-    const userIdInt = parseInt(userId);
-    if (isNaN(userIdInt)) {
-      throw new Error("user_id must be a valid number");
-    }
+  const userIdInt = Number(userId);
+  const buildingIdInt = Number(buildingId);
 
-    // Verify assignment exists
-    const existingAssignment = await prisma.building_managers.findUnique({
-      where: { user_id: userIdInt },
-    });
+  if (isNaN(userIdInt) || isNaN(buildingIdInt)) {
+    throw new Error("user_id and building_id must be valid numbers");
+  }
 
-    if (!existingAssignment) {
-      throw new Error("Manager assignment not found");
-    }
-
-    if (existingAssignment.building_id !== buildingId) {
-      throw new Error("Manager is not assigned to this building");
-    }
-
-    // Prepare update data
-    const updateData = {};
+  // 1️⃣ Verify assignment exists
+  const existingAssignment = await prisma.building_managers.findFirst({
+    where: {
+      user_id: userIdInt,
+      building_id: buildingIdInt,
+    },
+  });
 
     if (note !== undefined) {
       updateData.note = note || null;
     }
 
-    // Update assignment
-    const updated = await prisma.building_managers.update({
-      where: { user_id: userIdInt },
-      data: updateData,
-      include: {
-        user: {
-          select: {
-            user_id: true,
-            full_name: true,
-            email: true,
-            phone: true,
-            avatar_url: true,
-            status: true,
-            role: true,
-          },
+  // 3️⃣ Update assignment
+  const updated = await prisma.building_managers.update({
+    where: {
+      manager_id: existingAssignment.manager_id,
+    },
+    data: updateData,
+    include: {
+      user: {
+        select: {
+          user_id: true,
+          full_name: true,
+          email: true,
+          phone: true,
+          avatar_url: true,
+          status: true,
+          role: true,
         },
         building: {
           select: {
@@ -719,10 +714,11 @@ class BuildingService {
           },
         },
       },
-    });
+    },
+  });
 
-    return this.formatManagerAssignmentResponse(updated);
-  }
+  return this.formatManagerAssignmentResponse(updated);
+}
 
   // REMOVE MANAGER - Xóa manager khỏi tòa nhà
   async removeManager(buildingId, userId) {

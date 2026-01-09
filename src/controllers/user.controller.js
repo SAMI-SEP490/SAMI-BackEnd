@@ -6,9 +6,7 @@ const UserService = require('../services/user.service');
 class UserController {
     async getAllUsers(req, res, next) {
   try {
-    const { building_id } = req.query;
-    const users = await UserService.getAllUsers(building_id);
-
+    const users = await UserService.getAllUsers();
     res.status(200).json({
       success: true,
       data: users,
@@ -122,7 +120,7 @@ class UserController {
     async changeToTenant(req, res, next) {
         try {
             const result = await UserService.changeToTenant(req.body);
-
+console.log(req.body);
             res.status(200).json({
                 success: true,
                 message: 'User role changed to TENANT successfully',
