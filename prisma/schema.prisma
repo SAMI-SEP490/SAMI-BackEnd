@@ -154,6 +154,7 @@ enum notification_status {
 enum online_type {
   VNPAY
   VIETQR
+  PAYOS
 }
 
 enum payment_method {

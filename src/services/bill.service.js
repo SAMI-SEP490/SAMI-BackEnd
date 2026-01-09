@@ -422,56 +422,118 @@ class BillService {
    * UPDATED: Includes 'service_charges' so tenant sees details.
    */
   async getBillsForTenant(tenantUserId) {
-    return prisma.bills.findMany({
-      where: {
-        tenant_user_id: tenantUserId,
-        status: { in: ["issued", "paid", "partially_paid", "overdue"] },
-        deleted_at: null,
-      },
-      orderBy: { billing_period_start: "desc" },
-      select: {
-        bill_id: true,
-        bill_number: true,
-        billing_period_start: true,
-        billing_period_end: true,
-        due_date: true,
-        total_amount: true,
-        paid_amount: true,
-        penalty_amount: true,
-        status: true,
-        description: true,
-        bill_type: true,
-        service_charges: true // [NEW] Show line items
-      }
-    });
-  }
+        // 1. Find the room this tenant currently lives in
+        const currentLiving = await prisma.room_tenants.findFirst({
+            where: { tenant_user_id: tenantUserId, is_current: true },
+            select: { room_id: true }
+        });
+
+        // 2. Build Query
+        const whereCondition = {
+            status: { in: ["issued", "paid", "partially_paid", "overdue"] },
+            deleted_at: null,
+            OR: [
+                { tenant_user_id: tenantUserId }, // Bills explicitly assigned to me
+            ]
+        };
+
+        // If they live in a room, include bills for that room's contracts
+        if (currentLiving) {
+            whereCondition.OR.push({
+                contract: { room_id: currentLiving.room_id }
+            });
+        }
+
+        const bills = await prisma.bills.findMany({
+            where: whereCondition,
+            orderBy: { billing_period_start: "desc" },
+            select: {
+                bill_id: true,
+                bill_number: true,
+                tenant_user_id: true, // Needed for comparison
+                billing_period_start: true,
+                billing_period_end: true,
+                due_date: true,
+                total_amount: true,
+                paid_amount: true,
+                penalty_amount: true,
+                status: true,
+                description: true,
+                bill_type: true,
+                // Include contract -> room info to show Room Number
+                contract: {
+                    select: {
+                        room_current: { select: { room_number: true } },
+                        room_history: { select: { room_number: true } } 
+                    }
+                },
+                service_charges: true
+            }
+        });
+
+        // console.log(`bill tenant is: ${bills.tenant_user_id}`);
+        // console.log(`passed tenant is: ${tenantUserId}`);
+        // 3. [NEW] Transform Data: Add 'is_payer' flag
+        return bills.map(bill => {
+            // Determine Room Number (Handle nulls if contract history is messy)
+            const roomNumber = bill.contract?.room_current?.room_number || 
+                               bill.contract?.room_history?.room_number || 
+                               "Unknown";
+
+        const isPayer = bill.tenant_user_id === tenantUserId;
+        console.log(`[UnpaidCheck] Bill #${bill.bill_id} | User: ${tenantUserId} vs Payer: ${bill.tenant_user_id} -> is_payer: ${isPayer}`);
+
+            return {
+                ...bill,
+                room_number: roomNumber, // Flatten for easier Frontend use
+                
+                // THE MAGIC FLAG 🚩
+                // true = I am Primary (Show "Pay" button)
+                // false = I am Secondary (Hide "Pay" button)
+                is_payer: bill.tenant_user_id === tenantUserId 
+            };
+        });
+    }
 
   /**
    * Get unpaid bills for a tenant.
    */
   async getUnpaidBillsForTenant(tenantUserId) {
-    return prisma.bills.findMany({
-      where: {
-        tenant_user_id: tenantUserId,
-        status: { in: ["issued", "overdue"] },
-        deleted_at: null,
-      },
-      orderBy: { due_date: "asc" },
-      select: {
-        bill_id: true,
-        bill_number: true,
-        billing_period_start: true,
-        billing_period_end: true,
-        due_date: true,
-        total_amount: true,
-        paid_amount: true,
-        penalty_amount: true,
-        status: true,
-        description: true,
-        bill_type: true
-      },
-    });
-  }
+        const currentLiving = await prisma.room_tenants.findFirst({
+            where: { tenant_user_id: tenantUserId, is_current: true },
+            select: { room_id: true }
+        });
+
+        const whereCondition = {
+            status: { in: ["issued", "overdue"] },
+            deleted_at: null,
+            OR: [{ tenant_user_id: tenantUserId }]
+        };
+
+        if (currentLiving) {
+            whereCondition.OR.push({
+                contract: { room_id: currentLiving.room_id }
+            });
+        }
+
+        return prisma.bills.findMany({
+            where: whereCondition,
+            orderBy: { due_date: "asc" },
+            select: {
+                bill_id: true,
+                bill_number: true,
+                billing_period_start: true,
+                billing_period_end: true,
+                due_date: true,
+                total_amount: true,
+                paid_amount: true,
+                penalty_amount: true,
+                status: true,
+                description: true,
+                bill_type: true
+            },
+        });
+    }
 
   /**
    * Get all bills (Admin/Manager).
