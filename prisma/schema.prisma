@@ -278,18 +278,19 @@ model users {
 
 model tenants {
   user_id      Int       @id
+  building_id  Int? 
   id_number    String    @unique @db.VarChar(50)
   tenant_since DateTime? @db.Date
   note         String?
-
+  
   // Relations
   user                 users          @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
   room_tenants_history room_tenants[]
-
+  building  buildings? @relation(fields: [building_id], references: [building_id])
   // Contracts & Bills
   contracts contracts[]
   bills     bills[]
-
+  
   // Requests
   vehicle_registrations vehicle_registrations[] @relation("VehicleRegRequestedBy")
   vehicles              vehicles[]              @relation("VehicleTenant")
@@ -319,6 +320,7 @@ model buildings {
   floor_plans       floor_plans[]
   regulations       regulations[]
   parking_slots     parking_slots[]
+  tenants            tenants[]
 }
 
 model building_managers {

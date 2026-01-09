@@ -703,92 +703,91 @@ class BuildingService {
   }
 
   // UPDATE MANAGER ASSIGNMENT - Cập nhật thông tin assignment
-  async updateManagerAssignment(buildingId, userId, data) {
-    const { assigned_from, assigned_to, note } = data;
+async updateManagerAssignment(buildingId, userId, data) {
+  const { note } = data;
 
-    const userIdInt = parseInt(userId);
-    if (isNaN(userIdInt)) {
-      throw new Error("user_id must be a valid number");
-    }
+  const userIdInt = Number(userId);
+  const buildingIdInt = Number(buildingId);
 
-    // Verify assignment exists
-    const existingAssignment = await prisma.building_managers.findUnique({
-      where: { user_id: userIdInt },
-    });
+  if (isNaN(userIdInt) || isNaN(buildingIdInt)) {
+    throw new Error("user_id and building_id must be valid numbers");
+  }
 
-    if (!existingAssignment) {
-      throw new Error("Manager assignment not found");
-    }
+  // 1️⃣ Verify assignment exists
+  const existingAssignment = await prisma.building_managers.findFirst({
+    where: {
+      user_id: userIdInt,
+      building_id: buildingIdInt,
+    },
+  });
 
-    if (existingAssignment.building_id !== buildingId) {
-      throw new Error("Manager is not assigned to this building");
-    }
+  if (!existingAssignment) {
+    throw new Error("Manager assignment not found for this building");
+  }
 
-    // Prepare update data
-    const updateData = {};
+  // 2️⃣ Prepare update data
+  const updateData = {};
 
-    if (assigned_from !== undefined) {
-      if (assigned_from === null || assigned_from === "") {
-        throw new Error("assigned_from cannot be null");
-      }
-      const assignedFromDate = new Date(assigned_from);
-      if (isNaN(assignedFromDate.getTime())) {
-        throw new Error("assigned_from is not a valid date");
-      }
-      updateData.assigned_from = assignedFromDate;
-    }
+  if (note !== undefined) {
+    updateData.note = note || null;
+  }
 
-    if (assigned_to !== undefined) {
-      if (assigned_to === null || assigned_to === "") {
-        updateData.assigned_to = null;
-      } else {
-        const assignedToDate = new Date(assigned_to);
-        if (isNaN(assignedToDate.getTime())) {
-          throw new Error("assigned_to is not a valid date");
-        }
-
-        const fromDate = assigned_from
-          ? new Date(assigned_from)
-          : existingAssignment.assigned_from;
-        if (assignedToDate <= fromDate) {
-          throw new Error("assigned_to must be after assigned_from");
-        }
-        updateData.assigned_to = assignedToDate;
-      }
-    }
-
-    if (note !== undefined) {
-      updateData.note = note || null;
-    }
-
-    // Update assignment
-    const updated = await prisma.building_managers.update({
-      where: { user_id: userIdInt },
-      data: updateData,
-      include: {
-        user: {
-          select: {
-            user_id: true,
-            full_name: true,
-            email: true,
-            phone: true,
-            avatar_url: true,
-            status: true,
-            role: true,
-          },
+  if (Object.keys(updateData).length === 0) {
+    return this.formatManagerAssignmentResponse({
+      ...existingAssignment,
+      user: await prisma.users.findUnique({
+        where: { user_id: userIdInt },
+        select: {
+          user_id: true,
+          full_name: true,
+          email: true,
+          phone: true,
+          avatar_url: true,
+          status: true,
+          role: true,
         },
-        buildings: {
-          select: {
-            building_id: true,
-            name: true,
-            address: true,
-          },
+      }),
+      building: await prisma.buildings.findUnique({
+        where: { building_id: buildingIdInt },
+        select: {
+          building_id: true,
+          name: true,
+          address: true,
+        },
+      }),
+    });
+  }
+
+  // 3️⃣ Update assignment
+  const updated = await prisma.building_managers.update({
+    where: {
+      manager_id: existingAssignment.manager_id,
+    },
+    data: updateData,
+    include: {
+      user: {
+        select: {
+          user_id: true,
+          full_name: true,
+          email: true,
+          phone: true,
+          avatar_url: true,
+          status: true,
+          role: true,
         },
       },
-    });
+      building: {
+        select: {
+          building_id: true,
+          name: true,
+          address: true,
+        },
+      },
+    },
+  });
 
-    return this.formatManagerAssignmentResponse(updated);
-  }
+  return this.formatManagerAssignmentResponse(updated);
+}
 
   // REMOVE MANAGER - Xóa manager khỏi tòa nhà
   async removeManager(buildingId, userId) {
@@ -1043,8 +1042,6 @@ class BuildingService {
 
   formatManagerAssignmentResponse(assignment) {
     const now = new Date();
-    const isActive = !assignment.assigned_to || assignment.assigned_to >= now;
-
     return {
       user_id: assignment.user_id,
       building_id: assignment.building_id,
@@ -1058,9 +1055,6 @@ class BuildingService {
         status: assignment.users?.status,
         role: assignment.users?.role,
       },
-      assigned_from: assignment.assigned_from,
-      assigned_to: assignment.assigned_to,
-      is_active: isActive,
       note: assignment.note,
     };
   }
