@@ -184,78 +184,66 @@ class ParkingSlotService {
         return { message: 'Parking slot deleted successfully' };
     }
     async getAvailableSlotForRegistration(registrationId) {
-        const registration = await prisma.vehicle_registrations.findUnique({
-            where: { registration_id: Number(registrationId) },
-            include: {
-                requester: {
-                    include: {
-                        room_tenants_history: {
-                            where: { is_current: true },
-                            include: {
-                                room: {
-                                    select: { building_id: true }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        });
-
-        if (!registration) {
-            throw new Error("Registration not found");
+  const registration = await prisma.vehicle_registrations.findUnique({
+    where: { registration_id: Number(registrationId) },
+    include: {
+      requester: {
+        select: {
+          user_id: true,
+          building_id: true   // ✅ CẦN THIẾT
         }
+      }
+    }
+  });
 
-        const buildingId =
-            registration.requester.room_tenants_history[0]?.room.building_id;
+  if (!registration) {
+    throw new Error("Registration not found");
+  }
 
-        if (!buildingId) {
-            throw new Error("Tenant building not found");
+  const buildingId = registration.requester.building_id;
+
+  if (!buildingId) {
+    throw new Error("Tenant building not found");
+  }
+
+  return prisma.parking_slots.findMany({
+    where: {
+      building_id: buildingId,
+      slot_type: registration.vehicle_type,
+      is_available: true
+    },
+    orderBy: { slot_number: "asc" }
+  });
+}
+async getAvailableSlotsForVehicle(vehicleId) {
+  const vehicle = await prisma.vehicles.findUnique({
+    where: { vehicle_id: Number(vehicleId) },
+    include: {
+      registration: true,
+      tenant: {
+        select: {
+          user_id: true,
+          building_id: true   // ✅ LOAD ĐÚNG
         }
-
-        return prisma.parking_slots.findMany({
-            where: {
-                building_id: buildingId,
-                slot_type: registration.vehicle_type,
-                is_available: true
-            },
-            orderBy: {
-                slot_number: "asc"
-            }
-        });
+      }
     }
-    async getAvailableSlotsForVehicle(vehicleId) {
-        const vehicle = await prisma.vehicles.findUnique({
-            where: { vehicle_id: Number(vehicleId) },
-            include: {
-                registration: true,
-                tenant: {
-                    include: {
-                        room_tenants_history: {
-                            where: { is_current: true },
-                            include: { room: true }
-                        }
-                    }
-                }
-            }
-        });
+  });
 
-        if (!vehicle) throw new Error("Vehicle not found");
+  if (!vehicle) throw new Error("Vehicle not found");
 
-        const buildingId =
-            vehicle.tenant.room_tenants_history[0]?.room.building_id;
+  const buildingId = vehicle.tenant.building_id;
 
-        if (!buildingId) throw new Error("Tenant has no building");
+  if (!buildingId) throw new Error("Tenant building not found");
 
-        return prisma.parking_slots.findMany({
-            where: {
-                building_id: buildingId,
-                slot_type: vehicle.registration.vehicle_type,
-                is_available: true
-            },
-            orderBy: { slot_number: 'asc' }
-        });
-    }
+  return prisma.parking_slots.findMany({
+    where: {
+      building_id: buildingId,
+      slot_type: vehicle.registration.vehicle_type,
+      is_available: true
+    },
+    orderBy: { slot_number: "asc" }
+  });
+}
 
 }
 

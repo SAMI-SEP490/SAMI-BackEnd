@@ -47,18 +47,18 @@ class VehicleRegistrationController {
     async getVehicleRegistrations(req, res, next) {
         try {
             const filters = {
-  status: req.query.status,
-  requested_by: req.query.requested_by
-    ? parseInt(req.query.requested_by)
-    : undefined,
-  start_date_from: req.query.start_date_from,
-  start_date_to: req.query.start_date_to,
-  building_id: req.query.building_id
-    ? parseInt(req.query.building_id)
-    : undefined,
-  page: req.query.page,
-  limit: req.query.limit
-};
+                status: req.query.status,
+                requested_by: req.query.requested_by
+                    ? parseInt(req.query.requested_by)
+                    : undefined,
+                start_date_from: req.query.start_date_from,
+                start_date_to: req.query.start_date_to,
+                building_id: req.query.building_id
+                    ? parseInt(req.query.building_id)
+                    : undefined,
+                page: req.query.page,
+                limit: req.query.limit
+            };
 
             const result = await vehicleRegistrationService.getVehicleRegistrations(
                 filters,
@@ -80,15 +80,16 @@ class VehicleRegistrationController {
         try {
             const { id } = req.params;
 
-            const updated = await vehicleRegistrationService.updateVehicleRegistration(
-                parseInt(id),
-                req.user.user_id,
-                req.body
-            );
+            const updated =
+                await vehicleRegistrationService.updateVehicleRegistration(
+                    Number(id),
+                    req.user.user_id,
+                    req.body
+                );
 
             res.json({
                 success: true,
-                message: 'Vehicle registration updated successfully',
+                message: "Vehicle registration updated successfully",
                 data: { registration: updated }
             });
         } catch (err) {
@@ -205,18 +206,18 @@ class VehicleRegistrationController {
     async getVehicles(req, res, next) {
         try {
             const filters = {
-  status: req.query.status,
-  type: req.query.type,
-  tenant_user_id: req.query.tenant_user_id
-    ? parseInt(req.query.tenant_user_id)
-    : undefined,
-  license_plate: req.query.license_plate,
-  building_id: req.query.building_id
-    ? parseInt(req.query.building_id)
-    : undefined,   // ✅ BẮT BUỘC
-  page: req.query.page,
-  limit: req.query.limit
-};
+                status: req.query.status,
+                type: req.query.type,
+                tenant_user_id: req.query.tenant_user_id
+                    ? parseInt(req.query.tenant_user_id)
+                    : undefined,
+                license_plate: req.query.license_plate,
+                building_id: req.query.building_id
+                    ? parseInt(req.query.building_id)
+                    : undefined,   // ✅ BẮT BUỘC
+                page: req.query.page,
+                limit: req.query.limit
+            };
 
             const result = await vehicleRegistrationService.getVehicles(
                 filters,
