@@ -43,7 +43,7 @@ router.get(
 // GET - Lấy floor plans theo building  (PHẢI ĐẶT TRƯỚC /:id)
 router.get(
   "/building/:buildingId",
-  requireRole(["owner", "manager"]),
+  requireRole(["owner", "manager","tenant"]),
   validateBuildingId,
   floorPlanController.getFloorPlansByBuilding
 );
@@ -59,7 +59,7 @@ router.get(
 // GET - Lấy floor plan theo ID (ĐẶT SAU CÙNG trong nhóm GET cụ thể)
 router.get(
   "/:id",
-  requireRole(["owner", "manager"]),
+  requireRole(["owner", "manager","tenant"]),
   validateFloorPlanId,
   floorPlanController.getFloorPlanById
 );
