@@ -47,13 +47,18 @@ class VehicleRegistrationController {
     async getVehicleRegistrations(req, res, next) {
         try {
             const filters = {
-                status: req.query.status,
-                requested_by: req.query.requested_by ? parseInt(req.query.requested_by) : undefined,
-                start_date_from: req.query.start_date_from,
-                start_date_to: req.query.start_date_to,
-                page: req.query.page,
-                limit: req.query.limit
-            };
+  status: req.query.status,
+  requested_by: req.query.requested_by
+    ? parseInt(req.query.requested_by)
+    : undefined,
+  start_date_from: req.query.start_date_from,
+  start_date_to: req.query.start_date_to,
+  building_id: req.query.building_id
+    ? parseInt(req.query.building_id)
+    : undefined,
+  page: req.query.page,
+  limit: req.query.limit
+};
 
             const result = await vehicleRegistrationService.getVehicleRegistrations(
                 filters,
@@ -200,13 +205,18 @@ class VehicleRegistrationController {
     async getVehicles(req, res, next) {
         try {
             const filters = {
-                status: req.query.status,
-                type: req.query.type,
-                tenant_user_id: req.query.tenant_user_id ? parseInt(req.query.tenant_user_id) : undefined,
-                license_plate: req.query.license_plate,
-                page: req.query.page,
-                limit: req.query.limit
-            };
+  status: req.query.status,
+  type: req.query.type,
+  tenant_user_id: req.query.tenant_user_id
+    ? parseInt(req.query.tenant_user_id)
+    : undefined,
+  license_plate: req.query.license_plate,
+  building_id: req.query.building_id
+    ? parseInt(req.query.building_id)
+    : undefined,   // ✅ BẮT BUỘC
+  page: req.query.page,
+  limit: req.query.limit
+};
 
             const result = await vehicleRegistrationService.getVehicles(
                 filters,
@@ -250,7 +260,7 @@ class VehicleRegistrationController {
 
             const vehicle = await vehicleRegistrationService.deactivateVehicle(
                 parseInt(id),
-    req.user.user_id
+                req.user.user_id
             );
 
             res.json({
@@ -283,20 +293,28 @@ class VehicleRegistrationController {
     }
     async changeVehicleSlot(req, res, next) {
         try {
-            const { id } = req.params;
-            const { new_slot_id } = req.body;
+            const vehicleId = Number(req.params.id); // 🔥 BẮT BUỘC
+            const { slot_id } = req.body;
 
-            const vehicle = await vehicleRegistrationService.changeVehicleSlot(
-                parseInt(id),
-                new_slot_id,
+            if (!vehicleId) {
+                throw new Error('vehicleId is required');
+            }
+
+            if (!slot_id) {
+                throw new Error('slot_id is required');
+            }
+
+            await vehicleRegistrationService.changeVehicleSlot(
+                vehicleId,
+                Number(slot_id),
                 req.user.user_id,
                 req.user.role
             );
 
-            res.json({
-                success: true,
-                message: 'Vehicle slot changed successfully',
-                data: { vehicle }
+            res.json({ success: true });
+            console.log({
+                params: req.params,
+                body: req.body
             });
         } catch (err) {
             next(err);
