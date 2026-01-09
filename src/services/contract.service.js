@@ -1007,8 +1007,6 @@ class ContractService {
       const managedBuildings = await prisma.building_managers.findMany({
         where: {
           user_id: currentUser.user_id,
-          assigned_from: { lte: today },
-          OR: [{ assigned_to: null }, { assigned_to: { gte: today } }],
         },
         select: { building_id: true },
       });
@@ -1301,20 +1299,14 @@ class ContractService {
 
   /**
    * Kiểm tra Manager có quyền truy cập building không
-   * UPDATED: Kiểm tra thêm thời hạn phân công (assigned_from/to)
-   */
+      */
   async checkManagerBuildingAccess(userId, buildingId) {
     const today = new Date();
     const managerBuilding = await prisma.building_managers.findFirst({
       where: {
         user_id: userId,
         building_id: buildingId,
-        assigned_from: { lte: today }, // Đã bắt đầu
-        OR: [
-          { assigned_to: null }, // Vô thời hạn
-          { assigned_to: { gte: today } }, // Chưa kết thúc
-        ],
-      },
+            },
     });
 
     return !!managerBuilding;

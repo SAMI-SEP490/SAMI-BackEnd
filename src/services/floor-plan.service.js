@@ -3,22 +3,31 @@
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 
-class FloorPlanService {
-  // Helper: Kiểm tra quyền truy cập building
-  async checkBuildingAccess(userId, userRole, buildingId) {
-    // Owner có toàn quyền
-    if (userRole === "OWNER") {
-      return true;
-    }
+function calculateMaxTenants(size) {
+  const s = Number(size);
+  if (!s || Number.isNaN(s)) return 1;
+  if (s <= 15) return 1;
+  if (s <= 25) return 2;
+  if (s <= 35) return 3;
+  return 4;
+}
 
-    // Manager: kiểm tra có được phân công cho building
-    if (userRole === "MANAGER") {
+class FloorPlanService {
+ // Helper: Kiểm tra quyền truy cập building
+  async checkBuildingAccess(userId, userRole, buildingId) {
+    const normalizedRole = String(userRole || "").toUpperCase();
+
+    // OWNER có toàn quyền
+    if (normalizedRole === "OWNER") return true;
+
+    // MANAGER: chỉ được truy cập building được assign (building_managers.user_id)
+    if (normalizedRole === "MANAGER") {
       const managerBuilding = await prisma.building_managers.findFirst({
         where: {
-          manager_id: userId,
+          user_id: userId,
           building_id: buildingId,
-          is_active: true,
         },
+        select: { manager_id: true },
       });
       return !!managerBuilding;
     }
@@ -188,18 +197,24 @@ class FloorPlanService {
         if (!roomNumber) return null;
 
         // size (m²) – FE đang truyền size = 4*3
+        // size (m²)
         let size = null;
+
+        // chấp nhận w/h là number hoặc string-number
+        const wPx = Number(node?.data?.w);
+        const hPx = Number(node?.data?.h);
+
         if (
-          typeof node?.data?.w === "number" &&
-          typeof node?.data?.h === "number" &&
-          node.data.w > 0 &&
-          node.data.h > 0
+          Number.isFinite(wPx) &&
+          Number.isFinite(hPx) &&
+          wPx > 0 &&
+          hPx > 0
         ) {
-          const wM = node.data.w / 80; // pxPerMeter = 80 (đang hard-code ở FE)
-          const hM = node.data.h / 80;
+          const wM = wPx / 80; // pxPerMeter = 80
+          const hM = hPx / 80;
           size = Number((wM * hM).toFixed(2));
         }
-        // FALLBACK: size FE gửi (cũ)
+        // FALLBACK: size FE gửi (nếu có) ví dụ "56m2"
         else if (node?.data?.size !== undefined && node?.data?.size !== null) {
           const s = String(node.data.size).match(/(\d+(\.\d+)?)/);
           if (s) size = parseFloat(s[1]);
@@ -210,6 +225,7 @@ class FloorPlanService {
           floor: Number(floorNumber),
           room_number: roomNumber,
           size,
+          max_tenants: calculateMaxTenants(size),
           description: node?.data?.description || null,
           status: "available",
           is_active: true,
@@ -874,11 +890,25 @@ class FloorPlanService {
           // Nếu có dài & rộng => size = L*W
           if (L !== null && W !== null) return L * W;
 
-          // Nếu không có dài/rộng thì dùng size FE gửi (có thể là "15", "15m2", ...)
+          // Nếu không có dài/rộng thì dùng size FE gửi
           const rawSize =
             node?.data?.size ?? node?.data?.area ?? node?.data?.room_size;
           const S = toNumber(rawSize);
-          return S;
+          if (S !== null) return S;
+
+          // FALLBACK: tính từ w/h (px) nếu user resize bằng kéo
+          const wPx = toNumber(node?.data?.w);
+          const hPx = toNumber(node?.data?.h);
+
+          if (wPx !== null && hPx !== null && wPx > 0 && hPx > 0) {
+            // lấy pxPerMeter từ meta nếu có, fallback 80 giống create
+            const pxPerMeter = Number(layoutObj?.meta?.pxPerMeter) || 80;
+            const wM = wPx / pxPerMeter;
+            const hM = hPx / pxPerMeter;
+            return Number((wM * hM).toFixed(2));
+          }
+
+          return null;
         };
 
         // 1) Extract rooms from layout
@@ -926,6 +956,7 @@ class FloorPlanService {
                 floor: r.floor,
                 room_number: r.room_number,
                 size: r.size,
+                max_tenants: calculateMaxTenants(r.size),
                 status: "available",
                 is_active: true,
                 created_at: new Date(),
@@ -965,6 +996,7 @@ class FloorPlanService {
                 data: {
                   room_number: r.room_number,
                   size: r.size,
+                  max_tenants: calculateMaxTenants(r.size),
                   updated_at: new Date(),
                 },
               });
@@ -1195,7 +1227,7 @@ class FloorPlanService {
       // 3) Lấy tất cả phòng thuộc building + floor
       const rooms = await tx.rooms.findMany({
         where: {
-          building_id: buildingId,
+          building_id: bId,
           floor: floorNumber,
           is_active: true,
         },
@@ -1255,14 +1287,14 @@ class FloorPlanService {
       // 9) (Tuỳ bạn) cập nhật number_of_floors nếu bạn đang dùng field này
       // Gợi ý: set = max floor_number còn lại, hoặc 0 nếu không còn.
       const agg = await tx.floor_plans.aggregate({
-        where: { building_id: buildingId },
+        where: { building_id: bId },
         _max: { floor_number: true },
       });
       const maxFloor = agg?._max?.floor_number ?? 0;
 
       // Nếu bảng buildings có number_of_floors
       await tx.buildings.update({
-        where: { building_id: buildingId },
+        where: { building_id: bId },
         data: { number_of_floors: maxFloor },
       });
 
@@ -1275,19 +1307,19 @@ class FloorPlanService {
   // STATISTICS - Thống kê floor plans
   async getFloorPlanStatistics(buildingId, userId, userRole) {
     // Kiểm tra quyền truy cập building
-    if (userRole === "MANAGER") {
-      const managerBuilding = await prisma.building_managers.findFirst({
-        where: {
-          user_id: userId,
-          building_id: buildingId,
-          // is_active: true, // chỉ giữ nếu schema của bạn CÓ field này
-        },
-      });
-      return !!managerBuilding;
+     const normalizedRole = String(userRole || "").toUpperCase();
+    const bId = parseInt(buildingId);
+    if (isNaN(bId)) throw new Error("building_id must be a valid number");
+
+    const hasAccess = await this.checkBuildingAccess(userId, normalizedRole, bId);
+    if (!hasAccess) {
+      throw new Error(
+        "Access denied: You do not have permission to view statistics for this building"
+      );
     }
 
     const building = await prisma.buildings.findUnique({
-      where: { building_id: buildingId },
+      where: { building_id: bId },
     });
 
     if (!building) {
@@ -1297,29 +1329,29 @@ class FloorPlanService {
     const [totalPlans, publishedPlans, unpublishedPlans, uniqueFloors] =
       await Promise.all([
         prisma.floor_plans.count({
-          where: { building_id: buildingId },
+          where: { building_id: bId },
         }),
         prisma.floor_plans.count({
           where: {
-            building_id: buildingId,
+            building_id: bId,
             is_published: true,
           },
         }),
         prisma.floor_plans.count({
           where: {
-            building_id: buildingId,
+            building_id: bId,
             is_published: false,
           },
         }),
         prisma.floor_plans.findMany({
-          where: { building_id: buildingId },
+          where: { building_id: bId },
           select: { floor_number: true },
           distinct: ["floor_number"],
         }),
       ]);
 
     return {
-      building_id: buildingId,
+      building_id: bId,
       building_name: building.name,
       total_plans: totalPlans,
       published_plans: publishedPlans,

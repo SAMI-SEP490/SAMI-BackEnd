@@ -517,17 +517,12 @@ class AuthService {
 
       case "MANAGER":
         roleSpecificData = await prisma.building_managers.findFirst({
-          where: {
-            user_id: userId,
-          },
+          where: { user_id: userId },
           select: {
             user_id: true,
             building_id: true,
-            assigned_from: true,
-            assigned_to: true,
             note: true,
             building: {
-              // ❗ tên relation là `building` không phải `buildings`
               select: {
                 building_id: true,
                 name: true,
