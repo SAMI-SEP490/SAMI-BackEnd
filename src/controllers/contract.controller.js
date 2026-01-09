@@ -1,5 +1,6 @@
-// Updated: 2025-12-30
+// Updated: 2025-01-10
 // Fix: Handle req.files (array) instead of req.file
+// Update: Pass IP & User-Agent for Consent Logging
 
 const contractService = require('../services/contract.service');
 
@@ -10,8 +11,8 @@ class ContractController {
             const files = req.files;
 
             // Log để debug xem body đã nhận được chưa
-             console.log("Body:", req.body);
-             console.log("Files:", files);
+            console.log("Body:", req.body);
+            console.log("Files:", files);
 
             const contract = await contractService.createContract(req.body, files, req.user);
 
@@ -38,11 +39,17 @@ class ContractController {
                 });
             }
 
+            // [UPDATED] Lấy IP và User Agent để ghi log bằng chứng Consent
+            const ipAddress = req.ip || req.socket.remoteAddress;
+            const userAgent = req.headers['user-agent'];
+
             const contract = await contractService.approveContract(
                 parseInt(id),
                 action,
                 reason,
-                req.user
+                req.user,
+                ipAddress, // New param
+                userAgent  // New param
             );
 
             res.json({
@@ -150,10 +157,16 @@ class ContractController {
                 });
             }
 
+            // [UPDATED] Lấy IP và User Agent cho log Termination Consent
+            const ipAddress = req.ip || req.socket.remoteAddress;
+            const userAgent = req.headers['user-agent'];
+
             const contract = await contractService.handleTerminationRequest(
                 parseInt(id),
                 action,
-                req.user
+                req.user,
+                ipAddress, // New param
+                userAgent  // New param
             );
 
             res.json({

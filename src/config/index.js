@@ -29,6 +29,11 @@ module.exports = {
         region: process.env.AWS_REGION || 'ap-southeast-1',
         bucketName: process.env.AWS_S3_BUCKET_NAME
     },
+    cloudWatch: {
+        region: process.env.AWS_REGION || 'ap-southeast-1',
+        logGroupName: process.env.CLOUDWATCH_LOG_GROUP || '/rental-management/consent-logs',
+        logStreamPrefix: process.env.CLOUDWATCH_LOG_STREAM_PREFIX || 'consent'
+    },
     googleCloud: {
         projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
         keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS

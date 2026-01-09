@@ -1,0 +1,199 @@
+// ============================================
+// scripts/seed-consent.js
+// Script để seed dữ liệu consent versions ban đầu
+// ============================================
+
+const { PrismaClient } = require('@prisma/client');
+const crypto = require('crypto');
+
+const prisma = new PrismaClient();
+
+async function seedConsentVersions() {
+    try {
+        console.log('🌱 Seeding consent versions...\n');
+
+        // 1. Terms of Service
+        const tosContent = `
+ĐIỀU KHOẢN SỬ DỤNG DỊCH VỤ
+
+Cập nhật lần cuối: ${new Date().toLocaleDateString('vi-VN')}
+
+1. CHẤP NHẬN ĐIỀU KHOẢN
+   Bằng việc đăng ký và sử dụng dịch vụ cho thuê phòng của chúng tôi, bạn đồng ý tuân thủ 
+   các điều khoản và điều kiện được quy định trong văn bản này.
+
+2. QUYỀN VÀ NGHĨA VỤ CỦA NGƯỜI THUÊ
+   2.1. Quyền lợi:
+        - Được sử dụng phòng theo đúng mục đích đã thỏa thuận
+        - Được hưởng đầy đủ các dịch vụ theo hợp đồng
+        - Được bảo vệ quyền riêng tư cá nhân
+
+   2.2. Nghĩa vụ:
+        - Thanh toán tiền thuê đúng hạn
+        - Giữ gìn vệ sinh chung
+        - Tuân thủ nội quy tòa nhà
+        - Báo cáo kịp thời các sự cố
+
+3. THANH TOÁN
+   - Tiền thuê phải được thanh toán vào ngày đầu tiên của mỗi tháng
+   - Phí phạt 2% sẽ được áp dụng cho mỗi ngày trễ hạn
+   - Tiền đặt cọc sẽ được hoàn trả sau khi kết thúc hợp đồng
+
+4. CHÍNH SÁCH HỦY BỎ
+   - Thông báo trước ít nhất 30 ngày nếu muốn chấm dứt hợp đồng
+   - Vi phạm điều khoản này sẽ bị mất tiền đặt cọc
+
+5. TRÁCH NHIỆM
+   Người thuê chịu trách nhiệm về mọi thiệt hại gây ra cho tài sản trong thời gian thuê.
+
+6. ĐIỀU KHOẢN CHUNG
+   - Mọi tranh chấp sẽ được giải quyết theo pháp luật Việt Nam
+   - Điều khoản này có thể được cập nhật, thay đổi mà không cần thông báo trước
+        `.trim();
+
+        const tosHash = crypto.createHash('sha256').update(tosContent).digest('hex');
+
+        const tos = await prisma.consent_versions.upsert({
+            where: {
+                consent_type_version_number: {
+                    consent_type: 'TERM_OF_SERVICE',
+                    version_number: 'v1.0'
+                }
+            },
+            update: {},
+            create: {
+                consent_type: 'TERM_OF_SERVICE',
+                version_number: 'v1.0',
+                content: tosContent,
+                content_hash: tosHash,
+                is_active: true,
+            },
+        });
+        console.log('✅ Created Terms of Service v1.0');
+
+        // 2. Privacy Policy
+        const privacyContent = `
+CHÍNH SÁCH BẢO MẬT
+
+Cập nhật lần cuối: ${new Date().toLocaleDateString('vi-VN')}
+
+1. THU THẬP THÔNG TIN
+   Chúng tôi thu thập các thông tin sau:
+   - Thông tin cá nhân: Họ tên, ngày sinh, giới tính
+   - Thông tin liên lạc: Email, số điện thoại, địa chỉ
+   - Thông tin định danh: CMND/CCCD, hộ chiếu
+   - Thông tin thanh toán: Thông tin tài khoản ngân hàng (nếu có)
+
+2. MỤC ĐÍCH SỬ DỤNG THÔNG TIN
+   Thông tin của bạn được sử dụng để:
+   - Quản lý hợp đồng thuê phòng
+   - Liên lạc về các vấn đề liên quan đến dịch vụ
+   - Xử lý thanh toán
+   - Đảm bảo an ninh và tuân thủ pháp luật
+
+3. BẢO VỆ THÔNG TIN
+   - Thông tin được mã hóa và lưu trữ an toàn
+   - Chỉ nhân viên có thẩm quyền mới được truy cập
+   - Không chia sẻ thông tin với bên thứ ba ngoại trừ theo yêu cầu pháp luật
+
+4. QUYỀN CỦA BẠN
+   Bạn có quyền:
+   - Yêu cầu xem thông tin cá nhân
+   - Yêu cầu chỉnh sửa thông tin không chính xác
+   - Yêu cầu xóa thông tin (trong một số trường hợp)
+   - Rút lại sự đồng ý (có thể ảnh hưởng đến dịch vụ)
+
+5. THỜI GIAN LƯU TRỮ
+   Thông tin sẽ được lưu trữ:
+   - Trong suốt thời gian hợp đồng còn hiệu lực
+   - 5 năm sau khi kết thúc hợp đồng (theo quy định pháp luật)
+
+6. COOKIES VÀ CÔNG NGHỆ TƯƠNG TỰ
+   Chúng tôi sử dụng cookies để cải thiện trải nghiệm người dùng và phân tích website.
+
+7. LIÊN HỆ
+   Nếu có thắc mắc về chính sách bảo mật, vui lòng liên hệ:
+   - Email: support@example.com
+   - Hotline: 1900-xxxx
+        `.trim();
+
+        const privacyHash = crypto.createHash('sha256').update(privacyContent).digest('hex');
+
+        const privacy = await prisma.consent_versions.upsert({
+            where: {
+                consent_type_version_number: {
+                    consent_type: 'PRIVACY_POLICY',
+                    version_number: 'v1.0'
+                }
+            },
+            update: {},
+            create: {
+                consent_type: 'PRIVACY_POLICY',
+                version_number: 'v1.0',
+                content: privacyContent,
+                content_hash: privacyHash,
+                is_active: true,
+            },
+        });
+        console.log('✅ Created Privacy Policy v1.0');
+
+        // 3. Contract Signing
+        const contractContent = `
+ĐIỀU KHOẢN KÝ KẾT HỢP ĐỒNG
+
+1. XÁC NHẬN
+   Bằng việc ký hợp đồng điện tử này, bạn xác nhận:
+   - Đã đọc và hiểu đầy đủ nội dung hợp đồng
+   - Đồng ý với tất cả các điều khoản được nêu trong hợp đồng
+   - Thông tin cung cấp là chính xác và trung thực
+
+2. CHỮ KÝ ĐIỆN TỬ
+   - Chữ ký điện tử có giá trị pháp lý tương đương chữ ký viết tay
+   - Bạn chịu trách nhiệm về tính bảo mật của tài khoản
+
+3. HIỆU LỰC
+   Hợp đồng có hiệu lực kể từ ngày ký và được lưu trữ trong hệ thống.
+        `.trim();
+
+        const contractHash = crypto.createHash('sha256').update(contractContent).digest('hex');
+
+        const contract = await prisma.consent_versions.upsert({
+            where: {
+                consent_type_version_number: {
+                    consent_type: 'CONTRACT_SIGNING',
+                    version_number: 'v1.0'
+                }
+            },
+            update: {},
+            create: {
+                consent_type: 'CONTRACT_SIGNING',
+                version_number: 'v1.0',
+                content: contractContent,
+                content_hash: contractHash,
+                is_active: true,
+            },
+        });
+        console.log('✅ Created Contract Signing v1.0');
+
+        console.log('\n✅ Seeding completed successfully!');
+        console.log('\nCreated versions:');
+        console.log(`- Terms of Service: ${tos.version_id}`);
+        console.log(`- Privacy Policy: ${privacy.version_id}`);
+        console.log(`- Contract Signing: ${contract.version_id}`);
+
+    } catch (error) {
+        console.error('❌ Error seeding consent versions:', error);
+        throw error;
+    } finally {
+        await prisma.$disconnect();
+    }
+}
+
+// Chạy script
+seedConsentVersions()
+    .catch((e) => {
+        console.error(e);
+        process.exit(1);
+    });
+
+module.exports = { seedConsentVersions };
