@@ -88,18 +88,17 @@ const changeToTenantSchema = z.object({
         if (typeof val === 'string' && val.trim() !== '') return Number(val);
         return val;
     }, z.number().int().positive({ message: 'userId must be a positive integer' })),
-    roomId: z.preprocess((val) => {
-        if (typeof val === 'string' && val.trim() !== '') return Number(val);
-        return val;
-    }, z.number().int().positive({ message: 'roomId must be a positive integer' })),
+      buildingId: z.preprocess(
+    (val) => {
+      if (val === '' || val === undefined || val === null) return undefined;
+      return Number(val);
+    },
+    z.number().int().positive().optional()
+  ),
     idNumber: z.string()
         .min(9, 'ID number must be at least 9 characters')
         .max(12, 'ID number must not exceed 12 characters')
         .regex(/^[0-9]+$/, { message: 'ID number must contain only numbers' }),
-    emergencyContactPhone: z.string()
-        .min(10, 'Phone number must be at least 10 digits')
-        .max(11, 'Phone number must not exceed 11 digits')
-        .regex(/^[0-9]+$/, { message: 'Phone number must contain only numbers' }),
     note: z.string().optional()
 });
 

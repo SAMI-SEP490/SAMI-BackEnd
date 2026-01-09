@@ -278,7 +278,179 @@ async function sendPasswordResetEmail(email, otp, fullName) {
 
     return sendEmail(email, subject, html);
 }
+/**
+ * Gửi email yêu cầu phê duyệt Hợp đồng thuê
+ * @param {string} email - Email người nhận
+ * @param {string} fullName - Tên người nhận
+ * @param {object} contractData - Thông tin hợp đồng (contractNumber, roomNumber, startDate, endDate)
+ * @param {string} actionUrl - Link deep link hoặc web link để mở hợp đồng
+ */
+async function sendContractApprovalEmail(email, fullName, contractData, actionUrl = '#') {
+    const subject = `📄 Yêu cầu ký Hợp đồng thuê nhà - Phòng ${contractData.roomNumber}`;
 
+    // Format ngày tháng cho đẹp (nếu có)
+    const formatDate = (date) => date ? new Date(date).toLocaleDateString('vi-VN') : 'N/A';
+
+    const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 0; }
+                .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                .content { background-color: white; padding: 40px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+                .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #f0f0f0; padding-bottom: 20px; }
+                .header h1 { color: #2c3e50; margin: 0; font-size: 24px; }
+                .details-box { background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 20px; margin: 20px 0; }
+                .details-row { display: flex; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px dashed #e0e0e0; padding-bottom: 5px; }
+                .details-row:last-child { border-bottom: none; margin-bottom: 0; }
+                .label { color: #666; font-weight: 500; }
+                .value { color: #2c3e50; font-weight: bold; }
+                .btn-container { text-align: center; margin: 30px 0; }
+                .btn { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white !important; padding: 12px 30px; text-decoration: none; border-radius: 50px; font-weight: bold; display: inline-block; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4); transition: transform 0.2s; }
+                .btn:hover { transform: translateY(-2px); }
+                .footer { text-align: center; margin-top: 30px; font-size: 12px; color: #999; border-top: 1px solid #e0e0e0; padding-top: 20px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="content">
+                    <div class="header">
+                        <h1>📝 Hợp đồng mới cần phê duyệt</h1>
+                    </div>
+                    
+                    <p>Xin chào <strong>${fullName || 'Quý khách'}</strong>,</p>
+                    
+                    <p>Bạn vừa nhận được một yêu cầu ký hợp đồng thuê nhà mới. Vui lòng kiểm tra thông tin chi tiết và thực hiện xác nhận trong ứng dụng.</p>
+                    
+                    <div class="details-box">
+                        <div class="details-row">
+                            <span class="label">Mã hợp đồng:</span>
+                            <span class="value">${contractData.contractNumber}</span>
+                        </div>
+                        <div class="details-row">
+                            <span class="label">Phòng:</span>
+                            <span class="value">${contractData.roomNumber}</span>
+                        </div>
+                        <div class="details-row">
+                            <span class="label">Ngày bắt đầu:</span>
+                            <span class="value">${formatDate(contractData.startDate)}</span>
+                        </div>
+                        <div class="details-row">
+                            <span class="label">Thời hạn:</span>
+                            <span class="value">${contractData.duration} tháng</span>
+                        </div>
+                    </div>
+
+                    <div class="btn-container">
+                        <a href="${actionUrl}" class="btn">Xem và Ký Hợp đồng</a>
+                    </div>
+                    
+                    <p style="font-size: 14px; color: #666;">
+                        <em>* Nếu nút bấm không hoạt động, vui lòng mở ứng dụng của bạn và kiểm tra mục "Hợp đồng".</em>
+                    </p>
+
+                    <div class="footer">
+                        <p>Đây là email tự động, vui lòng không trả lời email này.</p>
+                        <p>&copy; ${new Date().getFullYear()} SAMI Management System.</p>
+                    </div>
+                </div>
+            </div>
+        </body>
+        </html>
+    `;
+
+    return sendEmail(email, subject, html);
+}
+
+/**
+ * Gửi email yêu cầu phê duyệt Phụ lục hợp đồng (Gia hạn, chấm dứt, thay đổi...)
+ * @param {string} email - Email người nhận
+ * @param {string} fullName - Tên người nhận
+ * @param {object} addendumData - Thông tin phụ lục (type, contractNumber, effectiveDate)
+ * @param {string} actionUrl - Link deep link hoặc web link
+ */
+async function sendAddendumApprovalEmail(email, fullName, addendumData, actionUrl = '#') {
+    // Mapping loại phụ lục sang tiếng Việt cho tiêu đề dễ hiểu
+    const typeMap = {
+        'extension': 'Gia hạn hợp đồng',
+        'early_termination': 'Chấm dứt trước hạn',
+        'rent_adjustment': 'Điều chỉnh giá thuê',
+        'general_amendment': 'Điều chỉnh điều khoản',
+        'default': 'Phụ lục hợp đồng'
+    };
+    const typeText = typeMap[addendumData.type] || typeMap['default'];
+
+    const subject = `⚠️ Yêu cầu phê duyệt: ${typeText} - HĐ #${addendumData.contractNumber}`;
+    const formatDate = (date) => date ? new Date(date).toLocaleDateString('vi-VN') : 'N/A';
+
+    const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 0; }
+                .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                .content { background-color: white; padding: 40px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+                .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #f0f0f0; padding-bottom: 20px; }
+                .header h1 { color: #d35400; margin: 0; font-size: 24px; } /* Màu cam cho cảnh báo/thay đổi */
+                .details-box { background-color: #fff8f0; border: 1px solid #ffe0b2; border-radius: 8px; padding: 20px; margin: 20px 0; }
+                .details-row { display: flex; justify-content: space-between; margin-bottom: 10px; border-bottom: 1px dashed #ffe0b2; padding-bottom: 5px; }
+                .details-row:last-child { border-bottom: none; margin-bottom: 0; }
+                .label { color: #666; font-weight: 500; }
+                .value { color: #d35400; font-weight: bold; }
+                .btn-container { text-align: center; margin: 30px 0; }
+                .btn { background: linear-gradient(135deg, #e67e22 0%, #d35400 100%); color: white !important; padding: 12px 30px; text-decoration: none; border-radius: 50px; font-weight: bold; display: inline-block; box-shadow: 0 4px 15px rgba(230, 126, 34, 0.4); transition: transform 0.2s; }
+                .btn:hover { transform: translateY(-2px); }
+                .footer { text-align: center; margin-top: 30px; font-size: 12px; color: #999; border-top: 1px solid #e0e0e0; padding-top: 20px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="content">
+                    <div class="header">
+                        <h1>📑 Phê duyệt Phụ lục Hợp đồng</h1>
+                    </div>
+                    
+                    <p>Xin chào <strong>${fullName || 'Quý khách'}</strong>,</p>
+                    
+                    <p>Có một thay đổi liên quan đến hợp đồng thuê hiện tại của bạn. Vui lòng xem xét và xác nhận phụ lục dưới đây:</p>
+                    
+                    <div class="details-box">
+                        <div class="details-row">
+                            <span class="label">Loại phụ lục:</span>
+                            <span class="value" style="text-transform: uppercase;">${typeText}</span>
+                        </div>
+                        <div class="details-row">
+                            <span class="label">Mã hợp đồng gốc:</span>
+                            <span class="value">${addendumData.contractNumber}</span>
+                        </div>
+                         <div class="details-row">
+                            <span class="label">Ngày hiệu lực:</span>
+                            <span class="value">${formatDate(addendumData.effectiveDate)}</span>
+                        </div>
+                    </div>
+
+                    <div class="btn-container">
+                        <a href="${actionUrl}" class="btn">Xem chi tiết & Xác nhận</a>
+                    </div>
+
+                    <div class="footer">
+                        <p>Đây là email tự động, vui lòng không trả lời email này.</p>
+                        <p>&copy; ${new Date().getFullYear()} SAMI Management System.</p>
+                    </div>
+                </div>
+            </div>
+        </body>
+        </html>
+    `;
+
+    return sendEmail(email, subject, html);
+}
 // Test email configuration
 async function testEmailConnection() {
     try {
@@ -313,5 +485,7 @@ module.exports = {
     sendEmail,
     sendOTPEmail,
     testEmailConnection,
-    sendPasswordResetEmail
+    sendPasswordResetEmail,
+    sendContractApprovalEmail,
+    sendAddendumApprovalEmail
 };

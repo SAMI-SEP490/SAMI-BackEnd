@@ -667,62 +667,73 @@ class BuildingService {
   }
 
   // UPDATE MANAGER ASSIGNMENT - Cập nhật thông tin assignment
-  async updateManagerAssignment(buildingId, userId, data) {
-    const { note } = data;
+ async updateManagerAssignment(buildingId, userId, data) {
+  const { note } = data;
 
-    const userIdInt = parseInt(userId);
-    if (isNaN(userIdInt)) {
-      throw new Error("user_id must be a valid number");
-    }
+  const userIdInt = Number(userId);
+  const buildingIdInt = Number(buildingId);
 
-    // Verify assignment exists
-    const existingAssignment = await prisma.building_managers.findUnique({
-      where: { user_id: userIdInt },
-    });
+  if (isNaN(userIdInt) || isNaN(buildingIdInt)) {
+    throw new Error("user_id and building_id must be valid numbers");
+  }
 
-    if (!existingAssignment) {
-      throw new Error("Manager assignment not found");
-    }
+  // 1️⃣ Find assignment by USER
+  const existingAssignment = await prisma.building_managers.findFirst({
+    where: { user_id: userIdInt },
+  });
 
-    if (existingAssignment.building_id !== buildingId) {
-      throw new Error("Manager is not assigned to this building");
-    }
+  if (!existingAssignment) {
+    throw new Error("Manager assignment not found");
+  }
 
-    // Prepare update data
-    const updateData = {};
+  // 2️⃣ Verify building exists
+  const building = await prisma.buildings.findUnique({
+    where: { building_id: buildingIdInt },
+  });
 
-    if (note !== undefined) {
-      updateData.note = note || null;
-    }
+  if (!building) {
+    throw new Error("Building not found");
+  }
 
-    // Update assignment
-    const updated = await prisma.building_managers.update({
-      where: { user_id: userIdInt },
-      data: updateData,
-      include: {
-        user: {
-          select: {
-            user_id: true,
-            full_name: true,
-            email: true,
-            phone: true,
-            avatar_url: true,
-            status: true,
-            role: true,
-          },
-        },
-        building: {
-          select: {
-            building_id: true,
-            name: true,
-            address: true,
-          },
+  // 3️⃣ Prepare update
+  const updateData = {
+    building_id: buildingIdInt,
+  };
+
+  if (note !== undefined) {
+    updateData.note = note || null;
+  }
+
+  // 4️⃣ Update assignment
+  const updated = await prisma.building_managers.update({
+    where: {
+      manager_id: existingAssignment.manager_id,
+    },
+    data: updateData,
+    include: {
+      user: {
+        select: {
+          user_id: true,
+          full_name: true,
+          email: true,
+          phone: true,
+          avatar_url: true,
+          status: true,
+          role: true,
         },
       },
-    });
+      building: {
+        select: {
+          building_id: true,
+          name: true,
+          address: true,
+        },
+      },
+    },
+  });
 
-    return this.formatManagerAssignmentResponse(updated);
-  }
+  return this.formatManagerAssignmentResponse(updated);
+}
 
   // REMOVE MANAGER - Xóa manager khỏi tòa nhà
   async removeManager(buildingId, userId) {

@@ -13,7 +13,7 @@ function calculateMaxTenants(size) {
 }
 
 class FloorPlanService {
- // Helper: Kiểm tra quyền truy cập building
+  // Helper: Kiểm tra quyền truy cập building
   async checkBuildingAccess(userId, userRole, buildingId) {
     const normalizedRole = String(userRole || "").toUpperCase();
 
@@ -634,6 +634,33 @@ class FloorPlanService {
     return this.formatFloorPlanDetailResponse(floorPlan);
   }
 
+  // READ (TENANT) - Xem floor plan theo ID (published + đúng building của tenant)
+  async getFloorPlanByIdTenant(planId, userId) {
+    const id = parseInt(planId);
+    if (isNaN(id)) throw new Error("Invalid floor plan id");
+
+    const floorPlan = await prisma.floor_plans.findUnique({
+      where: { plan_id: id },
+      include: {
+        building: {
+          select: {
+            building_id: true,
+            name: true,
+            address: true,
+            number_of_floors: true,
+          },
+        },
+        creator: { select: { user_id: true, full_name: true, email: true } },
+      },
+    });
+
+    if (!floorPlan) throw new Error("Floor plan not found");
+    if (!floorPlan.is_published) throw new Error("Floor plan not published");
+
+    // Tenant chỉ VIEW -> không cần enrich nodes theo rooms DB (web mới cần)
+    return this.formatFloorPlanDetailResponse(floorPlan);
+  }
+
   // READ - Lấy danh sách floor plans (có phân trang và filter)
   async getFloorPlans(filters = {}, userId, userRole) {
     const {
@@ -735,18 +762,31 @@ class FloorPlanService {
   async getFloorPlansByBuilding(buildingId, filters = {}, userId, userRole) {
     const { floor_number, is_published, page = 1, limit = 10 } = filters;
 
-    // Kiểm tra quyền truy cập building
-    if (userRole === "MANAGER") {
+    // ===== ACCESS CONTROL (FIX FOR TENANT APP) =====
+
+    // OWNER: xem tất cả
+    if (userRole === "OWNER") {
+      // pass
+    }
+
+    // MANAGER: chỉ building được assign
+    else if (userRole === "MANAGER") {
       const hasAccess = await this.checkBuildingAccess(
         userId,
         userRole,
         buildingId
       );
       if (!hasAccess) {
-        throw new Error(
-          "Access denied: You do not have permission to view floor plans for this building"
-        );
+        throw new Error("Access denied");
       }
+    }
+
+    // TENANT: chỉ VIEW floor plan (cho phép xem mọi tòa)
+    else if (userRole === "TENANT") {
+      // Tenant chỉ xem published
+      filters.is_published = true;
+    } else {
+      throw new Error("Access denied");
     }
 
     // Verify building exists
@@ -1307,11 +1347,15 @@ class FloorPlanService {
   // STATISTICS - Thống kê floor plans
   async getFloorPlanStatistics(buildingId, userId, userRole) {
     // Kiểm tra quyền truy cập building
-     const normalizedRole = String(userRole || "").toUpperCase();
+    const normalizedRole = String(userRole || "").toUpperCase();
     const bId = parseInt(buildingId);
     if (isNaN(bId)) throw new Error("building_id must be a valid number");
 
-    const hasAccess = await this.checkBuildingAccess(userId, normalizedRole, bId);
+    const hasAccess = await this.checkBuildingAccess(
+      userId,
+      normalizedRole,
+      bId
+    );
     if (!hasAccess) {
       throw new Error(
         "Access denied: You do not have permission to view statistics for this building"
