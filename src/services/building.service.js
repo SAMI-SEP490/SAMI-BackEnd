@@ -100,7 +100,6 @@ class BuildingService {
             plan_id: true,
             name: true,
             floor_number: true,
-            version: true,
           },
         },
       },
@@ -292,15 +291,15 @@ class BuildingService {
     // Electric unit price
     if (electric_unit_price !== undefined) {
       const newValue =
-          electric_unit_price === "" || electric_unit_price === null
-              ? null
-              : parseFloat(electric_unit_price);
+        electric_unit_price === "" || electric_unit_price === null
+          ? null
+          : parseFloat(electric_unit_price);
 
       if (newValue !== existingBuilding.electric_unit_price) {
         billingChanges.push(
-            `💡 Tiền điện: ${existingBuilding.electric_unit_price ?? "—"} → ${
-                newValue ?? "—"
-            }`
+          `💡 Tiền điện: ${existingBuilding.electric_unit_price ?? "—"} → ${
+            newValue ?? "—"
+          }`
         );
       }
 
@@ -310,15 +309,15 @@ class BuildingService {
     // Water unit price
     if (water_unit_price !== undefined) {
       const newValue =
-          water_unit_price === "" || water_unit_price === null
-              ? null
-              : parseFloat(water_unit_price);
+        water_unit_price === "" || water_unit_price === null
+          ? null
+          : parseFloat(water_unit_price);
 
       if (newValue !== existingBuilding.water_unit_price) {
         billingChanges.push(
-            `🚿 Tiền nước: ${existingBuilding.water_unit_price ?? "—"} → ${
-                newValue ?? "—"
-            }`
+          `🚿 Tiền nước: ${existingBuilding.water_unit_price ?? "—"} → ${
+            newValue ?? "—"
+          }`
         );
       }
 
@@ -328,15 +327,15 @@ class BuildingService {
     // Service fee
     if (service_fee !== undefined) {
       const newValue =
-          service_fee === "" || service_fee === null
-              ? null
-              : parseFloat(service_fee);
+        service_fee === "" || service_fee === null
+          ? null
+          : parseFloat(service_fee);
 
       if (newValue !== existingBuilding.service_fee) {
         billingChanges.push(
-            `🧾 Phí dịch vụ: ${existingBuilding.service_fee ?? "—"} → ${
-                newValue ?? "—"
-            }`
+          `🧾 Phí dịch vụ: ${existingBuilding.service_fee ?? "—"} → ${
+            newValue ?? "—"
+          }`
         );
       }
 
@@ -346,15 +345,15 @@ class BuildingService {
     // Bill due day
     if (bill_due_day !== undefined) {
       const newValue =
-          bill_due_day === "" || bill_due_day === null
-              ? null
-              : parseInt(bill_due_day);
+        bill_due_day === "" || bill_due_day === null
+          ? null
+          : parseInt(bill_due_day);
 
       if (newValue !== existingBuilding.bill_due_day) {
         billingChanges.push(
-            `📅 Ngày thanh toán: ${existingBuilding.bill_due_day ?? "—"} → ${
-                newValue ?? "—"
-            }`
+          `📅 Ngày thanh toán: ${existingBuilding.bill_due_day ?? "—"} → ${
+            newValue ?? "—"
+          }`
         );
       }
 
@@ -402,16 +401,16 @@ class BuildingService {
     if (billingChanges.length > 0) {
       const title = `Cập nhật chi phí tòa nhà ${existingBuilding.name}`;
       const body =
-          `Các thông tin sau đã được cập nhật:\n\n` + billingChanges.join("\n");
+        `Các thông tin sau đã được cập nhật:\n\n` + billingChanges.join("\n");
 
       await NotificationService.createBroadcastNotification(
-          senderId,
-          title,
-          body,
-          {
-            building_id: buildingId,
-            type: "BUILDING_BILLING_UPDATE",
-          }
+        senderId,
+        title,
+        body,
+        {
+          building_id: buildingId,
+          type: "BUILDING_BILLING_UPDATE",
+        }
       );
     }
 
@@ -777,12 +776,12 @@ class BuildingService {
       max_2_wheel_slot: building.max_2_wheel_slot,
 
       managers:
-          building.building_managers?.map((m) => ({
-            user_id: m.user_id,
-            // [FIX] m.users -> m.user
-            full_name: m.user?.full_name || m.users?.full_name,
-            email: m.user?.email || m.users?.email,
-          })) || [],
+        building.building_managers?.map((m) => ({
+          user_id: m.user_id,
+          // [FIX] m.users -> m.user
+          full_name: m.user?.full_name || m.users?.full_name,
+          email: m.user?.email || m.users?.email,
+        })) || [],
 
       created_at: building.created_at,
       updated_at: building.updated_at,
@@ -811,11 +810,11 @@ class BuildingService {
       total_floor_plans: building._count?.floor_plans || 0,
 
       managers:
-          building.building_managers?.map((m) => ({
-            user_id: m.user_id,
-            // [FIX] m.users -> m.user
-            full_name: m.user?.full_name || m.users?.full_name,
-          })) || [],
+        building.building_managers?.map((m) => ({
+          user_id: m.user_id,
+          // [FIX] m.users -> m.user
+          full_name: m.user?.full_name || m.users?.full_name,
+        })) || [],
 
       created_at: building.created_at,
       updated_at: building.updated_at,
@@ -842,38 +841,37 @@ class BuildingService {
       max_2_wheel_slot: building.max_2_wheel_slot,
 
       managers:
-          building.building_managers?.map((m) => ({
-            user_id: m.user_id,
-            // [FIX] dùng m.user do query trên đã sửa thành include user
-            full_name: m.user?.full_name,
-            email: m.user?.email,
-            phone: m.user?.phone,
-            note: m.note,
-          })) || [],
+        building.building_managers?.map((m) => ({
+          user_id: m.user_id,
+          // [FIX] dùng m.user do query trên đã sửa thành include user
+          full_name: m.user?.full_name,
+          email: m.user?.email,
+          phone: m.user?.phone,
+          note: m.note,
+        })) || [],
 
       rooms:
-          building.rooms?.map((r) => ({
-            room_id: r.room_id,
-            room_number: r.room_number,
-            floor: r.floor,
-            size: r.size,
-          })) || [],
+        building.rooms?.map((r) => ({
+          room_id: r.room_id,
+          room_number: r.room_number,
+          floor: r.floor,
+          size: r.size,
+        })) || [],
 
       regulations:
-          building.regulations?.map((r) => ({
-            regulation_id: r.regulation_id,
-            title: r.title,
-            effective_date: r.effective_date,
-            version: r.version,
-          })) || [],
+        building.regulations?.map((r) => ({
+          regulation_id: r.regulation_id,
+          title: r.title,
+          effective_date: r.effective_date,
+          version: r.version,
+        })) || [],
 
       floor_plans:
-          building.floor_plans?.map((f) => ({
-            plan_id: f.plan_id,
-            name: f.name,
-            floor_number: f.floor_number,
-            version: f.version,
-          })) || [],
+        building.floor_plans?.map((f) => ({
+          plan_id: f.plan_id,
+          name: f.name,
+          floor_number: f.floor_number,
+        })) || [],
     }; // [FIX] Đã đóng ngoặc return object
   } // [FIX] Đã đóng ngoặc function formatBuildingDetailResponse
 
