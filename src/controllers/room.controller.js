@@ -215,6 +215,60 @@ class RoomController {
       next(err);
     }
   }
+  // [NEW] Thêm tenant vào phòng
+  async addTenantToRoom(req, res, next) {
+    try {
+      const roomId = Number(req.params.id);
+      const { user_id, moved_in_at, note } = req.body;
+
+      // ✅ Validate roomId
+      if (!roomId || isNaN(roomId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid room id",
+        });
+      }
+
+      // ✅ Validate user_id
+      const tenantUserId = Number(user_id);
+      if (!tenantUserId || isNaN(tenantUserId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid user_id",
+        });
+      }
+
+      // ✅ Validate moved_in_at
+      if (!moved_in_at || isNaN(new Date(moved_in_at).getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: "moved_in_at is required and must be a valid date",
+        });
+      }
+
+      const role = (req.user.role || "").toUpperCase();
+      const operatorId = req.user.user_id;
+
+      const result = await roomService.addTenantToRoom(
+        roomId,
+        tenantUserId,
+        role,
+        operatorId,
+        {
+          moved_in_at,
+          note,
+        }
+      );
+
+      res.status(201).json({
+        success: true,
+        message: "Tenant added to room successfully",
+        data: result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
 }
 
 module.exports = new RoomController();
