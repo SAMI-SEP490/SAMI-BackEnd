@@ -678,17 +678,23 @@ class MaintenanceService {
         updated_at: new Date(),
       },
       include: {
-        rooms: {
+        room: {
           include: {
-            buildings: true,
+            building: true,
           },
         },
-        tenants: {
+        tenant: {
           include: {
-            users: true,
+            user: true,
           },
         },
-        users: {
+        approver: {
+          select: {
+            full_name: true,
+            email: true,
+          },
+        },
+        assignee: {
           select: {
             full_name: true,
             email: true,
@@ -945,7 +951,7 @@ class MaintenanceService {
     const tenant = await prisma.tenants.findUnique({
       where: { user_id: tenantUserId },
       include: {
-        users: {
+        user: {
           select: {
             user_id: true,
             full_name: true,
@@ -1015,20 +1021,20 @@ class MaintenanceService {
         updated_at: new Date(),
       },
       include: {
-        rooms: {
+        room: {
           select: {
             room_number: true,
             building_id: true,
-            buildings: {
+            building: {
               select: {
                 name: true,
               },
             },
           },
         },
-        tenants: {
+        tenant: {
           include: {
-            users: {
+            user: {
               select: {
                 full_name: true,
                 email: true,
@@ -1084,9 +1090,9 @@ class MaintenanceService {
     const existingRequest = await prisma.maintenance_requests.findUnique({
       where: { request_id: requestId },
       include: {
-        tenants: {
+        tenant: {
           include: {
-            users: {
+            user: {
               select: {
                 status: true,
                 full_name: true,
@@ -1188,20 +1194,20 @@ class MaintenanceService {
       where: { request_id: requestId },
       data: updateData,
       include: {
-        rooms: {
+        room: {
           select: {
             room_number: true,
             building_id: true,
-            buildings: {
+            building: {
               select: {
                 name: true,
               },
             },
           },
         },
-        tenants: {
+        tenant: {
           include: {
-            users: {
+            user: {
               select: {
                 full_name: true,
                 email: true,
@@ -1251,9 +1257,9 @@ class MaintenanceService {
     const maintenanceRequest = await prisma.maintenance_requests.findUnique({
       where: { request_id: requestId },
       include: {
-        tenants: {
+        tenant: {
           include: {
-            users: {
+            user: {
               select: {
                 status: true,
                 full_name: true,
@@ -1261,7 +1267,7 @@ class MaintenanceService {
             },
           },
         },
-        rooms: {
+        room: {
           select: {
             room_number: true,
           },
@@ -1339,17 +1345,23 @@ class MaintenanceService {
     const maintenanceRequest = await prisma.maintenance_requests.findUnique({
       where: { request_id: requestId },
       include: {
-        rooms: {
+        room: {
           include: {
-            buildings: true,
+            building: true,
           },
         },
-        tenants: {
+        tenant: {
           include: {
-            users: true,
+            user: true,
           },
         },
-        users: {
+        approver: {
+          select: {
+            full_name: true,
+            email: true,
+          },
+        },
+        assignee: {
           select: {
             full_name: true,
             email: true,
