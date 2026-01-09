@@ -31,11 +31,41 @@ class UserService {
   /**
    * Retrieves a list of all users (excluding OWNER).
    */
- async getAllUsers() {
+ async getAllUsers(requestingUserId) {
+  const requestingUser = await prisma.users.findUnique({
+    where: { user_id: requestingUserId },
+    select: { role: true },
+  });
+
+  if (!requestingUser) {
+    throw new Error("Requesting user not found");
+  }
+
+  let whereCondition = {
+    role: { not: "OWNER" },
+  };
+
+  // 🔒 MANAGER: chỉ xem TENANT trong building của mình
+  if (requestingUser.role === "MANAGER") {
+    const assignment = await prisma.building_managers.findFirst({
+      where: { user_id: requestingUserId },
+      select: { building_id: true },
+    });
+
+    if (!assignment) {
+      return [];
+    }
+
+    whereCondition = {
+      role: "TENANT",
+      tenants: {
+        building_id: assignment.building_id,
+      },
+    };
+  }
+
   const users = await prisma.users.findMany({
-    where: {
-      role: { not: "OWNER" },
-    },
+    where: whereCondition,
 
     select: {
       user_id: true,
@@ -61,7 +91,7 @@ class UserService {
         },
       },
 
-      // TENANT → building trực tiếp (KHÔNG QUA ROOM)
+      // TENANT → building trực tiếp
       tenants: {
         select: {
           building_id: true,
@@ -103,7 +133,7 @@ class UserService {
       id_number:
         user.role === "TENANT" ? tenant?.id_number ?? null : null,
 
-      // BUILDING (MANAGER & TENANT)
+      // BUILDING
       building_id:
         user.role === "MANAGER"
           ? manager?.building_id ?? null
