@@ -200,7 +200,8 @@ class RoomService {
     const room = await prisma.rooms.findUnique({
       where: { room_id: roomId },
       include: {
-        buildings: {
+        // 1. [FIXED] building (singular)
+        building: {
           select: {
             building_id: true,
             name: true,
@@ -208,20 +209,31 @@ class RoomService {
             number_of_floors: true,
           },
         },
-        tenants: {
+
+        // 2. [FIXED] Go through room_tenants
+        room_tenants: {
+          where: { is_current: true }, // Only show current tenants
           include: {
-            users: {
-              select: {
-                user_id: true,
-                full_name: true,
-                email: true,
-                phone: true,
-                avatar_url: true,
+            tenant: {
+              include: {
+                user: { // Relation name 'user' in tenants model
+                  select: {
+                    user_id: true,
+                    full_name: true,
+                    email: true,
+                    phone: true,
+                    avatar_url: true,
+                  },
+                },
               },
             },
           },
         },
-        contracts: {
+
+        // 3. Contracts (This might also need fixing if relation name changed)
+        // Schema says: contracts_history OR current_contract. 
+        // If you want active contracts, query 'contracts_history' with status filter
+        contracts_history: {
           where: {
             status: "active",
             deleted_at: null,
@@ -234,11 +246,13 @@ class RoomService {
             status: true,
           },
         },
+
+        // 4. Current Contract (Direct link)
+        current_contract: true,
+
         maintenance_requests: {
           where: {
-            status: {
-              in: ["pending", "in_progress"],
-            },
+            status: { in: ["pending", "in_progress"] },
           },
           select: {
             request_id: true,
@@ -254,9 +268,7 @@ class RoomService {
       },
     });
 
-    if (!room) {
-      throw new Error("Room not found");
-    }
+    if (!room) throw new Error("Room not found");
 
     const normalizedRole = (userRole || "").toUpperCase();
 
@@ -1228,43 +1240,52 @@ class RoomService {
     return {
       room_id: room.room_id,
       building_id: room.building_id,
-      building_name: room.buildings?.name,
-      building_address: room.buildings?.address,
-      building_floors: room.buildings?.number_of_floors,
+      building_name: room.building?.name,
+      building_address: room.building?.address,
+      building_floors: room.building?.number_of_floors,
       room_number: room.room_number,
       floor: room.floor,
       size: room.size,
       description: room.description,
       status: room.status,
       is_active: room.is_active,
-      tenants:
-        room.tenants?.map((t) => ({
-          user_id: t.user_id,
-          full_name: t.users?.full_name,
-          email: t.users?.email,
-          phone: t.users?.phone,
-          avatar_url: t.users?.avatar_url,
-          tenant_since: t.tenant_since,
-          id_number: t.id_number,
-          emergency_contact_phone: t.emergency_contact_phone,
-        })) || [],
-      active_contracts:
-        room.contracts?.map((c) => ({
-          contract_id: c.contract_id,
-          start_date: c.start_date,
-          end_date: c.end_date,
-          rent_amount: c.rent_amount,
-          status: c.status,
-        })) || [],
-      recent_maintenance_requests:
-        room.maintenance_requests?.map((m) => ({
-          request_id: m.request_id,
-          title: m.title,
-          category: m.category,
-          priority: m.priority,
-          status: m.status,
-          created_at: m.created_at,
-        })) || [],
+
+      // [FIX] Ensure this is passed to Frontend
+      current_contract: room.current_contract,
+
+      tenants: room.room_tenants?.map((rt) => {
+        const t = rt.tenant;
+        const u = t?.user;
+        return {
+          user_id: u?.user_id,
+          full_name: u?.full_name,
+          email: u?.email,
+          phone: u?.phone,
+          avatar_url: u?.avatar_url,
+          tenant_since: t?.tenant_since,
+          id_number: t?.id_number,
+          is_primary: rt.tenant_type === 'primary'
+        };
+      }) || [],
+
+      // Keep existing history mapping
+      active_contracts: room.contracts_history?.map((c) => ({
+        contract_id: c.contract_id,
+        start_date: c.start_date,
+        end_date: c.end_date,
+        rent_amount: c.rent_amount,
+        status: c.status,
+      })) || [],
+
+      recent_maintenance_requests: room.maintenance_requests?.map((m) => ({
+        request_id: m.request_id,
+        title: m.title,
+        category: m.category,
+        priority: m.priority,
+        status: m.status,
+        created_at: m.created_at,
+      })) || [],
+
       created_at: room.created_at,
       updated_at: room.updated_at,
     };
