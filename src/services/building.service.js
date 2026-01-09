@@ -667,8 +667,8 @@ class BuildingService {
   }
 
   // UPDATE MANAGER ASSIGNMENT - Cập nhật thông tin assignment
-  async updateManagerAssignment(buildingId, userId, data) {
-    const { note } = data;
+ async updateManagerAssignment(buildingId, userId, data) {
+  const { note } = data;
 
   const userIdInt = Number(userId);
   const buildingIdInt = Number(buildingId);
@@ -677,19 +677,34 @@ class BuildingService {
     throw new Error("user_id and building_id must be valid numbers");
   }
 
-  // 1️⃣ Verify assignment exists
+  // 1️⃣ Find assignment by USER
   const existingAssignment = await prisma.building_managers.findFirst({
-    where: {
-      user_id: userIdInt,
-      building_id: buildingIdInt,
-    },
+    where: { user_id: userIdInt },
   });
 
-    if (note !== undefined) {
-      updateData.note = note || null;
-    }
+  if (!existingAssignment) {
+    throw new Error("Manager assignment not found");
+  }
 
-  // 3️⃣ Update assignment
+  // 2️⃣ Verify building exists
+  const building = await prisma.buildings.findUnique({
+    where: { building_id: buildingIdInt },
+  });
+
+  if (!building) {
+    throw new Error("Building not found");
+  }
+
+  // 3️⃣ Prepare update
+  const updateData = {
+    building_id: buildingIdInt,
+  };
+
+  if (note !== undefined) {
+    updateData.note = note || null;
+  }
+
+  // 4️⃣ Update assignment
   const updated = await prisma.building_managers.update({
     where: {
       manager_id: existingAssignment.manager_id,
@@ -706,12 +721,12 @@ class BuildingService {
           status: true,
           role: true,
         },
-        building: {
-          select: {
-            building_id: true,
-            name: true,
-            address: true,
-          },
+      },
+      building: {
+        select: {
+          building_id: true,
+          name: true,
+          address: true,
         },
       },
     },
