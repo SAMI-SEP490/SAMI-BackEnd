@@ -53,6 +53,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Compression
 app.use(compression());
 
+app.set('trust proxy', true);
+
 // Logging
 if (config.nodeEnv === 'development') {
     app.use(morgan('dev'));

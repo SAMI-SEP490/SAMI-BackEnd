@@ -1,5 +1,5 @@
-// Updated: 2025-12-29
-// Refactored: Compatible with latest schema.prisma + Status Transition Rules
+// Updated: 2025-01-10
+// Refactored: Compatible with latest schema.prisma + Status Transition Rules + Email Notifications
 
 const prisma = require("../config/prisma");
 const s3Service = require("./s3.service");
@@ -9,6 +9,8 @@ const path = require("path");
 const geminiService = require("./gemini.service");
 const tenantService = require("./tenant.service");
 const documentAIService = require("./document-ai.service");
+const consentService = require("./consent.service");
+const emailService = require("../utils/email");
 
 // Status Enum từ schema
 const CONTRACT_STATUS = {
@@ -20,6 +22,9 @@ const CONTRACT_STATUS = {
   REQUESTED_TERMINATION: "requested_termination",
   EXPIRED: "expired",
 };
+
+// Base URL frontend của bạn (Lấy từ env hoặc hardcode)
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 
 class ContractService {
   /**
@@ -57,10 +62,10 @@ class ContractService {
    * Helper: Kiểm tra conflict hợp đồng
    */
   async checkContractConflict(
-    roomId,
-    startDate,
-    endDate,
-    excludeContractId = null
+      roomId,
+      startDate,
+      endDate,
+      excludeContractId = null
   ) {
     const where = {
       room_id: roomId,
@@ -150,7 +155,7 @@ class ContractService {
 
     if (!allowedTransitions.includes(newStatus)) {
       throw new Error(
-        `Invalid status transition from ${currentStatus} to ${newStatus}`
+          `Invalid status transition from ${currentStatus} to ${newStatus}`
       );
     }
 
@@ -219,9 +224,9 @@ class ContractService {
     }
 
     const uploadResult = await s3Service.uploadFile(
-      bufferToUpload,
-      originalName,
-      "contracts"
+        bufferToUpload,
+        originalName,
+        "contracts"
     );
     return {
       s3_key: uploadResult.s3_key,
@@ -232,7 +237,7 @@ class ContractService {
   }
 
   // ============================================
-  // CREATE CONTRACT (Logic mới xử lý file)
+  // CREATE CONTRACT (Logic mới + Gửi Email)
   // ============================================
   async createContract(data, files = null, currentUser = null) {
     const {
@@ -248,18 +253,11 @@ class ContractService {
     } = data;
 
     // 1. Validation Basics
-    if (
-      !room_id ||
-      !tenant_user_id ||
-      !start_date ||
-      !duration_months ||
-      !rent_amount
-    ) {
-      throw new Error(
-        "Missing required fields: room_id, tenant_user_id, start_date, duration_months, rent_amount"
-      );
+    if (!room_id || !tenant_user_id || !start_date || !duration_months || !rent_amount) {
+      throw new Error("Missing required fields: room_id, tenant_user_id, start_date, duration_months, rent_amount");
     }
 
+    // ... (Giữ nguyên logic validate và prepare data) ...
     let validPenalty = 0;
     if (penalty_rate) {
       const rate = parseFloat(penalty_rate);
@@ -287,23 +285,16 @@ class ContractService {
 
     if (currentUser && currentUser.role === "MANAGER") {
       const hasAccess = await this.checkManagerBuildingAccess(
-        currentUser.user_id,
-        room.building_id
+          currentUser.user_id,
+          room.building_id
       );
       if (!hasAccess) throw new Error("No permission for this building");
     }
 
-    const conflictingContract = await this.checkContractConflict(
-      roomId,
-      startDate,
-      endDate
-    );
-    if (conflictingContract)
-      throw new Error(
-        `Room conflict: Contract #${conflictingContract.contract_id}`
-      );
+    const conflictingContract = await this.checkContractConflict(roomId, startDate, endDate);
+    if (conflictingContract) throw new Error(`Room conflict: Contract #${conflictingContract.contract_id}`);
 
-    // 3. FILE PROCESSING (FIXED: Sử dụng helper chung)
+    // 3. FILE PROCESSING
     let fileData = {};
     if (files && files.length > 0) {
       fileData = await this._processUploadFiles(files);
@@ -325,29 +316,54 @@ class ContractService {
           rent_amount: parseFloat(rent_amount),
           deposit_amount: deposit_amount ? parseFloat(deposit_amount) : 0,
           penalty_rate: validPenalty,
-          payment_cycle_months: payment_cycle_months
-            ? parseInt(payment_cycle_months)
-            : 1,
+          payment_cycle_months: payment_cycle_months ? parseInt(payment_cycle_months) : 1,
           status: CONTRACT_STATUS.PENDING,
           note,
-          ...fileData, // Spread file info (s3_key, checksum, etc.)
+          ...fileData,
           created_at: new Date(),
           updated_at: new Date(),
         },
         include: {
           room_history: { include: { building: true } },
-          tenant: { include: { user: true } },
+          tenant: { include: { user: true } }, // Quan trọng: include user để lấy email
         },
       });
     });
 
+    // 5. [NEW] GỬI EMAIL THÔNG BÁO CHO TENANT
+    try {
+      const tenantUser = result.tenant?.user;
+      if (tenantUser?.email) {
+        // Tạo link để user click vào xem hợp đồng (Deep link hoặc Web link)
+        // Ví dụ: https://myapp.com/contracts/123
+        const actionUrl = `${FRONTEND_URL}/contracts/${result.contract_id}`;
+
+        await emailService.sendContractApprovalEmail(
+            tenantUser.email,
+            tenantUser.full_name,
+            {
+              contractNumber: result.contract_number,
+              roomNumber: result.room_history?.room_number || "N/A",
+              startDate: result.start_date,
+              duration: result.duration_months
+            },
+            actionUrl
+        );
+        console.log(`📧 Contract approval email sent to ${tenantUser.email}`);
+      }
+    } catch (emailError) {
+      console.error("❌ Failed to send contract approval email:", emailError.message);
+      // Không throw error để tránh revert transaction tạo contract
+    }
+
     return this.formatContractResponse(result);
   }
+
 
   // ============================================
   // CONTRACT APPROVAL (Tenant Accept/Reject)
   // ============================================
-  async approveContract(contractId, action, reason = null, currentUser = null) {
+  async approveContract(contractId, action, reason = null, currentUser = null, ipAddress = null, userAgent = null) {
     const contract = await prisma.contracts.findUnique({
       where: { contract_id: contractId },
       include: {
@@ -369,9 +385,24 @@ class ContractService {
     if (contract.status !== CONTRACT_STATUS.PENDING) {
       throw new Error("Only pending contracts can be accepted or rejected");
     }
+    try {
+      const consentAction = action === "accept" ? "ACCEPTED" : "REVOKED";
 
+      await consentService.logConsent({
+        userId: currentUser.user_id,
+        contractId: contract.contract_id,
+        consentType: "CONTRACT_SIGNING", // Enum ConsentType
+        action: consentAction,           // Enum ConsentAction
+        ipAddress: ipAddress || "unknown",
+        deviceInfo: userAgent || "unknown",
+      });
+    } catch (error) {
+      console.error("Failed to log consent:", error.message);
+      // Tùy chọn: Có thể throw error để chặn user ký nếu hệ thống log lỗi
+      throw new Error(`Cannot process contract: ${error.message}`);
+    }
     const newStatus =
-      action === "accept" ? CONTRACT_STATUS.ACTIVE : CONTRACT_STATUS.REJECTED;
+        action === "accept" ? CONTRACT_STATUS.ACTIVE : CONTRACT_STATUS.REJECTED;
 
     // Validate transition
     this.validateStatusTransition(contract.status, newStatus, reason);
@@ -384,10 +415,10 @@ class ContractService {
           status: newStatus,
           tenant_accepted_at: action === "accept" ? new Date() : null,
           note: reason
-            ? `${
-                contract.note || ""
+              ? `${
+                  contract.note || ""
               }\n[${action.toUpperCase()}] ${reason}`.trim()
-            : contract.note,
+              : contract.note,
           updated_at: new Date(),
         },
         include: {
@@ -435,7 +466,7 @@ class ContractService {
 
         if (currentTenants + 1 > maxTenants) {
           throw new Error(
-            `Phòng đã đủ số người thuê (${currentTenants}/${maxTenants})`
+              `Phòng đã đủ số người thuê (${currentTenants}/${maxTenants})`
           );
         }
         // Create new tenant history
@@ -471,9 +502,9 @@ class ContractService {
       await this.checkContractPermission(existingContract, currentUser);
 
     if (
-      ![CONTRACT_STATUS.PENDING, CONTRACT_STATUS.REJECTED].includes(
-        existingContract.status
-      )
+        ![CONTRACT_STATUS.PENDING, CONTRACT_STATUS.REJECTED].includes(
+            existingContract.status
+        )
     ) {
       throw new Error("Only pending or rejected contracts can be updated");
     }
@@ -501,25 +532,25 @@ class ContractService {
 
     const targetRoomId = room_id ? parseInt(room_id) : existingContract.room_id;
     const targetStartDate = start_date
-      ? new Date(start_date)
-      : existingContract.start_date;
+        ? new Date(start_date)
+        : existingContract.start_date;
     const targetDuration = duration_months
-      ? parseInt(duration_months)
-      : existingContract.duration_months;
+        ? parseInt(duration_months)
+        : existingContract.duration_months;
     const targetEndDate = this.calculateEndDate(
-      targetStartDate,
-      targetDuration
+        targetStartDate,
+        targetDuration
     );
 
     const conflicting = await this.checkContractConflict(
-      targetRoomId,
-      targetStartDate,
-      targetEndDate,
-      contractId
+        targetRoomId,
+        targetStartDate,
+        targetEndDate,
+        contractId
     );
     if (conflicting)
       throw new Error(
-        `Room conflict with contract #${conflicting.contract_id}`
+          `Room conflict with contract #${conflicting.contract_id}`
       );
 
     const updateData = { updated_at: new Date() };
@@ -567,12 +598,15 @@ class ContractService {
   }
 
   // ============================================
-  // REQUEST TERMINATION (Only Manager/Owner)
+  // REQUEST TERMINATION (Logic mới + Gửi Email)
   // ============================================
   async requestTermination(contractId, reason, currentUser = null) {
     const contract = await prisma.contracts.findUnique({
       where: { contract_id: contractId },
-      include: { room_history: { include: { building: true } } },
+      include: {
+        room_history: { include: { building: true } },
+        tenant: { include: { user: true } } // Cần lấy thông tin user để gửi mail
+      },
     });
 
     if (!contract) throw new Error("Contract not found");
@@ -580,17 +614,11 @@ class ContractService {
     // 1. Check Permission: Chỉ MANAGER hoặc OWNER mới được gửi request
     if (currentUser) {
       if (currentUser.role === "TENANT") {
-        throw new Error(
-          "Tenants cannot initiate termination request. Please contact your manager."
-        );
+        throw new Error("Tenants cannot initiate termination request. Please contact your manager.");
       }
       if (currentUser.role === "MANAGER") {
-        const hasAccess = await this.checkManagerBuildingAccess(
-          currentUser.user_id,
-          contract.room_history.building_id
-        );
-        if (!hasAccess)
-          throw new Error("You do not have permission to manage this contract");
+        const hasAccess = await this.checkManagerBuildingAccess(currentUser.user_id, contract.room_history.building_id);
+        if (!hasAccess) throw new Error("You do not have permission to manage this contract");
       }
     }
 
@@ -607,10 +635,7 @@ class ContractService {
       where: { contract_id: contractId },
       data: {
         status: CONTRACT_STATUS.REQUESTED_TERMINATION,
-        // Ghi chú rõ ai là người request để hiện lên UI
-        note: `${
-          contract.note || ""
-        }\n[REQ-TERM] Request by Manager: ${reason}`.trim(),
+        note: `${contract.note || ""}\n[REQ-TERM] Request by Manager: ${reason}`.trim(),
         updated_at: new Date(),
       },
       include: {
@@ -619,13 +644,37 @@ class ContractService {
       },
     });
 
+    // 2. [NEW] GỬI EMAIL THÔNG BÁO CHO TENANT
+    try {
+      const tenantUser = updatedContract.tenant?.user;
+      if (tenantUser?.email) {
+        // Link xử lý yêu cầu chấm dứt
+        const actionUrl = `${FRONTEND_URL}/contracts/${contractId}/termination`;
+
+        await emailService.sendAddendumApprovalEmail(
+            tenantUser.email,
+            tenantUser.full_name,
+            {
+              type: 'early_termination', // Sử dụng type này để map với template email
+              contractNumber: updatedContract.contract_number,
+              effectiveDate: new Date() // Ngày yêu cầu là ngày hiện tại
+            },
+            actionUrl
+        );
+        console.log(`📧 Termination request email sent to ${tenantUser.email}`);
+      }
+    } catch (emailError) {
+      console.error("❌ Failed to send termination request email:", emailError.message);
+    }
+
     return this.formatContractResponse(updatedContract);
   }
 
+  // ... (Giữ nguyên các methods còn lại: handleTerminationRequest, checkAndResolvePendingTransaction, v.v...) ...
   // ============================================
   // APPROVE/REJECT TERMINATION (Only Tenant)
   // ============================================
-  async handleTerminationRequest(contractId, action, currentUser = null) {
+  async handleTerminationRequest(contractId, action, currentUser = null, ipAddress = null, userAgent = null) {
     // action: 'approve' | 'reject'
 
     const contract = await prisma.contracts.findUnique({
@@ -639,14 +688,14 @@ class ContractService {
     if (currentUser) {
       if (currentUser.role === "MANAGER" || currentUser.role === "OWNER") {
         throw new Error(
-          "Managers cannot approve their own termination request. Waiting for Tenant approval."
+            "Managers cannot approve their own termination request. Waiting for Tenant approval."
         );
       }
       if (currentUser.role === "TENANT") {
         // Phải đúng là tenant của hợp đồng này
         if (contract.tenant_user_id !== currentUser.user_id) {
           throw new Error(
-            "You do not have permission to approve this contract"
+              "You do not have permission to approve this contract"
           );
         }
       }
@@ -656,6 +705,23 @@ class ContractService {
       throw new Error("Contract is not in requested termination status");
     }
 
+    try {
+      // approve -> Đồng ý chấm dứt -> ACCEPTED
+      // reject -> Không đồng ý chấm dứt (giữ lại HĐ) -> REVOKED (từ chối yêu cầu)
+      const consentAction = action === "approve" ? "ACCEPTED" : "REVOKED";
+
+      await consentService.logConsent({
+        userId: currentUser.user_id,
+        contractId: contractId,
+        consentType: "CONTRACT_TERMINATION", // Enum ConsentType
+        action: consentAction,               // Enum ConsentAction
+        ipAddress: ipAddress || "unknown",
+        deviceInfo: userAgent || "unknown",
+      });
+    } catch (error) {
+      console.error("Failed to log termination consent:", error.message);
+      throw new Error(`Cannot process termination: ${error.message}`);
+    }
     if (action === "reject") {
       // Tenant từ chối hủy -> Về ACTIVE
       const updated = await prisma.contracts.update({
@@ -677,8 +743,8 @@ class ContractService {
     const hasUnpaid = await this.hasUnpaidBills(contractId);
 
     const newStatus = hasUnpaid
-      ? CONTRACT_STATUS.PENDING_TRANSACTION
-      : CONTRACT_STATUS.TERMINATED;
+        ? CONTRACT_STATUS.PENDING_TRANSACTION
+        : CONTRACT_STATUS.TERMINATED;
 
     const result = await prisma.$transaction(async (tx) => {
       const updated = await tx.contracts.update({
@@ -697,10 +763,10 @@ class ContractService {
       // Nếu sạch nợ -> Clear room luôn
       if (newStatus === CONTRACT_STATUS.TERMINATED) {
         await this._clearRoomAndTenant(
-          tx,
-          contract.room_id,
-          contract.tenant_user_id,
-          contractId
+            tx,
+            contract.room_id,
+            contract.tenant_user_id,
+            contractId
         );
       }
 
@@ -750,7 +816,7 @@ class ContractService {
     // Hoặc kiểm tra xem trước đó nó đến từ luồng nào?
     // Tuy nhiên, Expired hay Terminated đều có nghĩa là kết thúc, khác nhau ở semantic.
     const finalStatus =
-      today >= endDate ? CONTRACT_STATUS.EXPIRED : CONTRACT_STATUS.TERMINATED;
+        today >= endDate ? CONTRACT_STATUS.EXPIRED : CONTRACT_STATUS.TERMINATED;
 
     const result = await prisma.$transaction(async (tx) => {
       const updated = await tx.contracts.update({
@@ -759,7 +825,7 @@ class ContractService {
           status: finalStatus,
           updated_at: new Date(),
           note: `${
-            contract.note || ""
+              contract.note || ""
           }\n[AUTO] Bills cleared. Status updated to ${finalStatus}`.trim(),
         },
         include: {
@@ -770,10 +836,10 @@ class ContractService {
 
       // Clean room & tenant
       await this._clearRoomAndTenant(
-        tx,
-        contract.room_id,
-        contract.tenant_user_id,
-        contractId
+          tx,
+          contract.room_id,
+          contract.tenant_user_id,
+          contractId
       );
 
       return updated;
@@ -793,9 +859,9 @@ class ContractService {
    * Không cần truyền finalStatus manual nữa.
    */
   async completePendingTransaction(
-    contractId,
-    _unusedFinalStatus,
-    currentUser = null
+      contractId,
+      _unusedFinalStatus,
+      currentUser = null
   ) {
     // Kiểm tra quyền (Optional vì hàm checkAndResolvePendingTransaction đã check logic)
     if (currentUser) {
@@ -832,9 +898,9 @@ class ContractService {
 
     // Chỉ xóa được EXPIRED hoặc TERMINATED
     if (
-      ![CONTRACT_STATUS.EXPIRED, CONTRACT_STATUS.TERMINATED].includes(
-        contract.status
-      )
+        ![CONTRACT_STATUS.EXPIRED, CONTRACT_STATUS.TERMINATED].includes(
+            contract.status
+        )
     ) {
       throw new Error("Only expired or terminated contracts can be deleted");
     }
@@ -904,9 +970,9 @@ class ContractService {
       const hasUnpaid = await this.hasUnpaidBills(contract.contract_id);
 
       const newStatus =
-        hasUnpaid || currentDay < utilityCollectionDate
-          ? CONTRACT_STATUS.PENDING_TRANSACTION
-          : CONTRACT_STATUS.EXPIRED;
+          hasUnpaid || currentDay < utilityCollectionDate
+              ? CONTRACT_STATUS.PENDING_TRANSACTION
+              : CONTRACT_STATUS.EXPIRED;
 
       await prisma.$transaction(async (tx) => {
         await tx.contracts.update({
@@ -919,16 +985,16 @@ class ContractService {
 
         if (newStatus === CONTRACT_STATUS.EXPIRED) {
           await this._clearRoomAndTenant(
-            tx,
-            contract.room_id,
-            contract.tenant_user_id,
-            contract.contract_id
+              tx,
+              contract.room_id,
+              contract.tenant_user_id,
+              contract.contract_id
           );
         }
       });
 
       console.log(
-        `✓ Contract ${contract.contract_id} auto-updated to ${newStatus}`
+          `✓ Contract ${contract.contract_id} auto-updated to ${newStatus}`
       );
     }
   }
@@ -1111,9 +1177,9 @@ class ContractService {
 
     try {
       const downloadUrl = await s3Service.getDownloadUrl(
-        contract.s3_key,
-        contract.file_name || "contract.pdf",
-        3600
+          contract.s3_key,
+          contract.file_name || "contract.pdf",
+          3600
       );
 
       return {
@@ -1173,13 +1239,13 @@ class ContractService {
   async processContractWithAI(fileBuffer, mimeType = "application/pdf") {
     try {
       const documentAIResult = await documentAIService.processContract(
-        fileBuffer,
-        mimeType
+          fileBuffer,
+          mimeType
       );
       if (!documentAIResult.success)
         throw new Error("Document AI failed: " + documentAIResult.message);
       const extractedText =
-        documentAIResult.firstPageText || documentAIResult.fullText;
+          documentAIResult.firstPageText || documentAIResult.fullText;
       if (!extractedText?.trim()) throw new Error("No text extracted");
 
       const geminiResult = await geminiService.parseContractText(extractedText);
@@ -1217,7 +1283,7 @@ class ContractService {
       }
 
       console.log(
-        `✓ Found tenant: ${tenantMatch.full_name} (ID: ${tenantMatch.user_id})`
+          `✓ Found tenant: ${tenantMatch.full_name} (ID: ${tenantMatch.user_id})`
       );
 
       let buildingId = null;
@@ -1236,16 +1302,16 @@ class ContractService {
       } else if (parsedData.start_date && parsedData.end_date) {
         // Nếu AI không đọc được "X tháng", ta tính toán ngược lại
         durationMonths = this.calculateDurationFromDates(
-          parsedData.start_date,
-          parsedData.end_date
+            parsedData.start_date,
+            parsedData.end_date
         );
       }
 
       // End Date sẽ được hàm createContract tính toán lại,
       // nhưng ta gửi xuống client để họ review (client có thể thấy End Date dự kiến)
       const estimatedEndDate = this.calculateEndDate(
-        parsedData.start_date,
-        durationMonths
+          parsedData.start_date,
+          durationMonths
       );
 
       const contractData = {
@@ -1253,8 +1319,8 @@ class ContractService {
         tenant_user_id: tenantMatch.user_id,
         start_date: parsedData.start_date || null,
         end_date: estimatedEndDate
-          ? estimatedEndDate.toISOString().split("T")[0]
-          : null, // Info only for client view
+            ? estimatedEndDate.toISOString().split("T")[0]
+            : null, // Info only for client view
         duration_months: durationMonths,
         rent_amount: parsedData.rent_amount || null,
         deposit_amount: parsedData.deposit_amount || null,
@@ -1265,8 +1331,8 @@ class ContractService {
       };
 
       const validationErrors = this._validateContractData(
-        contractData,
-        parsedData
+          contractData,
+          parsedData
       );
       if (validationErrors.length > 0)
         console.warn("⚠ Validation warnings:", validationErrors);
@@ -1282,7 +1348,7 @@ class ContractService {
           id_number: tenantMatch.id_number,
           room: { ...tenantMatch.room, building_id: buildingId },
           match_confidence:
-            tenantMatch._match_metadata?.confidence_score || null,
+              tenantMatch._match_metadata?.confidence_score || null,
         },
         parsed_data: parsedData,
         validation_warnings: validationErrors,
@@ -1299,14 +1365,14 @@ class ContractService {
 
   /**
    * Kiểm tra Manager có quyền truy cập building không
-      */
+   */
   async checkManagerBuildingAccess(userId, buildingId) {
     const today = new Date();
     const managerBuilding = await prisma.building_managers.findFirst({
       where: {
         user_id: userId,
         building_id: buildingId,
-            },
+      },
     });
 
     return !!managerBuilding;
@@ -1323,16 +1389,16 @@ class ContractService {
     } else if (currentUser.role === "MANAGER") {
       // Relation in Schema: contract -> room_history -> building
       const buildingId =
-        contract.room_history?.building_id ||
-        contract.room_history?.building?.building_id;
+          contract.room_history?.building_id ||
+          contract.room_history?.building?.building_id;
 
       if (!buildingId) {
         throw new Error("Contract building information not found");
       }
 
       const hasAccess = await this.checkManagerBuildingAccess(
-        currentUser.user_id,
-        buildingId
+          currentUser.user_id,
+          buildingId
       );
 
       if (!hasAccess) {
