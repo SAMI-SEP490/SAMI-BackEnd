@@ -388,7 +388,7 @@ class RoomService {
             },
           },
 
-          // 👤 Người ở: rooms → room_tenants → tenant → users
+          // 👤 Danh sách tenant của phòng
           room_tenants: {
             include: {
               tenant: {
@@ -405,15 +405,23 @@ class RoomService {
             },
           },
 
-          // 🔢 Đếm liên quan
+          // 🔢 Đếm liên quan (có điều kiện)
           _count: {
             select: {
+              // ✅ Đếm tenant đang ở hiện tại
+              room_tenants: {
+                where: {
+                  is_current: true,
+                },
+              },
+
               contracts_history: {
                 where: {
                   status: "active",
                   deleted_at: null,
                 },
               },
+
               maintenance_requests: {
                 where: {
                   status: {
@@ -905,6 +913,117 @@ class RoomService {
     };
   }
 
+  // ADD TENANT - Thêm tenant phụ vào phòng (secondary)
+  async addTenantToRoom(roomId, tenantUserId, userRole, operatorId, payload) {
+    const normalizedRole = String(userRole).toUpperCase();
+    if (!this.isManagementRole(normalizedRole)) {
+      throw new Error("Only OWNER and MANAGER can add tenant to room");
+    }
+
+    if (!roomId || !tenantUserId) {
+      throw new Error("Missing required fields: roomId, tenantUserId");
+    }
+
+    const { moved_in_at, note } = payload || {};
+
+    if (!moved_in_at) {
+      throw new Error("moved_in_at is required");
+    }
+
+    const moveInDate = new Date(moved_in_at);
+    if (isNaN(moveInDate.getTime())) {
+      throw new Error("moved_in_at must be a valid date");
+    }
+
+    // 1️⃣ Kiểm tra phòng tồn tại
+    const room = await prisma.rooms.findUnique({
+      where: { room_id: roomId },
+    });
+
+    if (!room || !room.is_active) {
+      throw new Error("Room not found or inactive");
+    }
+
+    // 2️⃣ Kiểm tra hợp đồng active
+    const activeContract = await prisma.contracts.findFirst({
+      where: {
+        room_id: roomId,
+        status: "active",
+        deleted_at: null,
+      },
+    });
+
+    if (!activeContract) {
+      throw new Error("Room does not have an active contract");
+    }
+
+    // 3️⃣ Kiểm tra tenant tồn tại
+    const tenant = await prisma.tenants.findUnique({
+      where: { user_id: tenantUserId },
+    });
+
+    if (!tenant) {
+      throw new Error("Tenant not found");
+    }
+
+    // 4️⃣ Tenant chưa là current tenant ở phòng khác
+    const existingCurrentTenant = await prisma.room_tenants.findFirst({
+      where: {
+        tenant_user_id: tenantUserId,
+        is_current: true,
+      },
+    });
+
+    if (existingCurrentTenant) {
+      throw new Error("Tenant is already assigned to another room");
+    }
+
+    // 5️⃣ Tạo room_tenants (moved_out_at = null, is_current = true)
+    const roomTenant = await prisma.room_tenants.create({
+      data: {
+        room_id: roomId,
+        tenant_user_id: tenantUserId,
+        tenant_type: "secondary",
+        moved_in_at: moveInDate,
+        moved_out_at: null,
+        is_current: true,
+        note: note?.trim() || null,
+        created_at: new Date(),
+      },
+      include: {
+        tenant: {
+          include: {
+            user: {
+              select: {
+                user_id: true,
+                full_name: true,
+                phone: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // 6️⃣ Cập nhật trạng thái phòng
+    await this.updateRoomStatus(roomId);
+
+    return {
+      room_id: roomId,
+      tenant: {
+        user_id: roomTenant.tenant.user.user_id,
+        full_name: roomTenant.tenant.user.full_name,
+        phone: roomTenant.tenant.user.phone,
+        email: roomTenant.tenant.user.email,
+      },
+      tenant_type: roomTenant.tenant_type,
+      moved_in_at: roomTenant.moved_in_at,
+      moved_out_at: null,
+      is_current: true,
+    };
+  }
+
   async getRoomStatisticsByBuilding(buildingId, userRole, userId) {
     const normalizedRole = (userRole || "").toUpperCase();
     if (!this.isManagementRole(normalizedRole)) {
@@ -1070,25 +1189,36 @@ class RoomService {
   }
 
   formatRoomListResponse(room) {
+    // Lấy tenant chính (nếu cần)
+    const primaryTenant = room.room_tenants?.find(
+      (rt) => rt.is_current === true
+    );
+
     return {
       room_id: room.room_id,
       building_id: room.building_id,
-      building_name: room.buildings?.name,
+      building_name: room.building?.name,
       room_number: room.room_number,
       floor: room.floor,
       size: room.size,
       status: room.status,
       is_active: room.is_active,
-      tenant_count: room.tenants?.length || 0,
-      active_contracts: room._count?.contracts || 0,
+
+      // ✅ Đếm số tenant đang ở hiện tại
+      tenant_count: room._count?.room_tenants || 0,
+
+      active_contracts: room._count?.contracts_history || 0,
       pending_maintenance: room._count?.maintenance_requests || 0,
-      primary_tenant: room.tenants?.[0]
+
+      // 👤 Tenant hiện tại đầu tiên (nếu có)
+      primary_tenant: primaryTenant
         ? {
-            user_id: room.tenants[0].user_id,
-            full_name: room.tenants[0].users?.full_name,
-            phone: room.tenants[0].users?.phone,
+            user_id: primaryTenant.tenant?.user?.user_id,
+            full_name: primaryTenant.tenant?.user?.full_name,
+            phone: primaryTenant.tenant?.user?.phone,
           }
         : null,
+
       created_at: room.created_at,
       updated_at: room.updated_at,
     };
