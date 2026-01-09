@@ -959,64 +959,66 @@ class BuildingService {
     };
   }
 
-  formatBuildingDetailResponse(building) {
-    console.log("RAW BUILDING FROM DB:", building);
+formatBuildingDetailResponse(building) {
+  return {
+    building_id: building.building_id,
+    name: building.name,
+    address: building.address,
+    number_of_floors: building.number_of_floors,
+    total_area: building.total_area,
+    is_active: building.is_active,
 
-    return {
-      building_id: building.building_id,
-      name: building.name,
-      address: building.address,
-      number_of_floors: building.number_of_floors,
-      total_area: building.total_area,
-      is_active: building.is_active,
+    // ✅ GIÁ ĐIỆN / NƯỚC
+    electric_unit_price: building.electric_unit_price,
+    water_unit_price: building.water_unit_price,
 
-      // ✅ GIÁ ĐIỆN / NƯỚC
-      electric_unit_price: building.electric_unit_price,
-      water_unit_price: building.water_unit_price,
+    // ✅ PHÍ DỊCH VỤ & NGÀY ĐẾN HẠN HÓA ĐƠN (MỚI)
+    service_fee: building.service_fee,
+    bill_due_day: building.bill_due_day,
 
-      // ✅ THÊM 2 FIELD BÃI XE (MỚI)
-      max_4_wheel_slot: building.max_4_wheel_slot,
-      max_2_wheel_slot: building.max_2_wheel_slot,
+    // ✅ BÃI XE
+    max_4_wheel_slot: building.max_4_wheel_slot,
+    max_2_wheel_slot: building.max_2_wheel_slot,
 
-      managers:
-        building.building_managers?.map((m) => ({
-          user_id: m.user_id,
-          full_name: m.users?.full_name,
-          email: m.users?.email,
-          phone: m.users?.phone,
-          assigned_from: m.assigned_from,
-          assigned_to: m.assigned_to,
-          note: m.note,
-        })) || [],
+    managers:
+      building.building_managers?.map((m) => ({
+        user_id: m.user_id,
+        full_name: m.user?.full_name,   // ⚠️ user (không phải users)
+        email: m.user?.email,
+        phone: m.user?.phone,
+        assigned_from: m.assigned_from,
+        assigned_to: m.assigned_to,
+        note: m.note,
+      })) || [],
 
-      rooms:
-        building.rooms?.map((r) => ({
-          room_id: r.room_id,
-          room_number: r.room_number,
-          floor: r.floor,
-          size: r.size,
-        })) || [],
+    rooms:
+      building.rooms?.map((r) => ({
+        room_id: r.room_id,
+        room_number: r.room_number,
+        floor: r.floor,
+        size: r.size,
+      })) || [],
 
-      regulations:
-        building.regulations?.map((r) => ({
-          regulation_id: r.regulation_id,
-          title: r.title,
-          effective_date: r.effective_date,
-          version: r.version,
-        })) || [],
+    regulations:
+      building.regulations?.map((r) => ({
+        regulation_id: r.regulation_id,
+        title: r.title,
+        effective_date: r.effective_date,
+        version: r.version,
+      })) || [],
 
-      floor_plans:
-        building.floor_plans?.map((f) => ({
-          plan_id: f.plan_id,
-          name: f.name,
-          floor_number: f.floor_number,
-          version: f.version,
-        })) || [],
+    floor_plans:
+      building.floor_plans?.map((f) => ({
+        plan_id: f.plan_id,
+        name: f.name,
+        floor_number: f.floor_number,
+      })) || [],
 
-      created_at: building.created_at,
-      updated_at: building.updated_at,
-    };
-  }
+    created_at: building.created_at,
+    updated_at: building.updated_at,
+  };
+}
+
 
   formatManagerResponse(manager) {
     const now = new Date();
