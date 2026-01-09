@@ -109,7 +109,7 @@ class PaymentService {
         const paymentLink = await payos.paymentRequests.create({
             orderCode: orderCode,
             amount: totalAmount,
-            description: `Thanh toan HD ${validBills.map(b => b.bill_number).join(',').substring(0, 20)}...`,
+            description: `Thanh toan hoa don SAMI`,
             cancelUrl: config.payos.cancelUrl,
             returnUrl: config.payos.returnUrl
         });
