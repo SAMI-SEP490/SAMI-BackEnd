@@ -28,10 +28,12 @@ const notificationRoutes = require('./routes/notification.routes');
 const botRoutes = require('./routes/bot.routes');
 const chatbotRoutes = require('./routes/chatbot.routes.js');
 const parkingSlotRoutes = require('./routes/parking-slot.routes.js');
+const consentRoutes = require('./routes/consent.routes');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
 const cron = require('node-cron');
 const BillService = require('./services/bill.service');
 const utilityRoutes = require('./routes/utility.routes');
+const { getCloudWatchLogger } = require('./utils/cloudwatch-logger');
 
 const app = express();
 
@@ -50,6 +52,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Compression
 app.use(compression());
+
+app.set('trust proxy', true);
 
 // Logging
 if (config.nodeEnv === 'development') {
@@ -151,6 +155,8 @@ app.use('/api/bot', botRoutes);
 app.use('/api/chatbot', chatbotRoutes);
 app.use('/api/parking-slots', parkingSlotRoutes);
 app.use('/api/utility', utilityRoutes);
+app.use('/api/consent', consentRoutes);
+
 // 404 handler
 app.use(notFound);
 
@@ -177,6 +183,10 @@ async function startServer() {
     try {
         // Initialize Redis first
         await initializeRedis();
+
+        const cloudWatch = getCloudWatchLogger();
+        await cloudWatch.initialize();
+        console.log('✅ CloudWatch Logger initialized');
 
         // Start Express server
         app.listen(PORT, () => {
