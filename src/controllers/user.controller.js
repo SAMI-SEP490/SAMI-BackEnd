@@ -5,17 +5,18 @@ const UserService = require('../services/user.service');
 
 class UserController {
     async getAllUsers(req, res, next) {
-        try {
-            const users = await UserService.getAllUsers();
-            res.status(200).json({
-                success: true,
-                message: 'Users retrieved successfully',
-                data: users,
-            });
-        } catch (err) {
-            next(err);
-        }
-    }
+  try {
+    const { building_id } = req.query;
+    const users = await UserService.getAllUsers(building_id);
+
+    res.status(200).json({
+      success: true,
+      data: users,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
 
     async getUserById(req, res, next) {
         try {

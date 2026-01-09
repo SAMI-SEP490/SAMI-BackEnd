@@ -31,86 +31,138 @@ class UserService {
   /**
    * Retrieves a list of all users (excluding OWNER).
    */
-  async getAllUsers() {
-    const users = await prisma.users.findMany({
-      where: {
-        role: { not: "OWNER" }, // Exclude OWNER
-      },
-      select: {
-        user_id: true,
-        phone: true,
-        email: true,
-        full_name: true,
-        gender: true,
-        birthday: true,
-        status: true,
-        role: true,
-        is_verified: true,
-        created_at: true,
-        updated_at: true,
-        deleted_at: true,
+ async getAllUsers(buildingId = null) {
+  const users = await prisma.users.findMany({
+    where: {
+      role: { not: "OWNER" },
 
-        building_managers: {
-          select: {
-            manager_id: true,
-            building_id: true,
-            note: true,
-            building: {
-              select: {
-                name: true,
+      ...(buildingId && {
+        OR: [
+          // MANAGER thuộc building
+          {
+            role: "MANAGER",
+            building_managers: {
+              some: {
+                building_id: Number(buildingId),
+              },
+            },
+          },
+
+          // TENANT có room hiện tại thuộc building
+          {
+            role: "TENANT",
+            tenants: {
+              room_tenants_history: {
+                some: {
+                  is_current: true,
+                  room: {
+                    building_id: Number(buildingId),
+                  },
+                },
+              },
+            },
+          },
+
+          // USER: không gắn building → vẫn hiển thị
+          {
+            role: "USER",
+          },
+        ],
+      }),
+    },
+
+    select: {
+      user_id: true,
+      phone: true,
+      email: true,
+      full_name: true,
+      gender: true,
+      birthday: true,
+      status: true,
+      role: true,
+      is_verified: true,
+      created_at: true,
+      updated_at: true,
+      deleted_at: true,
+
+      building_managers: {
+        select: {
+          building_id: true,
+          building: {
+            select: { name: true },
+          },
+        },
+      },
+
+      tenants: {
+        select: {
+          tenant_since: true,
+          id_number: true,
+          room_tenants_history: {
+            where: { is_current: true },
+            select: {
+              room: {
+                select: {
+                  building_id: true,
+                  building: { select: { name: true } },
+                },
               },
             },
           },
         },
-        tenants: {
-          select: {
-            note: true,
-            tenant_since: true,
-            id_number: true,
-          },
-        },
       },
-      orderBy: {
-        user_id: "asc",
-      },
-    });
+    },
 
-    return users.map((user) => {
-      const userObject = {
-        user_id: user.user_id,
-        phone: user.phone,
-        email: user.email,
-        full_name: user.full_name,
-        gender: user.gender,
-        birthday: user.birthday,
-        status: user.status,
-        role: user.role,
-        is_verified: user.is_verified,
-        created_at: user.created_at,
-        updated_at: user.updated_at,
-        deleted_at: user.deleted_at,
-        note: this._determineNoteFromUserObject(user),
-        tenant_since: null,
-        id_number: null,
-        building_id: null,
-        assigned_from: null,
-        assigned_to: null,
-      };
+    orderBy: { user_id: "asc" },
+  });
 
-      // Add role-specific info
-      if (user.role === "TENANT" && user.tenants) {
-        userObject.tenant_since = user.tenants.tenant_since;
-        userObject.id_number = user.tenants.id_number;
-      } else if (user.role === "MANAGER" && user.building_managers) {
-        userObject.building_id = user.building_managers.building_id;
-        userObject.assigned_from = user.building_managers.assigned_from;
-        userObject.assigned_to = user.building_managers.assigned_to;
-      }
+  return users.map((user) => {
+    // MANAGER
+    const manager = user.building_managers?.[0] ?? null;
 
-      return userObject;
-    });
-  }
+    // TENANT current room
+    const tenantRoom =
+      user.tenants?.room_tenants_history?.[0]?.room ?? null;
 
+    return {
+      user_id: user.user_id,
+      phone: user.phone,
+      email: user.email,
+      full_name: user.full_name,
+      gender: user.gender,
+      birthday: user.birthday,
+      status: user.status,
+      role: user.role,
+      is_verified: user.is_verified,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
+      deleted_at: user.deleted_at,
+
+      note: this._determineNoteFromUserObject(user),
+
+      // TENANT
+      tenant_since:
+        user.role === "TENANT" ? user.tenants?.tenant_since ?? null : null,
+      id_number:
+        user.role === "TENANT" ? user.tenants?.id_number ?? null : null,
+
+      // BUILDING (cho cả MANAGER & TENANT)
+      building_id:
+        user.role === "MANAGER"
+          ? manager?.building_id ?? null
+          : user.role === "TENANT"
+          ? tenantRoom?.building_id ?? null
+          : null,
+
+      building_name:
+        user.role === "MANAGER"
+          ? manager?.building?.name ?? null
+          : user.role === "TENANT"
+          ? tenantRoom?.building?.name ?? null
+          : null,
+    };
+  });
+}
   /**
    * Retrieves the details for a single user by their ID (excluding OWNER).
    */
@@ -594,9 +646,12 @@ class UserService {
     }
 
     // Check if already a manager for this building
-    const existingManager = await prisma.building_managers.findUnique({
-      where: { user_id: userId },
-    });
+    const existingManager = await prisma.building_managers.findFirst({
+  where: {
+    user_id: userId,
+    building_id: buildingId
+  }
+});
 
     if (existingManager) {
       throw new AppError("User is already a manager");
@@ -618,8 +673,6 @@ class UserService {
         data: {
           user_id: userId,
           building_id: buildingId,
-          assigned_from: assignedFrom || new Date(),
-          assigned_to: assignedTo || null,
           note,
         },
       });
@@ -632,8 +685,6 @@ class UserService {
       role: result.updatedUser.role,
       managerInfo: {
         buildingId: result.manager.building_id,
-        assignedFrom: result.manager.assigned_from,
-        assignedTo: result.manager.assigned_to,
       },
     };
   }
