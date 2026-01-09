@@ -13,21 +13,21 @@ function calculateMaxTenants(size) {
 }
 
 class FloorPlanService {
-  // Helper: Kiểm tra quyền truy cập building
+ // Helper: Kiểm tra quyền truy cập building
   async checkBuildingAccess(userId, userRole, buildingId) {
-    // Owner có toàn quyền
-    if (userRole === "OWNER") {
-      return true;
-    }
+    const normalizedRole = String(userRole || "").toUpperCase();
 
-    // Manager: kiểm tra có được phân công cho building
-    if (userRole === "MANAGER") {
+    // OWNER có toàn quyền
+    if (normalizedRole === "OWNER") return true;
+
+    // MANAGER: chỉ được truy cập building được assign (building_managers.user_id)
+    if (normalizedRole === "MANAGER") {
       const managerBuilding = await prisma.building_managers.findFirst({
         where: {
-          manager_id: userId,
+          user_id: userId,
           building_id: buildingId,
-          is_active: true,
         },
+        select: { manager_id: true },
       });
       return !!managerBuilding;
     }
@@ -1227,7 +1227,7 @@ class FloorPlanService {
       // 3) Lấy tất cả phòng thuộc building + floor
       const rooms = await tx.rooms.findMany({
         where: {
-          building_id: buildingId,
+          building_id: bId,
           floor: floorNumber,
           is_active: true,
         },
@@ -1287,14 +1287,14 @@ class FloorPlanService {
       // 9) (Tuỳ bạn) cập nhật number_of_floors nếu bạn đang dùng field này
       // Gợi ý: set = max floor_number còn lại, hoặc 0 nếu không còn.
       const agg = await tx.floor_plans.aggregate({
-        where: { building_id: buildingId },
+        where: { building_id: bId },
         _max: { floor_number: true },
       });
       const maxFloor = agg?._max?.floor_number ?? 0;
 
       // Nếu bảng buildings có number_of_floors
       await tx.buildings.update({
-        where: { building_id: buildingId },
+        where: { building_id: bId },
         data: { number_of_floors: maxFloor },
       });
 
@@ -1307,19 +1307,19 @@ class FloorPlanService {
   // STATISTICS - Thống kê floor plans
   async getFloorPlanStatistics(buildingId, userId, userRole) {
     // Kiểm tra quyền truy cập building
-    if (userRole === "MANAGER") {
-      const managerBuilding = await prisma.building_managers.findFirst({
-        where: {
-          user_id: userId,
-          building_id: buildingId,
-          // is_active: true, // chỉ giữ nếu schema của bạn CÓ field này
-        },
-      });
-      return !!managerBuilding;
+     const normalizedRole = String(userRole || "").toUpperCase();
+    const bId = parseInt(buildingId);
+    if (isNaN(bId)) throw new Error("building_id must be a valid number");
+
+    const hasAccess = await this.checkBuildingAccess(userId, normalizedRole, bId);
+    if (!hasAccess) {
+      throw new Error(
+        "Access denied: You do not have permission to view statistics for this building"
+      );
     }
 
     const building = await prisma.buildings.findUnique({
-      where: { building_id: buildingId },
+      where: { building_id: bId },
     });
 
     if (!building) {
@@ -1329,29 +1329,29 @@ class FloorPlanService {
     const [totalPlans, publishedPlans, unpublishedPlans, uniqueFloors] =
       await Promise.all([
         prisma.floor_plans.count({
-          where: { building_id: buildingId },
+          where: { building_id: bId },
         }),
         prisma.floor_plans.count({
           where: {
-            building_id: buildingId,
+            building_id: bId,
             is_published: true,
           },
         }),
         prisma.floor_plans.count({
           where: {
-            building_id: buildingId,
+            building_id: bId,
             is_published: false,
           },
         }),
         prisma.floor_plans.findMany({
-          where: { building_id: buildingId },
+          where: { building_id: bId },
           select: { floor_number: true },
           distinct: ["floor_number"],
         }),
       ]);
 
     return {
-      building_id: buildingId,
+      building_id: bId,
       building_name: building.name,
       total_plans: totalPlans,
       published_plans: publishedPlans,

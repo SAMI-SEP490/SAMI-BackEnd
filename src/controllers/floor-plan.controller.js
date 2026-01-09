@@ -77,19 +77,6 @@ class FloorPlanController {
     }
   }
 
-  // Lấy tầng tiếp theo cần tạo (dựa trên dữ liệu floor_plans trong DB)
-  // GET /floor-plan/buildings/:buildingId/next-floor
-  async getNextFloorNumber(req, res) {
-    try {
-      const buildingId = parseInt(req.params.buildingId, 10);
-      const result = await floorPlanService.getNextFloorNumber(buildingId);
-      return res.status(200).json({ success: true, ...result });
-    } catch (error) {
-      console.error("getNextFloorNumber error:", error);
-      return res.status(400).json({ success: false, message: error.message });
-    }
-  }
-
   // Lấy floor plans theo building
   async getFloorPlansByBuilding(req, res, next) {
     try {
