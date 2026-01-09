@@ -90,69 +90,75 @@ class VehicleRegistrationService {
         return usedSlots < maxSlots;
     }
 
-    async createVehicleRegistration(tenantUserId, data) {
-        const {
-            vehicle_type,
-            license_plate,
-            brand,
-            color,
-            start_date,
-            end_date,
-            note
-        } = data;
+async createVehicleRegistration(tenantUserId, data) {
+  const {
+    vehicle_type,
+    license_plate,
+    brand,
+    color,
+    start_date,
+    end_date,
+    note
+  } = data;
 
-        const tenant = await prisma.tenants.findUnique({
-            where: { user_id: tenantUserId }
-        });
-
-        if (!tenant) {
-            throw new Error('Tenant not found');
-        }
-
-        const currentRoom = await prisma.room_tenants.findFirst({
-            where: {
-                tenant_user_id: tenantUserId,
-                is_current: true
-            }
-        });
-
-        if (!currentRoom) {
-            throw new Error('Tenant has no active room');
-        }
-
-        const existing = await prisma.vehicle_registrations.findFirst({
-            where: {
-                license_plate,
-                vehicle: {
-                    is: {
-                        status: 'active'
-                    }
-                }
-            }
-        });
-
-        if (existing) {
-            throw new Error('License plate already registered');
-        }
-
-        if (start_date && end_date && new Date(end_date) <= new Date(start_date)) {
-            throw new Error('End date must be after start date');
-        }
-
-        return prisma.vehicle_registrations.create({
-            data: {
-                requested_by: tenantUserId,
-                vehicle_type,
-                license_plate,
-                brand,
-                color,
-                start_date: new Date(start_date),
-                end_date: end_date ? new Date(end_date) : null,
-                status: 'requested',
-                note
-            }
-        });
+  // 1️⃣ Validate tenant
+  const tenant = await prisma.tenants.findUnique({
+    where: { user_id: tenantUserId },
+    select: {
+      user_id: true,
+      building_id: true
     }
+  });
+
+  if (!tenant) {
+    throw new Error("Tenant not found");
+  }
+
+  if (!tenant.building_id) {
+    throw new Error("Tenant has no building assigned");
+  }
+
+  // 2️⃣ Validate vehicle type
+  if (!["two_wheeler", "four_wheeler"].includes(vehicle_type)) {
+    throw new Error("Invalid vehicle type");
+  }
+
+  // 3️⃣ Check license plate uniqueness (active only)
+  if (license_plate) {
+    const existedVehicle = await prisma.vehicles.findFirst({
+      where: {
+        license_plate,
+        status: "active"
+      }
+    });
+
+    if (existedVehicle) {
+      throw new Error("License plate already registered");
+    }
+  }
+
+  // 4️⃣ Validate date
+  if (start_date && end_date) {
+    if (new Date(end_date) <= new Date(start_date)) {
+      throw new Error("End date must be after start date");
+    }
+  }
+
+  // 5️⃣ Create registration
+  return prisma.vehicle_registrations.create({
+    data: {
+      requested_by: tenantUserId,
+      vehicle_type,
+      license_plate,
+      brand,
+      color,
+      start_date: new Date(start_date),
+      end_date: end_date ? new Date(end_date) : null,
+      status: "requested",
+      note
+    }
+  });
+}
 
     async getVehicleRegistrationById(registrationId, userId, userRole) {
         const registration = await prisma.vehicle_registrations.findUnique({
@@ -216,153 +222,129 @@ class VehicleRegistrationService {
 
     async getVehicleRegistrations(filters, userId, userRole) {
         console.log("🔥 VEHICLE REG ROLE:", userRole, "USER:", userId);
-    const {
-        status,
-        requested_by,
-        start_date_from,
-        start_date_to,
-        building_id,     // 👈 thêm
-        page = 1,
-        limit = 10
-    } = filters;
+        const {
+            status,
+            requested_by,
+            start_date_from,
+            start_date_to,
+            building_id,     // 👈 thêm
+            page = 1,
+            limit = 10
+        } = filters;
 
-    const where = {};
+        const where = {};
 
-    /* ================= TENANT ================= */
-    if (userRole === 'TENANT') {
-        where.requested_by = userId;
-    }
-
-    /* ================= MANAGER ================= */
-   else if (userRole === 'MANAGER') {
-    const managerBuilding = await prisma.building_managers.findFirst({
-        where: { user_id: userId },
-        select: { building_id: true }
-    });
-
-    if (!managerBuilding) {
-        return {
-            registrations: [],
-            pagination: {
-                total: 0,
-                page: Number(page),
-                limit: Number(limit),
-                totalPages: 0
-            }
-        };
-    }
-
-    // 🔒 HARD LOCK
-    where.requester = {
-        room_tenants_history: {
-            some: {
-                is_current: true,
-                room: {
-                    building_id: managerBuilding.building_id
-                }
-            }
-        }
-    };
-}
-    /* ================= OWNER ================= */
-    else {
-        if (requested_by) {
-            where.requested_by = requested_by;
+        /* ================= TENANT ================= */
+        if (userRole === 'TENANT') {
+            where.requested_by = userId;
         }
 
-        // Filter theo building (OWNER ONLY)
-        if (building_id) {
+        /* ================= MANAGER ================= */
+        else if (userRole === 'MANAGER') {
+            const managerBuilding = await prisma.building_managers.findFirst({
+                where: { user_id: userId },
+                select: { building_id: true }
+            });
+
+            if (!managerBuilding) {
+                return {
+                    registrations: [],
+                    pagination: {
+                        total: 0,
+                        page: Number(page),
+                        limit: Number(limit),
+                        totalPages: 0
+                    }
+                };
+            }
+
+            // 🔒 HARD LOCK
             where.requester = {
                 room_tenants_history: {
                     some: {
                         is_current: true,
                         room: {
-                            building_id: Number(building_id)
+                            building_id: managerBuilding.building_id
                         }
                     }
                 }
             };
         }
-    }
+        /* ================= OWNER ================= */
+        else if (userRole === "OWNER") {
+            if (requested_by) {
+                where.requested_by = requested_by;
+            }
 
-    /* ================= COMMON FILTERS ================= */
-
-    if (status) {
-        where.status = status;
-    }
-
-    if (start_date_from || start_date_to) {
-        where.start_date = {};
-        if (start_date_from) {
-            where.start_date.gte = new Date(start_date_from);
+            if (building_id) {
+                where.requester = {
+                    building_id: Number(building_id)
+                };
+            }
         }
-        if (start_date_to) {
-            where.start_date.lte = new Date(start_date_to);
+
+        /* ================= COMMON ================= */
+        if (status) {
+            where.status = status;
         }
-    }
 
-    const skip = (page - 1) * limit;
+        const skip = (page - 1) * limit;
 
-    const [registrations, total] = await Promise.all([
-        prisma.vehicle_registrations.findMany({
-            where,
-            skip,
-            take: Number(limit),
-            orderBy: { requested_at: 'desc' },
-            include: {
-                requester: {
-                    include: {
-                        user: {
-                            select: {
-                                user_id: true,
-                                full_name: true,
-                                email: true,
-                                phone: true
+        const [registrations, total] = await Promise.all([
+            prisma.vehicle_registrations.findMany({
+                where,
+                skip,
+                take: Number(limit),
+                orderBy: { requested_at: "desc" },
+                include: {
+                    requester: {
+                        include: {
+                            user: {
+                                select: {
+                                    user_id: true,
+                                    full_name: true,
+                                    email: true,
+                                    phone: true
+                                }
+                            },
+                            building: {
+                                select: {
+                                    building_id: true,
+                                    name: true
+                                }
                             }
-                        },
-                        room_tenants_history: {
-                            where: { is_current: true },
-                            include: {
-                                room: {
-                                    include: {
-                                        building: {
-                                            select: {
-                                                building_id: true,
-                                                name: true
-                                            }
-                                        }
+                        }
+                    },
+                    vehicle: {
+                        include: {
+                            slot: {
+                                include: {
+                                    building: {
+                                        select: { building_id: true, name: true }
                                     }
                                 }
                             }
                         }
                     }
-                },
-                approver: {
-                    select: { user_id: true, full_name: true }
-                },
-                rejector: {
-                    select: { user_id: true, full_name: true }
-                },
-                vehicle: true
-            }
-        }),
-        prisma.vehicle_registrations.count({ where })
-    ]);
+                }
+            }),
+            prisma.vehicle_registrations.count({ where })
+        ]);
 
-    return {
-        registrations,
-        pagination: {
-            total,
-            page: Number(page),
-            limit: Number(limit),
-            totalPages: Math.ceil(total / limit)
-        }
-    };
-}
+        return {
+            registrations,
+            pagination: {
+                total,
+                page: Number(page),
+                limit: Number(limit),
+                totalPages: Math.ceil(total / limit)
+            }
+        };
+    }
 
     async updateVehicleRegistration(registrationId, tenantUserId, data) {
         const {
-            type,
+            vehicle_type,
             license_plate,
             brand,
             color,
@@ -372,54 +354,62 @@ class VehicleRegistrationService {
         } = data;
 
         const existing = await prisma.vehicle_registrations.findUnique({
-            where: { assignment_id: registrationId }
+            where: { registration_id: Number(registrationId) }
         });
 
-        if (!existing) throw new Error('Vehicle registration not found');
-        if (existing.requested_by !== tenantUserId) throw new Error('Unauthorized');
-        if (existing.status !== 'requested') {
-            throw new Error(`Cannot update registration with status: ${existing.status}`);
+        if (!existing) {
+            throw new Error("Vehicle registration not found");
         }
 
-        let currentInfo;
-        try {
-            currentInfo = JSON.parse(existing.reason);
-        } catch {
-            throw new Error('Invalid vehicle data');
+        if (existing.requested_by !== tenantUserId) {
+            throw new Error("Unauthorized");
         }
 
-        if (type && !['two_wheeler', 'four_wheeler'].includes(type)) {
-            throw new Error('Invalid vehicle type');
+        if (existing.status !== "requested") {
+            throw new Error(
+                `Cannot update registration with status: ${existing.status}`
+            );
         }
 
-        if (license_plate && license_plate !== currentInfo.license_plate) {
-            const existingVehicle = await prisma.vehicles.findUnique({
-                where: { license_plate }
+        // ✅ Validate vehicle type
+        if (
+            vehicle_type &&
+            !["two_wheeler", "four_wheeler"].includes(vehicle_type)
+        ) {
+            throw new Error("Invalid vehicle type");
+        }
+
+        // ✅ Check license plate uniqueness (only active vehicles)
+        if (license_plate && license_plate !== existing.license_plate) {
+            const existedVehicle = await prisma.vehicles.findFirst({
+                where: {
+                    license_plate,
+                    status: "active"
+                }
             });
 
-            if (existingVehicle && !existingVehicle.deactivated_at) {
-                throw new Error('License plate already registered');
+            if (existedVehicle) {
+                throw new Error("License plate already registered");
             }
         }
 
+        // ✅ Validate date
         if (start_date && end_date) {
             if (new Date(end_date) <= new Date(start_date)) {
-                throw new Error('End date must be after start date');
+                throw new Error("End date must be after start date");
             }
         }
 
         return prisma.vehicle_registrations.update({
-            where: { assignment_id: registrationId },
+            where: { registration_id: Number(registrationId) },
             data: {
+                vehicle_type: vehicle_type ?? undefined,
+                license_plate: license_plate ?? undefined,
+                brand: brand ?? undefined,
+                color: color ?? undefined,
                 start_date: start_date ? new Date(start_date) : undefined,
                 end_date: end_date ? new Date(end_date) : undefined,
-                note: note !== undefined ? note : undefined,
-                reason: JSON.stringify({
-                    type: type ?? currentInfo.type,
-                    license_plate: license_plate ?? currentInfo.license_plate,
-                    brand: brand ?? currentInfo.brand,
-                    color: color ?? currentInfo.color
-                })
+                note: note ?? undefined
             }
         });
     }
@@ -449,8 +439,8 @@ class VehicleRegistrationService {
             throw new Error(`Cannot approve status ${registration.status}`);
         }
 
-        const buildingId =
-            registration.requester.room_tenants_history[0]?.room.building_id;
+        const buildingId = registration.requester.building_id;
+        if (!buildingId) throw new Error("Tenant building not found");
 
         if (!buildingId) throw new Error("Tenant building not found");
 
@@ -530,35 +520,35 @@ class VehicleRegistrationService {
                     approved_at: new Date()
                 }
             });
-console.log("🔥 USING PRISMA CLIENT AT", __filename);
+            console.log("🔥 USING PRISMA CLIENT AT", __filename);
             // ===============================
             // 5️⃣ Create vehicle (WITH relation)
             // ===============================
             const vehicle = await tx.vehicles.create({
-  data: {
-    status: "active",
-    registered_at: new Date(),
-    license_plate: registration.license_plate,
+                data: {
+                    status: "active",
+                    registered_at: new Date(),
+                    license_plate: registration.license_plate,
 
-    registration: {
-      connect: {
-        registration_id: registration.registration_id
-      }
-    },
+                    registration: {
+                        connect: {
+                            registration_id: registration.registration_id
+                        }
+                    },
 
-    tenant: {
-      connect: {
-        user_id: registration.requested_by
-      }
-    },
+                    tenant: {
+                        connect: {
+                            user_id: registration.requested_by
+                        }
+                    },
 
-    slot: {
-      connect: {
-        slot_id: slotId
-      }
-    }
-  }
-});
+                    slot: {
+                        connect: {
+                            slot_id: slotId
+                        }
+                    }
+                }
+            });
 
             // ===============================
             // 6️⃣ Lock slot
@@ -575,30 +565,12 @@ console.log("🔥 USING PRISMA CLIENT AT", __filename);
 
     async rejectVehicleRegistration(registrationId, rejectedBy, rejectionReason, userRole) {
         const registration = await prisma.vehicle_registrations.findUnique({
-            where: {
-                registration_id: registrationId
-            },
+            where: { registration_id: registrationId },
             include: {
                 requester: {
-                    include: {
-                        user: {
-                            select: {
-                                user_id: true,
-                                full_name: true,
-                                email: true,
-                                phone: true
-                            }
-                        },
-                        room_tenants_history: {
-                            where: { is_current: true },
-                            include: {
-                                room: {
-                                    select: {
-                                        building_id: true
-                                    }
-                                }
-                            }
-                        }
+                    select: {
+                        user_id: true,
+                        building_id: true
                     }
                 }
             }
@@ -896,260 +868,260 @@ console.log("🔥 USING PRISMA CLIENT AT", __filename);
     }
 
     async changeVehicleSlot(vehicleId, newSlotId, userId, userRole) {
-  if (!['MANAGER', 'OWNER'].includes(userRole)) {
-    throw new Error('Permission denied');
-  }
-
-  return prisma.$transaction(async (tx) => {
-
-    const vehicle = await tx.vehicles.findUnique({
-      where: { vehicle_id: vehicleId },
-      include: {
-        registration: true,
-        tenant: {
-          include: {
-            room_tenants_history: {
-              where: { is_current: true },
-              include: {
-                room: { select: { building_id: true } }
-              }
-            }
-          }
+        if (!['MANAGER', 'OWNER'].includes(userRole)) {
+            throw new Error('Permission denied');
         }
-      }
-    });
 
-    if (!vehicle) throw new Error('Vehicle not found');
-    if (vehicle.status !== 'active') {
-      throw new Error('Only active vehicle can change parking slot');
+        return prisma.$transaction(async (tx) => {
+
+            const vehicle = await tx.vehicles.findUnique({
+                where: { vehicle_id: vehicleId },
+                include: {
+                    registration: true,
+                    tenant: {
+                        include: {
+                            room_tenants_history: {
+                                where: { is_current: true },
+                                include: {
+                                    room: { select: { building_id: true } }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            if (!vehicle) throw new Error('Vehicle not found');
+            if (vehicle.status !== 'active') {
+                throw new Error('Only active vehicle can change parking slot');
+            }
+
+            const oldSlotId = vehicle.slot_id;
+
+            const newSlot = await tx.parking_slots.findUnique({
+                where: { slot_id: newSlotId }
+            });
+
+            if (!newSlot) throw new Error('New parking slot not found');
+            if (!newSlot.is_available) {
+                throw new Error('New parking slot is not available');
+            }
+
+            // ✅ ĐÚNG vehicle type
+            if (newSlot.slot_type !== vehicle.registration.vehicle_type) {
+                throw new Error('Slot type does not match vehicle type');
+            }
+
+            const buildingId =
+                vehicle.tenant?.room_tenants_history?.[0]?.room?.building_id;
+
+            if (!buildingId) {
+                throw new Error('Tenant has no active room');
+            }
+
+            if (newSlot.building_id !== buildingId) {
+                throw new Error('Slot is not in the same building as vehicle');
+            }
+
+            // ===== UPDATE =====
+
+            // free old slot
+            if (oldSlotId) {
+                await tx.parking_slots.update({
+                    where: { slot_id: oldSlotId },
+                    data: { is_available: true }
+                });
+            }
+
+            // lock new slot
+            const locked = await tx.parking_slots.updateMany({
+                where: {
+                    slot_id: newSlotId,
+                    is_available: true
+                },
+                data: { is_available: false }
+            });
+
+            if (locked.count === 0) {
+                throw new Error('New parking slot is no longer available');
+            }
+
+            // ✅ CHỈ UPDATE VEHICLE
+            await tx.vehicles.update({
+                where: { vehicle_id: vehicleId },
+                data: { slot_id: newSlotId }
+            });
+
+            return true;
+        });
     }
-
-    const oldSlotId = vehicle.slot_id;
-
-    const newSlot = await tx.parking_slots.findUnique({
-      where: { slot_id: newSlotId }
-    });
-
-    if (!newSlot) throw new Error('New parking slot not found');
-    if (!newSlot.is_available) {
-      throw new Error('New parking slot is not available');
-    }
-
-    // ✅ ĐÚNG vehicle type
-    if (newSlot.slot_type !== vehicle.registration.vehicle_type) {
-      throw new Error('Slot type does not match vehicle type');
-    }
-
-    const buildingId =
-      vehicle.tenant?.room_tenants_history?.[0]?.room?.building_id;
-
-    if (!buildingId) {
-      throw new Error('Tenant has no active room');
-    }
-
-    if (newSlot.building_id !== buildingId) {
-      throw new Error('Slot is not in the same building as vehicle');
-    }
-
-    // ===== UPDATE =====
-
-    // free old slot
-    if (oldSlotId) {
-      await tx.parking_slots.update({
-        where: { slot_id: oldSlotId },
-        data: { is_available: true }
-      });
-    }
-
-    // lock new slot
-    const locked = await tx.parking_slots.updateMany({
-      where: {
-        slot_id: newSlotId,
-        is_available: true
-      },
-      data: { is_available: false }
-    });
-
-    if (locked.count === 0) {
-      throw new Error('New parking slot is no longer available');
-    }
-
-    // ✅ CHỈ UPDATE VEHICLE
-    await tx.vehicles.update({
-      where: { vehicle_id: vehicleId },
-      data: { slot_id: newSlotId }
-    });
-
-    return true;
-  });
-}
 
     async getVehicles(filters, userId, userRole) {
-  const {
-    status,
-    type,
-    tenant_user_id,
-    license_plate,
-    building_id,
-    page = 1,
-    limit = 10
-  } = filters;
+        const {
+            status,
+            type,
+            tenant_user_id,
+            license_plate,
+            building_id,
+            page = 1,
+            limit = 10
+        } = filters;
 
-  console.log("🚗 VEHICLE FILTER:", { userRole, userId, building_id });
+        console.log("🚗 VEHICLE FILTER:", { userRole, userId, building_id });
 
-  const where = {};
-  const tenantWhere = {};
+        const where = {};
+        const tenantWhere = {};
 
-  // ===============================
-  // BASIC FILTER
-  // ===============================
-  if (status) {
-    where.status = status;
-  }
-
-  // ===============================
-  // ROLE-BASED FILTERING
-  // ===============================
-
-  // TENANT: chỉ thấy xe của mình
-  if (userRole === "TENANT") {
-    where.tenant_user_id = userId;
-  }
-
-  // MANAGER: thấy xe của tenant thuộc building mình quản lý
-  if (userRole === "MANAGER") {
-    const managerBuildingIds = await this.getManagerBuildingIds(userId);
-
-    if (!managerBuildingIds || managerBuildingIds.length === 0) {
-      return {
-        vehicles: [],
-        pagination: {
-          total: 0,
-          page: Number(page),
-          limit: Number(limit),
-          totalPages: 0
+        // ===============================
+        // BASIC FILTER
+        // ===============================
+        if (status) {
+            where.status = status;
         }
-      };
-    }
 
-    tenantWhere.room_tenants_history = {
-      some: {
-        is_current: true,
-        room: {
-          building_id: { in: managerBuildingIds }
+        // ===============================
+        // ROLE-BASED FILTERING
+        // ===============================
+
+        // TENANT: chỉ thấy xe của mình
+        if (userRole === "TENANT") {
+            where.tenant_user_id = userId;
         }
-      }
-    };
-  }
 
-  // OWNER: có thể filter theo tenant hoặc building
-  if (userRole === "OWNER") {
-    if (tenant_user_id) {
-      where.tenant_user_id = tenant_user_id;
-    }
+        // MANAGER: thấy xe của tenant thuộc building mình quản lý
+        if (userRole === "MANAGER") {
+            const managerBuildingIds = await this.getManagerBuildingIds(userId);
 
-    if (building_id) {
-      tenantWhere.room_tenants_history = {
-        some: {
-          is_current: true,
-          room: {
-            building_id: Number(building_id)
-          }
-        }
-      };
-    }
-  }
-
-  // GẮN TENANT FILTER 1 LẦN DUY NHẤT
-  if (Object.keys(tenantWhere).length > 0) {
-    where.tenant = tenantWhere;
-  }
-
-  // ===============================
-  // FILTER QUA REGISTRATION
-  // ===============================
-  if (type || license_plate) {
-    where.registration = {};
-
-    if (type) {
-      where.registration.vehicle_type = type;
-    }
-
-    if (license_plate) {
-      where.registration.license_plate = {
-        contains: license_plate,
-        mode: "insensitive"
-      };
-    }
-  }
-
-  // ===============================
-  // PAGINATION
-  // ===============================
-  const skip = (Number(page) - 1) * Number(limit);
-
-  // DEBUG (nếu cần)
-  // console.dir(where, { depth: null });
-
-  const [vehicles, total] = await Promise.all([
-    prisma.vehicles.findMany({
-      where,
-      skip,
-      take: Number(limit),
-      orderBy: { registered_at: "desc" },
-      include: {
-        slot: {
-          select: {
-            slot_id: true,
-            slot_number: true,
-            slot_type: true,
-            building_id: true,
-            building: {
-              select: {
-                name: true
-              }
+            if (!managerBuildingIds || managerBuildingIds.length === 0) {
+                return {
+                    vehicles: [],
+                    pagination: {
+                        total: 0,
+                        page: Number(page),
+                        limit: Number(limit),
+                        totalPages: 0
+                    }
+                };
             }
-          }
-        },
-        tenant: {
-          include: {
-            user: {
-              select: {
-                user_id: true,
-                full_name: true,
-                email: true,
-                phone: true
-              }
-            }
-          }
-        },
-        registration: {
-          select: {
-            registration_id: true,
-            status: true,
-            requested_at: true,
-            approved_at: true,
-            start_date: true,
-            end_date: true,
-            vehicle_type: true,
-            license_plate: true
-          }
-        }
-      }
-    }),
-    prisma.vehicles.count({ where })
-  ]);
 
-  return {
-    vehicles,
-    pagination: {
-      total,
-      page: Number(page),
-      limit: Number(limit),
-      totalPages: Math.ceil(total / Number(limit))
+            tenantWhere.room_tenants_history = {
+                some: {
+                    is_current: true,
+                    room: {
+                        building_id: { in: managerBuildingIds }
+                    }
+                }
+            };
+        }
+
+        // OWNER: có thể filter theo tenant hoặc building
+        if (userRole === "OWNER") {
+            if (tenant_user_id) {
+                where.tenant_user_id = tenant_user_id;
+            }
+
+            if (building_id) {
+                tenantWhere.room_tenants_history = {
+                    some: {
+                        is_current: true,
+                        room: {
+                            building_id: Number(building_id)
+                        }
+                    }
+                };
+            }
+        }
+
+        // GẮN TENANT FILTER 1 LẦN DUY NHẤT
+        if (Object.keys(tenantWhere).length > 0) {
+            where.tenant = tenantWhere;
+        }
+
+        // ===============================
+        // FILTER QUA REGISTRATION
+        // ===============================
+        if (type || license_plate) {
+            where.registration = {};
+
+            if (type) {
+                where.registration.vehicle_type = type;
+            }
+
+            if (license_plate) {
+                where.registration.license_plate = {
+                    contains: license_plate,
+                    mode: "insensitive"
+                };
+            }
+        }
+
+        // ===============================
+        // PAGINATION
+        // ===============================
+        const skip = (Number(page) - 1) * Number(limit);
+
+        // DEBUG (nếu cần)
+        // console.dir(where, { depth: null });
+
+        const [vehicles, total] = await Promise.all([
+            prisma.vehicles.findMany({
+                where,
+                skip,
+                take: Number(limit),
+                orderBy: { registered_at: "desc" },
+                include: {
+                    slot: {
+                        select: {
+                            slot_id: true,
+                            slot_number: true,
+                            slot_type: true,
+                            building_id: true,
+                            building: {
+                                select: {
+                                    name: true
+                                }
+                            }
+                        }
+                    },
+                    tenant: {
+                        include: {
+                            user: {
+                                select: {
+                                    user_id: true,
+                                    full_name: true,
+                                    email: true,
+                                    phone: true
+                                }
+                            }
+                        }
+                    },
+                    registration: {
+                        select: {
+                            registration_id: true,
+                            status: true,
+                            requested_at: true,
+                            approved_at: true,
+                            start_date: true,
+                            end_date: true,
+                            vehicle_type: true,
+                            license_plate: true
+                        }
+                    }
+                }
+            }),
+            prisma.vehicles.count({ where })
+        ]);
+
+        return {
+            vehicles,
+            pagination: {
+                total,
+                page: Number(page),
+                limit: Number(limit),
+                totalPages: Math.ceil(total / Number(limit))
+            }
+        };
     }
-  };
-}
     // Get vehicle by ID
     async getVehicleById(vehicleId, userId, userRole) {
         const vehicle = await prisma.vehicles.findUnique({
@@ -1293,72 +1265,72 @@ console.log("🔥 USING PRISMA CLIENT AT", __filename);
     }
 
     async reactivateVehicle(vehicleId, slotId, reactivatedBy) {
-  return prisma.$transaction(async (tx) => {
+        return prisma.$transaction(async (tx) => {
 
-    const vehicle = await tx.vehicles.findUnique({
-      where: { vehicle_id: vehicleId },
-      include: {
-        registration: true,
-        tenant: {
-          include: {
-            room_tenants_history: {
-              where: { is_current: true },
-              include: {
-                room: { select: { building_id: true } }
-              }
+            const vehicle = await tx.vehicles.findUnique({
+                where: { vehicle_id: vehicleId },
+                include: {
+                    registration: true,
+                    tenant: {
+                        include: {
+                            room_tenants_history: {
+                                where: { is_current: true },
+                                include: {
+                                    room: { select: { building_id: true } }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            if (!vehicle) throw new Error('Vehicle not found');
+            if (vehicle.status !== 'deactivated') {
+                throw new Error('Only deactivated vehicles can be reactivated');
             }
-          }
-        }
-      }
-    });
 
-    if (!vehicle) throw new Error('Vehicle not found');
-    if (vehicle.status !== 'deactivated') {
-      throw new Error('Only deactivated vehicles can be reactivated');
+            const buildingId =
+                vehicle.tenant?.room_tenants_history?.[0]?.room?.building_id;
+
+            if (!buildingId) {
+                throw new Error('Tenant has no active room');
+            }
+
+            if (!slotId) {
+                throw new Error('Parking slot is required');
+            }
+
+            const slot = await tx.parking_slots.findUnique({
+                where: { slot_id: slotId }
+            });
+
+            if (!slot) throw new Error('Parking slot not found');
+            if (!slot.is_available) throw new Error('Parking slot is not available');
+            if (slot.slot_type !== vehicle.registration.vehicle_type) {
+                throw new Error('Parking slot type does not match vehicle type');
+            }
+            if (slot.building_id !== buildingId) {
+                throw new Error('Slot is not in tenant building');
+            }
+
+            await tx.parking_slots.update({
+                where: { slot_id: slot.slot_id },
+                data: { is_available: false }
+            });
+
+            await tx.vehicles.update({
+                where: { vehicle_id: vehicleId },
+                data: {
+                    status: 'active',
+                    slot_id: slot.slot_id,
+                    deactivated_at: null,
+                    deactivated_by: null
+                }
+            });
+
+            return true;
+        });
     }
-
-    const buildingId =
-      vehicle.tenant?.room_tenants_history?.[0]?.room?.building_id;
-
-    if (!buildingId) {
-      throw new Error('Tenant has no active room');
-    }
-
-    if (!slotId) {
-      throw new Error('Parking slot is required');
-    }
-
-    const slot = await tx.parking_slots.findUnique({
-      where: { slot_id: slotId }
-    });
-
-    if (!slot) throw new Error('Parking slot not found');
-    if (!slot.is_available) throw new Error('Parking slot is not available');
-    if (slot.slot_type !== vehicle.registration.vehicle_type) {
-      throw new Error('Parking slot type does not match vehicle type');
-    }
-    if (slot.building_id !== buildingId) {
-      throw new Error('Slot is not in tenant building');
-    }
-
-    await tx.parking_slots.update({
-      where: { slot_id: slot.slot_id },
-      data: { is_available: false }
-    });
-
-    await tx.vehicles.update({
-      where: { vehicle_id: vehicleId },
-      data: {
-        status: 'active',
-        slot_id: slot.slot_id,
-        deactivated_at: null,
-        deactivated_by: null
-      }
-    });
-
-    return true;
-  });
-}
 
 
     //     // ============ BOT METHODS ============

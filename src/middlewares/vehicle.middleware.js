@@ -5,68 +5,48 @@ const Joi = require('joi');
 
 // Schema for creating vehicle registration
 const createVehicleRegistrationSchema = Joi.object({
-    type: Joi.string()
-        .valid('two-wheeler', 'four-wheeler')
-        .required()
-        .messages({
-            'any.only': 'Vehicle type must be one of: two-wheeler, four-wheeler',
-            'any.required': 'Vehicle type is required'
-        }),
+    vehicle_type: Joi.string()
+        .valid('two_wheeler', 'four_wheeler')
+        .required(),
 
     license_plate: Joi.string()
-        .max(50)
-        .required()
         .trim()
-        .messages({
-            'string.empty': 'License plate is required',
-            'string.max': 'License plate cannot exceed 50 characters',
-            'any.required': 'License plate is required'
-        }),
+        .max(50)
+        .required(),
 
     brand: Joi.string()
+        .trim()
         .max(100)
         .optional()
-        .allow(null, '')
-        .messages({
-            'string.max': 'Brand cannot exceed 100 characters'
-        }),
+        .allow(null, ''),
 
     color: Joi.string()
+        .trim()
         .max(50)
         .optional()
-        .allow(null, '')
-        .messages({
-            'string.max': 'Color cannot exceed 50 characters'
-        }),
+        .allow(null, ''),
 
     start_date: Joi.date()
         .iso()
-        .optional()
-        .allow(null)
-        .messages({
-            'date.format': 'Start date must be in ISO format (YYYY-MM-DD)'
-        }),
+        .default(() => new Date()),
 
     end_date: Joi.date()
         .iso()
         .optional()
         .allow(null)
-        .greater(Joi.ref('start_date'))
-        .messages({
-            'date.format': 'End date must be in ISO format (YYYY-MM-DD)',
-            'date.greater': 'End date must be after start date'
-        }),
+        .greater(Joi.ref('start_date')),
 
     note: Joi.string()
+        .trim()
+        .max(500)
         .optional()
         .allow(null, '')
-        .max(500)
-        .messages({
-            'string.max': 'Note cannot exceed 500 characters'
-        })
-}).messages({
-    'object.unknown': 'Unknown field: {{#label}}'
+})
+.options({
+    abortEarly: false,
+    allowUnknown: false
 });
+
 
 // Schema for updating vehicle registration
 const updateVehicleRegistrationSchema = Joi.object({
