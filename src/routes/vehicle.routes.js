@@ -97,6 +97,7 @@ router.post(
 
 router.post(
     '/:id/change-slot',
+    authenticate,
     requireRole(['MANAGER', 'OWNER']),
     validate(changeVehicleSlotSchema),
     vehicleRegistrationController.changeVehicleSlot

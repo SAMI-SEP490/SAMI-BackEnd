@@ -472,6 +472,7 @@ class AuthService {
 
     // Fetch role-specific information based on user's role
     let roleSpecificData = null;
+
     switch (user.role) {
       case "TENANT":
         roleSpecificData = await prisma.tenants.findUnique({
@@ -479,19 +480,33 @@ class AuthService {
           select: {
             user_id: true,
             tenant_since: true,
-            emergency_contact_phone: true,
             id_number: true,
             note: true,
-            rooms: {
+
+            // Lấy thông tin user liên quan (ví dụ: phone, email)
+            user: {
               select: {
-                room_id: true,
-                room_number: true,
-                floor: true,
-                buildings: {
+                phone: true,
+                email: true,
+                full_name: true,
+              },
+            },
+
+            // Phòng đang ở / từng ở (qua bảng trung gian)
+            room_tenants_history: {
+              select: {
+                room: {
                   select: {
-                    building_id: true,
-                    name: true,
-                    address: true,
+                    room_id: true,
+                    room_number: true,
+                    floor: true,
+                    building: {
+                      select: {
+                        building_id: true,
+                        name: true,
+                        address: true,
+                      },
+                    },
                   },
                 },
               },
@@ -502,17 +517,12 @@ class AuthService {
 
       case "MANAGER":
         roleSpecificData = await prisma.building_managers.findFirst({
-          where: {
-            user_id: userId,
-          },
+          where: { user_id: userId },
           select: {
             user_id: true,
             building_id: true,
-            assigned_from: true,
-            assigned_to: true,
             note: true,
             building: {
-              // ❗ tên relation là `building` không phải `buildings`
               select: {
                 building_id: true,
                 name: true,

@@ -886,10 +886,6 @@ class BuildingService {
           version: f.version,
         })) || [],
 
-      created_at: building.created_at,
-      updated_at: building.updated_at,
-    };
-  }
 
   formatManagerResponse(manager) {
         return {
