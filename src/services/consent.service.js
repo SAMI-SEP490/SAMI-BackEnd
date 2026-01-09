@@ -70,15 +70,48 @@ class ConsentService {
 
             // 1. Lấy version hiện tại
             const activeVersion = await this.getActiveVersion(consentType);
-
             if (!activeVersion) {
                 throw new Error(`No active version found for ${consentType}`);
             }
 
-            // 2. Tạo data hash
+            // [MỚI] 2. Lấy trạng thái gần nhất của user với version/hợp đồng này
+            const latestLog = await prisma.consent_logs.findFirst({
+                where: {
+                    user_id: userId,
+                    version_id: activeVersion.version_id,
+                    contract_id: contractId || null, // Quan trọng: check đúng ngữ cảnh hợp đồng
+                },
+                orderBy: {
+                    created_at: 'desc',
+                },
+            });
+
+            const currentStatus = latestLog ? latestLog.action : null;
+
+            // --- KIỂM TRA LOGIC NGHIỆP VỤ ---
+
+            // LOGIC A: Idempotency (Chặn trùng)
+            // Nếu trạng thái mới Y HỆT trạng thái cũ -> Bỏ qua, coi như thành công
+            if (currentStatus === action) {
+                return {
+                    success: true,
+                    message: `Consent is already ${action}. No changes made.`,
+                    logId: latestLog.log_id // Trả về logId cũ
+                };
+            }
+
+            // LOGIC B: Irreversibility (Một chiều)
+            // Nếu đã ACCEPTED thì không được phép REVOKED nữa
+            if (currentStatus === 'ACCEPTED' && action === 'REVOKED') {
+                throw new Error('Cannot revoke consent once accepted. Please use the formal termination process.');
+            }
+
+            // ---------------------------------
+
+            // 3. Tạo data hash (như cũ)
             const dataHash = this.createDataHash(data, activeVersion.content);
 
-            // 3. Lưu vào database
+            // 4. Lưu vào database (như cũ)
             const consentLog = await prisma.consent_logs.create({
                 data: {
                     user_id: userId,
@@ -92,30 +125,13 @@ class ConsentService {
                     session_id: sessionId || null,
                 },
                 include: {
-                    user: {
-                        select: {
-                            user_id: true,
-                            full_name: true,
-                            email: true,
-                            phone: true,
-                        },
-                    },
-                    version: {
-                        select: {
-                            consent_type: true,
-                            version_number: true,
-                        },
-                    },
-                    contract: {
-                        select: {
-                            contract_number: true,
-                            room_id: true,
-                        },
-                    },
+                    user: { select: { user_id: true, full_name: true, email: true, phone: true } },
+                    version: { select: { consent_type: true, version_number: true } },
+                    contract: { select: { contract_number: true, room_id: true } },
                 },
             });
 
-            // 4. Gửi log lên CloudWatch (async, không chờ kết quả)
+            // 5. Gửi log lên CloudWatch (như cũ)
             this.sendToCloudWatch(consentLog, activeVersion).catch(err => {
                 console.error('Failed to send log to CloudWatch:', err.message);
             });
@@ -127,7 +143,7 @@ class ConsentService {
             };
         } catch (error) {
             console.error('❌ Error logging consent:', error);
-            throw error;
+            throw error; // Controller sẽ catch lỗi này và trả về 500/400
         }
     }
 
