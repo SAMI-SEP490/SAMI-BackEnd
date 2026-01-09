@@ -1,5 +1,5 @@
-// Updated: 2025-31-10
-// by: DatNB
+// Updated: 2025-01-10
+// by: DatNB (Fixed by Gemini)
 
 const prisma = require("../config/prisma");
 const NotificationService = require("./notification.service");
@@ -64,7 +64,8 @@ class BuildingService {
       include: {
         building_managers: {
           include: {
-            users: {
+            // [FIX] Sửa 'users' thành 'user' để khớp với schema chuẩn
+            user: {
               select: {
                 user_id: true,
                 full_name: true,
@@ -99,7 +100,6 @@ class BuildingService {
             plan_id: true,
             name: true,
             floor_number: true,
-            version: true,
           },
         },
       },
@@ -108,7 +108,7 @@ class BuildingService {
     if (!building) {
       throw new Error("Building not found");
     }
-    console.log("🔥🔥 RAW BUILDING FROM DB:", building);
+    // console.log("🔥🔥 RAW BUILDING FROM DB:", building);
 
     return this.formatBuildingDetailResponse(building);
   }
@@ -185,11 +185,9 @@ class BuildingService {
     const assignments = await prisma.building_managers.findMany({
       where: {
         user_id: userId,
-        // Kiểm tra assignment còn hạn (assigned_to là null hoặc tương lai)
-        OR: [{ assigned_to: null }, { assigned_to: { gte: new Date() } }],
       },
       include: {
-        buildings: {
+        building: {
           select: {
             building_id: true,
             name: true,
@@ -198,21 +196,17 @@ class BuildingService {
           },
         },
       },
-      orderBy: {
-        assigned_from: "desc",
-      },
     });
 
     // Map data để trả về format gọn gàng
     return assignments.map((a) => ({
       building_id: a.building_id,
-      name: a.buildings.name,
-      address: a.buildings.address,
-      assigned_from: a.assigned_from,
-      assigned_to: a.assigned_to,
-      is_building_active: a.buildings.is_active,
+      name: a.building.name,
+      address: a.building.address,
+      is_building_active: a.building.is_active,
     }));
   }
+
   async updateBuilding(buildingId, data, senderId) {
     const {
       name,
@@ -224,13 +218,11 @@ class BuildingService {
       water_unit_price,
       service_fee,
       bill_due_day,
-
-      // ✅ THÊM 2 FIELD
       max_4_wheel_slot,
       max_2_wheel_slot,
     } = data;
 
-    console.log("🔥🔥🔥 RUNNING updateBuilding WITH DATA:", data);
+    // console.log("🔥🔥🔥 RUNNING updateBuilding WITH DATA:", data);
 
     // 1️⃣ Verify building exists
     const existingBuilding = await prisma.buildings.findUnique({
@@ -422,7 +414,7 @@ class BuildingService {
       );
     }
 
-    console.log("🔥 UPDATED BUILDING:", building);
+    // console.log("🔥 UPDATED BUILDING:", building);
 
     return this.formatBuildingResponse(building);
   }
@@ -552,16 +544,8 @@ class BuildingService {
     // Filter by active status (assigned_to is null or in future)
     if (is_active !== undefined) {
       const isActiveFilter = is_active === "true" || is_active === true;
-      if (isActiveFilter) {
-        where.OR = [
-          { assigned_to: null },
-          { assigned_to: { gte: new Date() } },
-        ];
-      } else {
-        where.assigned_to = { lt: new Date() };
-      }
     }
-    console.log("🔥 RUNNING getBuildingManagers WITH USER INCLUDE");
+    // console.log("🔥 RUNNING getBuildingManagers WITH USER INCLUDE");
 
     const [managers, total] = await Promise.all([
       prisma.building_managers.findMany({
@@ -599,7 +583,7 @@ class BuildingService {
 
   // ASSIGN MANAGER - Gán manager cho tòa nhà
   async assignManager(buildingId, data) {
-    const { user_id, assigned_from, assigned_to, note } = data;
+    const { user_id, note } = data;
 
     // Validate required fields
     if (!user_id) {
@@ -650,31 +634,11 @@ class BuildingService {
       }
     }
 
-    // Validate dates
-    let assignedFromDate = assigned_from ? new Date(assigned_from) : new Date();
-    let assignedToDate = assigned_to ? new Date(assigned_to) : null;
-
-    if (assigned_from && isNaN(assignedFromDate.getTime())) {
-      throw new Error("assigned_from is not a valid date");
-    }
-
-    if (assigned_to) {
-      if (isNaN(assignedToDate.getTime())) {
-        throw new Error("assigned_to is not a valid date");
-      }
-
-      if (assignedToDate <= assignedFromDate) {
-        throw new Error("assigned_to must be after assigned_from");
-      }
-    }
-
     // Create assignment
     const assignment = await prisma.building_managers.create({
       data: {
         user_id: userId,
         building_id: buildingId,
-        assigned_from: assignedFromDate,
-        assigned_to: assignedToDate,
         note: note || null,
       },
       include: {
@@ -689,7 +653,7 @@ class BuildingService {
             role: true,
           },
         },
-        buildings: {
+        building: {
           select: {
             building_id: true,
             name: true,
@@ -703,8 +667,8 @@ class BuildingService {
   }
 
   // UPDATE MANAGER ASSIGNMENT - Cập nhật thông tin assignment
-async updateManagerAssignment(buildingId, userId, data) {
-  const { note } = data;
+  async updateManagerAssignment(buildingId, userId, data) {
+    const { note } = data;
 
   const userIdInt = Number(userId);
   const buildingIdInt = Number(buildingId);
@@ -721,42 +685,9 @@ async updateManagerAssignment(buildingId, userId, data) {
     },
   });
 
-  if (!existingAssignment) {
-    throw new Error("Manager assignment not found for this building");
-  }
-
-  // 2️⃣ Prepare update data
-  const updateData = {};
-
-  if (note !== undefined) {
-    updateData.note = note || null;
-  }
-
-  if (Object.keys(updateData).length === 0) {
-    return this.formatManagerAssignmentResponse({
-      ...existingAssignment,
-      user: await prisma.users.findUnique({
-        where: { user_id: userIdInt },
-        select: {
-          user_id: true,
-          full_name: true,
-          email: true,
-          phone: true,
-          avatar_url: true,
-          status: true,
-          role: true,
-        },
-      }),
-      building: await prisma.buildings.findUnique({
-        where: { building_id: buildingIdInt },
-        select: {
-          building_id: true,
-          name: true,
-          address: true,
-        },
-      }),
-    });
-  }
+    if (note !== undefined) {
+      updateData.note = note || null;
+    }
 
   // 3️⃣ Update assignment
   const updated = await prisma.building_managers.update({
@@ -775,12 +706,12 @@ async updateManagerAssignment(buildingId, userId, data) {
           status: true,
           role: true,
         },
-      },
-      building: {
-        select: {
-          building_id: true,
-          name: true,
-          address: true,
+        building: {
+          select: {
+            building_id: true,
+            name: true,
+            address: true,
+          },
         },
       },
     },
@@ -820,78 +751,6 @@ async updateManagerAssignment(buildingId, userId, data) {
     };
   }
 
-  // STATISTICS - Thống kê tòa nhà
-  async getBuildingById(buildingId) {
-    const building = await prisma.buildings.findUnique({
-      where: {
-        building_id: Number(buildingId), // ✅ ép kiểu an toàn
-      },
-      include: {
-        // ===== MANAGERS =====
-        building_managers: {
-          include: {
-            user: {
-              select: {
-                user_id: true,
-                full_name: true,
-                email: true,
-                phone: true,
-              },
-            },
-          },
-        },
-
-        // ===== ROOMS =====
-        rooms: {
-          where: {
-            is_active: true,
-          },
-          select: {
-            room_id: true,
-            room_number: true,
-            floor: true,
-            size: true,
-            is_active: true,
-          },
-        },
-
-        // ===== REGULATIONS =====
-        regulations: {
-          where: {
-            status: "published",
-          },
-          select: {
-            regulation_id: true,
-            title: true,
-            effective_date: true,
-            version: true, // ✅ field này CÓ trong regulations
-          },
-        },
-
-        // ===== FLOOR PLANS =====
-        floor_plans: {
-          where: {
-            is_published: true,
-          },
-          select: {
-            plan_id: true,
-            name: true,
-            floor_number: true,
-            // ❌ KHÔNG CÓ version → XÓA
-          },
-        },
-      },
-    });
-
-    if (!building) {
-      throw new Error("Building not found");
-    }
-
-    console.log("🔥🔥 RAW BUILDING FROM DB:", building);
-
-    return this.formatBuildingDetailResponse(building);
-  }
-
   // Helper function - Format response
   formatBuildingResponse(building) {
     return {
@@ -915,10 +774,9 @@ async updateManagerAssignment(buildingId, userId, data) {
       managers:
         building.building_managers?.map((m) => ({
           user_id: m.user_id,
-          full_name: m.users?.full_name,
-          email: m.users?.email,
-          assigned_from: m.assigned_from,
-          assigned_to: m.assigned_to,
+          // [FIX] m.users -> m.user
+          full_name: m.user?.full_name || m.users?.full_name,
+          email: m.user?.email || m.users?.email,
         })) || [],
 
       created_at: building.created_at,
@@ -950,7 +808,8 @@ async updateManagerAssignment(buildingId, userId, data) {
       managers:
         building.building_managers?.map((m) => ({
           user_id: m.user_id,
-          full_name: m.users?.full_name,
+          // [FIX] m.users -> m.user
+          full_name: m.user?.full_name || m.users?.full_name,
         })) || [],
 
       created_at: building.created_at,
@@ -959,7 +818,7 @@ async updateManagerAssignment(buildingId, userId, data) {
   }
 
   formatBuildingDetailResponse(building) {
-    console.log("RAW BUILDING FROM DB:", building);
+    // console.log("RAW BUILDING FROM DB:", building);
 
     return {
       building_id: building.building_id,
@@ -980,11 +839,10 @@ async updateManagerAssignment(buildingId, userId, data) {
       managers:
         building.building_managers?.map((m) => ({
           user_id: m.user_id,
-          full_name: m.users?.full_name,
-          email: m.users?.email,
-          phone: m.users?.phone,
-          assigned_from: m.assigned_from,
-          assigned_to: m.assigned_to,
+          // [FIX] dùng m.user do query trên đã sửa thành include user
+          full_name: m.user?.full_name,
+          email: m.user?.email,
+          phone: m.user?.phone,
           note: m.note,
         })) || [],
 
@@ -1009,55 +867,44 @@ async updateManagerAssignment(buildingId, userId, data) {
           plan_id: f.plan_id,
           name: f.name,
           floor_number: f.floor_number,
-          version: f.version,
         })) || [],
-
-      created_at: building.created_at,
-      updated_at: building.updated_at,
-    };
-  }
+    }; // [FIX] Đã đóng ngoặc return object
+  } // [FIX] Đã đóng ngoặc function formatBuildingDetailResponse
 
   formatManagerResponse(manager) {
-    const now = new Date();
-    const isActive = !manager.assigned_to || manager.assigned_to >= now;
-
     return {
       user_id: manager.user_id,
       building_id: manager.building_id,
 
-      // ✅ SỬA Ở ĐÂY
+      // [FIX] manager.user
       full_name: manager.user?.full_name,
       email: manager.user?.email,
       phone: manager.user?.phone,
       avatar_url: manager.user?.avatar_url,
       user_status: manager.user?.status,
       role: manager.user?.role,
-
-      assigned_from: manager.assigned_from,
-      assigned_to: manager.assigned_to,
-      is_active: isActive,
       note: manager.note,
     };
   }
 
   formatManagerAssignmentResponse(assignment) {
-    const now = new Date();
     return {
       user_id: assignment.user_id,
       building_id: assignment.building_id,
-      building_name: assignment.buildings?.name,
-      building_address: assignment.buildings?.address,
+      building_name: assignment.building?.name,
+      building_address: assignment.building?.address,
       manager_info: {
-        full_name: assignment.users?.full_name,
-        email: assignment.users?.email,
-        phone: assignment.users?.phone,
-        avatar_url: assignment.users?.avatar_url,
-        status: assignment.users?.status,
-        role: assignment.users?.role,
+        // [FIX] assignment.users -> assignment.user
+        full_name: assignment.user?.full_name || assignment.users?.full_name,
+        email: assignment.user?.email || assignment.users?.email,
+        phone: assignment.user?.phone || assignment.users?.phone,
+        avatar_url: assignment.user?.avatar_url || assignment.users?.avatar_url,
+        status: assignment.user?.status || assignment.users?.status,
+        role: assignment.user?.role || assignment.users?.role,
       },
       note: assignment.note,
     };
   }
-}
+} // [FIX] Đã đóng ngoặc Class
 
 module.exports = new BuildingService();
