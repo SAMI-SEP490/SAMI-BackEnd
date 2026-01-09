@@ -38,9 +38,141 @@ class FloorPlanService {
     }
   }
 
+  /* =========================================================
+   * RULES (FloorPlan):
+   * 1) Room không được đè lên nhau
+   * 2) Room phải nằm hoàn toàn trong "Tòa nhà" (node type="building")
+   * ========================================================= */
+
+  _pointInPolygon(point, polygon) {
+    // Ray-casting algorithm
+    const { x, y } = point;
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const xi = polygon[i].x,
+        yi = polygon[i].y;
+      const xj = polygon[j].x,
+        yj = polygon[j].y;
+
+      const intersect =
+        yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + 0.0) + xi;
+
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  _rectsOverlap(a, b) {
+    return (
+      a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+    );
+  }
+
+  _getBuildingPolygon(layoutObj) {
+    const nodes = Array.isArray(layoutObj?.nodes) ? layoutObj.nodes : [];
+    const building = nodes.find(
+      (n) => n?.type === "building" && Array.isArray(n?.data?.points)
+    );
+    if (!building) return null;
+
+    const bx = Number(building?.position?.x || 0);
+    const by = Number(building?.position?.y || 0);
+
+    // points là tọa độ tương đối trong node, cộng position để ra tọa độ tuyệt đối
+    const pts = building.data.points.map((p) => ({
+      x: bx + Number(p.x || 0),
+      y: by + Number(p.y || 0),
+    }));
+
+    // an toàn: nếu polygon quá ít điểm
+    if (!pts || pts.length < 3) return null;
+
+    return pts;
+  }
+
+  _getRoomRects(layoutObj) {
+    const nodes = Array.isArray(layoutObj?.nodes) ? layoutObj.nodes : [];
+    const roomNodes = nodes.filter(
+      (n) => n?.type === "block" && n?.data?.icon === "room"
+    );
+
+    return roomNodes.map((n) => {
+      const x = Number(n?.position?.x || 0);
+      const y = Number(n?.position?.y || 0);
+      const w = Number(n?.data?.w || 0);
+      const h = Number(n?.data?.h || 0);
+      const roomNo = String(n?.data?.room_number || "").trim();
+
+      return {
+        id: n?.id,
+        roomNo,
+        x,
+        y,
+        w,
+        h,
+      };
+    });
+  }
+
+  _validateRoomLayoutRules(layoutObj) {
+    const rooms = this._getRoomRects(layoutObj);
+
+    // Không có room thì khỏi check
+    if (!rooms || rooms.length === 0) return;
+
+    const buildingPoly = this._getBuildingPolygon(layoutObj);
+    if (!buildingPoly) {
+      throw new Error(
+        "Vui lòng tạo Tòa nhà (Building) trước khi lưu, vì phòng phải nằm trong tòa nhà."
+      );
+    }
+
+    // 1) Room phải nằm hoàn toàn trong building (4 góc)
+    for (const r of rooms) {
+      if (!r.w || !r.h) {
+        throw new Error(
+          `Phòng ${r.roomNo || "(chưa có số phòng)"} thiếu kích thước (w/h).`
+        );
+      }
+
+      const corners = [
+        { x: r.x, y: r.y },
+        { x: r.x + r.w, y: r.y },
+        { x: r.x + r.w, y: r.y + r.h },
+        { x: r.x, y: r.y + r.h },
+      ];
+
+      const ok = corners.every((pt) => this._pointInPolygon(pt, buildingPoly));
+      if (!ok) {
+        throw new Error(
+          `Phòng ${
+            r.roomNo || "(chưa có số phòng)"
+          } phải nằm hoàn toàn trong tòa nhà.`
+        );
+      }
+    }
+
+    // 2) Room không được overlap nhau
+    for (let i = 0; i < rooms.length; i++) {
+      for (let j = i + 1; j < rooms.length; j++) {
+        const a = rooms[i];
+        const b = rooms[j];
+        if (this._rectsOverlap(a, b)) {
+          throw new Error(
+            `Phòng ${a.roomNo || a.id} đang bị đè lên phòng ${
+              b.roomNo || b.id
+            }. Vui lòng sắp xếp lại.`
+          );
+        }
+      }
+    }
+  }
+
   // Helper: Tạo rooms data từ layout nodes
   extractRoomsFromLayout(layout, buildingId, floorNumber) {
-    if (!layout || !layout.nodes) return [];
+    if (!layout || !Array.isArray(layout.nodes)) return [];
+
+    const nodes = layout.nodes; // ✅ FIX QUAN TRỌNG
 
     const rooms = nodes
       .filter(
@@ -49,38 +181,45 @@ class FloorPlanService {
           (n?.type === "block" && n?.data?.icon === "room")
       )
       .map((node) => {
-        const label =
-          node?.data?.label ||
-          node?.data?.room_number ||
-          node?.data?.roomNumber;
+        const roomNumber = String(
+          node?.data?.room_number ?? node?.data?.label ?? ""
+        ).trim();
 
-        const roomNumber = label ? String(label).trim() : null;
+        if (!roomNumber) return null;
 
-        // size đang là DECIMAL trong Prisma => phải lưu số, không phải "12m2"
-        // (logic cũ của bạn có thể đã normalize trước khi gọi service)
-        const rawSize =
-          node?.data?.size ?? node?.data?.area ?? node?.data?.room_size;
-
+        // size (m²) – FE đang truyền size = 4*3
         let size = null;
-        if (rawSize !== undefined && rawSize !== null && rawSize !== "") {
-          const s = String(rawSize)
-            .replace(",", ".")
-            .match(/(\d+(\.\d+)?)/);
+        if (
+          typeof node?.data?.w === "number" &&
+          typeof node?.data?.h === "number" &&
+          node.data.w > 0 &&
+          node.data.h > 0
+        ) {
+          const wM = node.data.w / 80; // pxPerMeter = 80 (đang hard-code ở FE)
+          const hM = node.data.h / 80;
+          size = Number((wM * hM).toFixed(2));
+        }
+        // FALLBACK: size FE gửi (cũ)
+        else if (node?.data?.size !== undefined && node?.data?.size !== null) {
+          const s = String(node.data.size).match(/(\d+(\.\d+)?)/);
           if (s) size = parseFloat(s[1]);
         }
 
         return {
-          building_id: parseInt(buildingId),
-          floor: parseInt(floorNumber),
+          building_id: Number(buildingId),
+          floor: Number(floorNumber),
           room_number: roomNumber,
-          size: size,
+          size,
           description: node?.data?.description || null,
           status: "available",
           is_active: true,
+          created_at: new Date(),
+          updated_at: new Date(),
         };
-      });
+      })
+      .filter(Boolean);
 
-    return rooms.filter((r) => r.room_number);
+    return rooms;
   }
 
   // NEXT FLOOR - Lấy tầng tiếp theo cần tạo cho building (dựa trên dữ liệu floor_plans)
@@ -221,6 +360,12 @@ class FloorPlanService {
       );
     }
 
+    // ✅ Parse + validate rules (room không đè nhau, room trong building)
+    const layoutObj = this.parseLayout(layout);
+    if (layoutObj) {
+      this._validateRoomLayoutRules(layoutObj);
+    }
+
     // Sử dụng transaction để tạo floor plan và rooms
     return await prisma.$transaction(async (tx) => {
       // 1️⃣ Tạo floor plan
@@ -229,7 +374,7 @@ class FloorPlanService {
           building_id: buildingId,
           name: name?.trim() || null,
           floor_number: floorNum,
-          layout: layout || null,
+          layout: layoutObj || null,
           file_url: file_url?.trim() || null,
           is_published: is_published === true || is_published === "true",
           created_by: createdBy,
@@ -264,20 +409,132 @@ class FloorPlanService {
 
       // 2️⃣ Trích xuất rooms từ layout
       const roomsToCreate = this.extractRoomsFromLayout(
-        layout,
+        layoutObj,
         buildingId,
         floorNum
       );
 
+      // ===== PATCH: prevent duplicate room_number within same building (across all floors) =====
+      if (roomsToCreate.length > 0) {
+        const roomNumbers = roomsToCreate
+          .map((r) => String(r.room_number || "").trim())
+          .filter(Boolean);
+
+        if (roomNumbers.length > 0) {
+          const existed = await tx.rooms.findMany({
+            where: {
+              building_id: buildingId,
+              is_active: true,
+              room_number: { in: roomNumbers },
+            },
+            select: { room_number: true, floor: true },
+          });
+
+          if (existed.length > 0) {
+            const dupList = existed
+              .map((x) => `${x.room_number} (tầng ${x.floor ?? "?"})`)
+              .join(", ");
+            throw new Error(
+              `Số phòng đã tồn tại trong tòa nhà này: ${dupList}. Vui lòng đặt số phòng khác.`
+            );
+          }
+        }
+      }
+
       // 3️⃣ Tạo rooms (nếu có)
       if (roomsToCreate.length > 0) {
+        const roomNumbers = Array.from(
+          new Set(roomsToCreate.map((r) => String(r.room_number).trim()))
+        );
+
+        const existed = await tx.rooms.findMany({
+          where: {
+            building_id: buildingId,
+            is_active: true,
+            room_number: { in: roomNumbers },
+          },
+          select: { room_number: true, floor: true },
+        });
+
+        if (existed.length > 0) {
+          const msg = existed
+            .map((x) => `${x.room_number} (tầng ${x.floor})`)
+            .join(", ");
+          throw new Error(`Số phòng đã tồn tại trong tòa nhà: ${msg}`);
+        }
         await tx.rooms.createMany({
           data: roomsToCreate,
           skipDuplicates: true,
         });
       }
+      // ===== PATCH START: sync room_id back into layout after CREATE =====
+      let finalLayout = layout;
 
-      return this.formatFloorPlanResponse(floorPlan);
+      // Chỉ sync khi layout có nodes
+      if (layout && Array.isArray(layout.nodes) && roomsToCreate.length > 0) {
+        // Lấy lại rooms vừa tạo trong tầng này
+        const createdRooms = await tx.rooms.findMany({
+          where: {
+            building_id: buildingId,
+            floor: floorNum,
+            is_active: true,
+          },
+          select: {
+            room_id: true,
+            room_number: true,
+            size: true,
+          },
+        });
+
+        // Map room_number -> room
+        const roomByNumber = new Map(
+          createdRooms.map((r) => [String(r.room_number).trim(), r])
+        );
+
+        finalLayout = {
+          ...layoutObj,
+          nodes: (layoutObj?.nodes || []).map((node) => {
+            // chỉ xử lý node ROOM
+            if (
+              (node.type === "room" ||
+                (node.type === "block" && node.data?.icon === "room")) &&
+              node.data?.room_number
+            ) {
+              const key = String(node.data.room_number).trim();
+              const matchedRoom = roomByNumber.get(key);
+
+              if (!matchedRoom) return node;
+
+              return {
+                ...node,
+                data: {
+                  ...node.data,
+                  room_id: matchedRoom.room_id,
+                  size: node.data.size ?? matchedRoom.size ?? null,
+                },
+              };
+            }
+
+            // các node khác giữ nguyên
+            return node;
+          }),
+        };
+
+        // Update lại layout đã gắn room_id
+        await tx.floor_plans.update({
+          where: { plan_id: floorPlan.plan_id },
+          data: {
+            layout: finalLayout,
+            updated_at: new Date(),
+          },
+        });
+      }
+      // ===== PATCH END =====
+
+      return this.formatFloorPlanResponse({
+        ...floorPlan,
+        layout: finalLayout ?? floorPlan.layout,
+      });
     });
   }
 
@@ -303,7 +560,27 @@ class FloorPlanService {
     // ✅ Enrich layout: attach room_id from DB
     const layoutObj = floorPlan.layout || {};
     const nodes = Array.isArray(layoutObj.nodes) ? layoutObj.nodes : [];
+    const normalizeRoomSize = (raw) => {
+      if (raw === undefined || raw === null || raw === "") return null;
+      if (typeof raw === "number" && Number.isFinite(raw)) return raw;
 
+      const str = String(raw).trim().toLowerCase().replace("m²", "m2");
+
+      // "5x3" hoặc "5 x 3" hoặc "5*3"
+      const expr = str.match(/(\d+(\.\d+)?)\s*(x|\*)\s*(\d+(\.\d+)?)/);
+      if (expr) {
+        const a = parseFloat(expr[1]);
+        const b = parseFloat(expr[4]);
+        if (Number.isFinite(a) && Number.isFinite(b)) return a * b;
+      }
+
+      // "15m2" / "15"
+      const num = str.match(/(\d+(\.\d+)?)/);
+      if (!num) return null;
+
+      const val = parseFloat(num[1]);
+      return Number.isFinite(val) ? val : null;
+    };
     // Lấy rooms theo building + floor
     const rooms = await prisma.rooms.findMany({
       where: {
@@ -348,7 +625,7 @@ class FloorPlanService {
       floor_number,
       is_published,
       page = 1,
-      limit = 20,
+      limit = 10,
     } = filters;
 
     const skip = (page - 1) * limit;
@@ -440,7 +717,7 @@ class FloorPlanService {
 
   // READ - Lấy floor plans theo building
   async getFloorPlansByBuilding(buildingId, filters = {}, userId, userRole) {
-    const { floor_number, is_published, page = 1, limit = 20 } = filters;
+    const { floor_number, is_published, page = 1, limit = 10 } = filters;
 
     // Kiểm tra quyền truy cập building
     if (userRole === "MANAGER") {
@@ -568,19 +845,56 @@ class FloorPlanService {
       let finalLayout = undefined;
 
       if (layout !== undefined) {
-        const layoutObj = layout || {};
+        const layoutObj = this.parseLayout(layout) || {};
+
+        // ✅ Validate rules (room không đè nhau, room trong building)
+        this._validateRoomLayoutRules(layoutObj);
+
         const nodes = Array.isArray(layoutObj.nodes) ? layoutObj.nodes : [];
+        // ✅ Helper: normalize size về số (DECIMAL) để lưu DB
+        const normalizeSizeFromNode = (node) => {
+          // Ưu tiên nếu FE có nhập dài/rộng riêng
+          const rawLength =
+            node?.data?.length ?? node?.data?.room_length ?? node?.data?.dai;
+          const rawWidth =
+            node?.data?.width ?? node?.data?.room_width ?? node?.data?.rong;
+
+          const toNumber = (v) => {
+            if (v === undefined || v === null || v === "") return null;
+            if (typeof v === "number") return Number.isFinite(v) ? v : null;
+            const m = String(v)
+              .replace(",", ".")
+              .match(/(\d+(\.\d+)?)/);
+            return m ? parseFloat(m[1]) : null;
+          };
+
+          const L = toNumber(rawLength);
+          const W = toNumber(rawWidth);
+
+          // Nếu có dài & rộng => size = L*W
+          if (L !== null && W !== null) return L * W;
+
+          // Nếu không có dài/rộng thì dùng size FE gửi (có thể là "15", "15m2", ...)
+          const rawSize =
+            node?.data?.size ?? node?.data?.area ?? node?.data?.room_size;
+          const S = toNumber(rawSize);
+          return S;
+        };
 
         // 1) Extract rooms from layout
         let layoutRooms = nodes
-          .map((n) => ({
-            __nodeRef: n,
-            room_id: n?.data?.room_id ? parseInt(n.data.room_id) : null,
-            room_number: String(n?.data?.room_number ?? "").trim(),
-            size: n?.data?.size ?? null,
-            floor: existingPlan.floor_number,
-            building_id: existingPlan.building_id,
-          }))
+          .map((n) => {
+            const computedSize = normalizeSizeFromNode(n);
+
+            return {
+              __nodeRef: n,
+              room_id: n?.data?.room_id ? parseInt(n.data.room_id) : null,
+              room_number: String(n?.data?.room_number ?? "").trim(),
+              size: computedSize,
+              floor: existingPlan.floor_number,
+              building_id: existingPlan.building_id,
+            };
+          })
           .filter((x) => x.room_number);
 
         // 2) Rooms in DB
@@ -1015,29 +1329,29 @@ class FloorPlanService {
   }
 
   async checkFloorPlanAccess(userId, role, floorPlanId) {
-  if (!userId || !floorPlanId) return false;
+    if (!userId || !floorPlanId) return false;
 
-  const normalizedRole = String(role || "").toUpperCase();
+    const normalizedRole = String(role || "").toUpperCase();
 
-  // Owner toàn quyền
-  if (normalizedRole === "OWNER") return true;
+    // Owner toàn quyền
+    if (normalizedRole === "OWNER") return true;
 
-  const planId = parseInt(floorPlanId);
-  if (isNaN(planId)) return false;
+    const planId = parseInt(floorPlanId);
+    if (isNaN(planId)) return false;
 
-  const floorPlan = await prisma.floor_plans.findUnique({
-    where: { plan_id: planId },
-    select: { building_id: true },
-  });
+    const floorPlan = await prisma.floor_plans.findUnique({
+      where: { plan_id: planId },
+      select: { building_id: true },
+    });
 
-  if (!floorPlan || !floorPlan.building_id) return false;
+    if (!floorPlan || !floorPlan.building_id) return false;
 
-  return this.checkBuildingAccess(
-    userId,
-    normalizedRole,
-    floorPlan.building_id
-  );
-}
+    return this.checkBuildingAccess(
+      userId,
+      normalizedRole,
+      floorPlan.building_id
+    );
+  }
 
   // Helper functions - Format response
   formatFloorPlanResponse(floorPlan) {

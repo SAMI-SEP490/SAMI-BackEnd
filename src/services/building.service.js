@@ -213,8 +213,6 @@ class BuildingService {
       is_building_active: a.buildings.is_active,
     }));
   }
-  // UPDATE - Cập nhật thông tin tòa nhà
-  // UPDATE - Cập nhật thông tin tòa nhà
   async updateBuilding(buildingId, data, senderId) {
     const {
       name,
@@ -226,8 +224,14 @@ class BuildingService {
       water_unit_price,
       service_fee,
       bill_due_day,
+
+      // ✅ THÊM 2 FIELD
+      max_4_wheel_slot,
+      max_2_wheel_slot,
     } = data;
+
     console.log("🔥🔥🔥 RUNNING updateBuilding WITH DATA:", data);
+
     // 1️⃣ Verify building exists
     const existingBuilding = await prisma.buildings.findUnique({
       where: { building_id: buildingId },
@@ -364,6 +368,32 @@ class BuildingService {
       updateData.bill_due_day = newValue;
     }
 
+    // ✅ MAX 4-WHEEL SLOT
+    if (max_4_wheel_slot !== undefined) {
+      if (max_4_wheel_slot === "" || max_4_wheel_slot === null) {
+        updateData.max_4_wheel_slot = null;
+      } else {
+        const value = parseInt(max_4_wheel_slot);
+        if (isNaN(value) || value < 0) {
+          throw new Error("max_4_wheel_slot must be a non-negative integer");
+        }
+        updateData.max_4_wheel_slot = value;
+      }
+    }
+
+    // ✅ MAX 2-WHEEL SLOT
+    if (max_2_wheel_slot !== undefined) {
+      if (max_2_wheel_slot === "" || max_2_wheel_slot === null) {
+        updateData.max_2_wheel_slot = null;
+      } else {
+        const value = parseInt(max_2_wheel_slot);
+        if (isNaN(value) || value < 0) {
+          throw new Error("max_2_wheel_slot must be a non-negative integer");
+        }
+        updateData.max_2_wheel_slot = value;
+      }
+    }
+
     // Active status
     if (is_active !== undefined) {
       updateData.is_active = is_active === true || is_active === "true";
@@ -391,6 +421,7 @@ class BuildingService {
         }
       );
     }
+
     console.log("🔥 UPDATED BUILDING:", building);
 
     return this.formatBuildingResponse(building);
@@ -550,7 +581,7 @@ class BuildingService {
         },
         skip,
         take: limit,
-        orderBy: { assigned_from: "desc" },
+        orderBy: { manager_id: "desc" },
       }),
       prisma.building_managers.count({ where }),
     ]);
@@ -791,76 +822,75 @@ class BuildingService {
   }
 
   // STATISTICS - Thống kê tòa nhà
-  async getBuildingStatistics(buildingId) {
+  async getBuildingById(buildingId) {
     const building = await prisma.buildings.findUnique({
-      where: { building_id: buildingId },
+      where: {
+        building_id: Number(buildingId), // ✅ ép kiểu an toàn
+      },
+      include: {
+        // ===== MANAGERS =====
+        building_managers: {
+          include: {
+            user: {
+              select: {
+                user_id: true,
+                full_name: true,
+                email: true,
+                phone: true,
+              },
+            },
+          },
+        },
+
+        // ===== ROOMS =====
+        rooms: {
+          where: {
+            is_active: true,
+          },
+          select: {
+            room_id: true,
+            room_number: true,
+            floor: true,
+            size: true,
+            is_active: true,
+          },
+        },
+
+        // ===== REGULATIONS =====
+        regulations: {
+          where: {
+            status: "published",
+          },
+          select: {
+            regulation_id: true,
+            title: true,
+            effective_date: true,
+            version: true, // ✅ field này CÓ trong regulations
+          },
+        },
+
+        // ===== FLOOR PLANS =====
+        floor_plans: {
+          where: {
+            is_published: true,
+          },
+          select: {
+            plan_id: true,
+            name: true,
+            floor_number: true,
+            // ❌ KHÔNG CÓ version → XÓA
+          },
+        },
+      },
     });
 
     if (!building) {
       throw new Error("Building not found");
     }
 
-    const [
-      totalRooms,
-      activeRooms,
-      occupiedRooms,
-      totalManagers,
-      activeContracts,
-      pendingMaintenance,
-    ] = await Promise.all([
-      prisma.rooms.count({
-        where: { building_id: buildingId },
-      }),
-      prisma.rooms.count({
-        where: {
-          building_id: buildingId,
-          is_active: true,
-        },
-      }),
-      prisma.rooms.count({
-        where: {
-          building_id: buildingId,
-          is_active: true,
-          tenants: {
-            some: {},
-          },
-        },
-      }),
-      prisma.building_managers.count({
-        where: { building_id: buildingId },
-      }),
-      prisma.contracts.count({
-        where: {
-          rooms: {
-            building_id: buildingId,
-          },
-          status: "active",
-          deleted_at: null,
-        },
-      }),
-      prisma.maintenance_requests.count({
-        where: {
-          rooms: {
-            building_id: buildingId,
-          },
-          status: "pending",
-        },
-      }),
-    ]);
+    console.log("🔥🔥 RAW BUILDING FROM DB:", building);
 
-    return {
-      building_id: buildingId,
-      building_name: building.name,
-      total_rooms: totalRooms,
-      active_rooms: activeRooms,
-      occupied_rooms: occupiedRooms,
-      vacant_rooms: activeRooms - occupiedRooms,
-      occupancy_rate:
-        activeRooms > 0 ? ((occupiedRooms / activeRooms) * 100).toFixed(2) : 0,
-      total_managers: totalManagers,
-      active_contracts: activeContracts,
-      pending_maintenance: pendingMaintenance,
-    };
+    return this.formatBuildingDetailResponse(building);
   }
 
   // Helper function - Format response
@@ -878,6 +908,10 @@ class BuildingService {
       water_unit_price: building.water_unit_price,
       service_fee: building.service_fee,
       bill_due_day: building.bill_due_day,
+
+      // 🚗 Bãi xe (THÊM MỚI)
+      max_4_wheel_slot: building.max_4_wheel_slot,
+      max_2_wheel_slot: building.max_2_wheel_slot,
 
       managers:
         building.building_managers?.map((m) => ({
@@ -936,9 +970,13 @@ class BuildingService {
       total_area: building.total_area,
       is_active: building.is_active,
 
-      // ✅ THÊM 2 FIELD Ở ĐÂY
+      // ✅ GIÁ ĐIỆN / NƯỚC
       electric_unit_price: building.electric_unit_price,
       water_unit_price: building.water_unit_price,
+
+      // ✅ THÊM 2 FIELD BÃI XE (MỚI)
+      max_4_wheel_slot: building.max_4_wheel_slot,
+      max_2_wheel_slot: building.max_2_wheel_slot,
 
       managers:
         building.building_managers?.map((m) => ({

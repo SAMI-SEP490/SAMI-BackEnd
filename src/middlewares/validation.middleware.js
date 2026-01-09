@@ -1,4 +1,4 @@
-// Updated: 2025-07-11
+// Updated: 2026-01-04
 // by: DatNB & MinhBH
 
 
@@ -184,17 +184,31 @@ const createPaymentSchema = z.object({
     ).min(1, { message: 'billIds must be a non-empty array' })
 });
 
+const serviceChargeSchema = z.object({
+    service_type: z.string().min(1, "Service type is required"), // e.g., "Electricity"
+    quantity: z.number().nonnegative().optional().default(1),
+    unit_price: z.number().nonnegative().optional(),
+    amount: z.number().nonnegative({ message: "Amount cannot be negative" }),
+    description: z.string().optional()
+});
+
 const baseBillSchema = z.object({
+    contract_id: z.preprocess((val) => {
+        if (typeof val === 'string' && val.trim() !== '') return Number(val);
+        return val;
+    }, z.number().int().positive({ message: 'contract_id must be a positive integer' })).optional(),
+
     tenant_user_id: z.preprocess((val) => {
         if (typeof val === 'string' && val.trim() !== '') return Number(val);
         return val;
     }, z.number().int().positive({ message: 'tenant_user_id must be a positive integer' })).optional(),
     
-    room_id: z.preprocess((val) => {
-        if (typeof val === 'string' && val.trim() !== '') return Number(val);
-        return val;
-    }, z.number().int().positive({ message: 'room_id must be a positive integer' })).optional(),
-    
+    // Validate Bill Type
+    bill_type: z.enum([
+        'monthly_rent', 'utilities', 'maintenance', 
+        'penalty', 'deposit', 'other'
+    ]).optional(),
+
     total_amount: z.preprocess((val) => {
         if (typeof val === 'string' && val.trim() !== '') return Number(val);
         return val;
@@ -210,54 +224,71 @@ const baseBillSchema = z.object({
         return val;
     }, z.number().nonnegative({ message: 'penalty_amount cannot be negative' })).optional(),
     
-    status: z.enum(['draft', 'issued']).optional()
+    status: z.enum(['draft', 'issued']).optional(),
+
+    // [NEW] Allow array of service charges
+    service_charges: z.array(serviceChargeSchema).optional()
 });
 
-// We can just use the partial base schema, as a draft can be very empty.
+// [UPDATED] Draft Schema
 const createDraftBillSchema = baseBillSchema.partial();
 
+// [UPDATED] Issued Schema
 const createIssuedBillSchema = baseBillSchema.required({
+    contract_id: true, // Now required to link to contract
     tenant_user_id: true,
-    room_id: true,
     total_amount: true,
-    description: true,
+    bill_type: true,   // Now required
     billing_period_start: true,
     billing_period_end: true,
     due_date: true,
 }).refine(data => new Date(data.billing_period_start) < new Date(data.billing_period_end), {
     message: "Billing end date must be after start date",
     path: ["billing_period_end"],
-}).refine(data => new Date(data.billing_period_end) < new Date(data.due_date), {
-    message: "Due date must be after billing end date",
+}).refine(data => new Date(data.billing_period_end) <= new Date(data.due_date), {
+    message: "Due date must be after or equal to billing end date",
     path: ["due_date"],
 });
 
+// Update Draft Logic
 const updateDraftBillSchema = baseBillSchema.partial().superRefine((data, ctx) => {
     if (data.status === 'issued') {
-        // If they try to "publish" the draft, it must have all required fields.
-        // We're checking the data *being sent*. The service layer must check the *final merged* data.
-        if (data.tenant_user_id === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "tenant_user_id is required to publish", path: ["tenant_user_id"] });
-        if (data.room_id === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "room_id is required to publish", path: ["room_id"] });
-        if (data.total_amount === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "total_amount is required to publish", path: ["total_amount"] });
-        if (data.description === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "description is required to publish", path: ["description"] });
-        if (data.billing_period_start === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "billing_period_start is required to publish", path: ["billing_period_start"] });
-        if (data.billing_period_end === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "billing_period_end is required to publish", path: ["billing_period_end"] });
-        if (data.due_date === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "due_date is required to publish", path: ["due_date"] });
+        // Validation logic for Publishing
+        if (!data.contract_id) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "contract_id is required to publish", path: ["contract_id"] });
+        if (!data.tenant_user_id) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "tenant_user_id is required to publish", path: ["tenant_user_id"] });
+        if (!data.total_amount) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "total_amount is required to publish", path: ["total_amount"] });
+        if (!data.bill_type) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "bill_type is required to publish", path: ["bill_type"] });
+        if (!data.billing_period_start) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "billing_period_start is required to publish", path: ["billing_period_start"] });
+        if (!data.billing_period_end) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "billing_period_end is required to publish", path: ["billing_period_end"] });
+        if (!data.due_date) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "due_date is required to publish", path: ["due_date"] });
     }
 });
 
 const updateIssuedBillSchema = baseBillSchema.partial().omit({
+    // 🚫 FORBIDDEN FIELDS (Immutable once issued)
     tenant_user_id: true,
-    room_id: true,
+    contract_id: true,     // Cannot re-assign to another contract
+    bill_type: true,       // Cannot change Rent to Utility
     billing_period_start: true,
     billing_period_end: true,
+
+    // 💰 FINANCIAL INTEGRITY
+    total_amount: true,    // Cannot change the total
+    service_charges: true, // Cannot change line items
 }).extend({
+    // ✅ ALLOWED FIELDS
     status: z.enum([
         'issued',
         'overdue',
         'paid',
-        'partially_paid'
-    ]).optional()
+        'partially_paid',
+        'cancelled'
+    ]).optional(),
+
+    // Allow updating due_date (for extensions) and notes
+    due_date: z.string().datetime().optional(),
+    description: z.string().max(255).optional(),
+    note: z.string().optional()
 });
 
 // Schema for Manager/Owner sending a notification

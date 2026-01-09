@@ -32,6 +32,7 @@ enum addendum_status {
   draft
   pending_approval
   approved
+  expired
   rejected
 }
 
@@ -43,10 +44,11 @@ enum ConsentAction {
 
 enum addendum_type {
   extension
-  rent_change
+  rent_adjustment
+  deposit_adjustment
+  payment_terms_change
   early_termination
-  general
-  other
+  general_amendment
 }
 
 enum bill_status {
@@ -338,6 +340,7 @@ model rooms {
   room_number         String       @db.VarChar(50)
   floor               Int?
   size                Decimal?     @db.Decimal(10, 2) // Area in square meters
+  max_occupants       Int?
   max_tenants         Int?         @default(1)
   current_contract_id Int?         @unique
   status              room_status? @default(available)
@@ -431,14 +434,16 @@ model contract_addendums {
   addendum_type   addendum_type
   status          addendum_status
 
-  file_name String? @db.VarChar(255)
-  s3_key    String? @db.VarChar(500)
-  checksum  String? @db.VarChar(255)
+  file_name   String?   @db.VarChar(255)
+  s3_key      String?   @db.VarChar(500)
+  checksum    String?   @db.VarChar(255)
+  uploaded_at DateTime? @db.Timestamp(6)
 
-  file_url         String
   effective_from   DateTime?
   effective_to     DateTime?
   changes_snapshot Json?
+
+  note String? @db.Text
 
   created_by Int
 
@@ -662,7 +667,7 @@ model vehicle_registrations {
 model vehicles {
   vehicle_id      Int             @id @default(autoincrement())
   registration_id Int             @unique
-  license_plate   String?   @db.VarChar(20)
+  license_plate   String?         @db.VarChar(20)
   tenant_user_id  Int
   slot_id         Int?
   status          vehicle_status? @default(active)
@@ -674,7 +679,7 @@ model vehicles {
 
   registration vehicle_registrations @relation(fields: [registration_id], references: [registration_id])
   tenant       tenants               @relation("VehicleTenant", fields: [tenant_user_id], references: [user_id], onDelete: Cascade)
-  slot         parking_slots?         @relation(fields: [slot_id], references: [slot_id])
+  slot         parking_slots?        @relation(fields: [slot_id], references: [slot_id])
   deactivator  users?                @relation("VehicleDeactivatedBy", fields: [deactivated_by], references: [user_id])
 
   @@index([tenant_user_id], map: "idx_vehicles_tenant_user_id")
