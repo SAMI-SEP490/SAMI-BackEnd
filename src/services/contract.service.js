@@ -1232,7 +1232,56 @@ class ContractService {
       throw new Error(`Failed to download contract file: ${error.message}`);
     }
   }
+  async findPendingActionContract(tenantUserId) {
+    if (!tenantUserId) return null;
 
+    // Tìm hợp đồng thuộc về user này và có trạng thái "treo"
+    const contract = await prisma.contracts.findFirst({
+      where: {
+        tenant_user_id: tenantUserId,
+        status: {
+          in: [
+            CONTRACT_STATUS.PENDING,
+            CONTRACT_STATUS.REQUESTED_TERMINATION
+          ],
+        },
+        deleted_at: null,
+      },
+      include: {
+        room_history: {
+          include: {
+            building: {
+              select: { name: true, address: true }
+            }
+          }
+        },
+
+      },
+      orderBy: {
+        updated_at: 'desc', // Lấy cái mới nhất cần xử lý
+      },
+    });
+
+    if (!contract) return null;
+
+    // Format lại dữ liệu gọn gàng để trả về cho App hiển thị Popup
+    return {
+      contract_id: contract.contract_id,
+      contract_number: contract.contract_number,
+      status: contract.status,
+      action_type: contract.status === CONTRACT_STATUS.PENDING ? 'SIGN_NEW' : 'APPROVE_TERMINATION',
+      room_info: {
+        room_number: contract.room_history?.room_number,
+        building_name: contract.room_history?.building?.name,
+        address: contract.room_history?.building?.address
+      },
+      dates: {
+        start_date: contract.start_date,
+        end_date: contract.end_date
+      },
+      note: contract.note // Lý do hủy thường nằm trong note
+    };
+  }
   // ============================================
   // PROCESS CONTRACT WITH AI
   // ============================================
@@ -1489,6 +1538,7 @@ class ContractService {
 
     return {
       contract_id: contract.contract_id,
+      contract_number: contract.contract_number,
       building_id: building?.building_id || room?.building_id || null,
       building_name: building?.name || null,
       room_id: contract.room_id,
