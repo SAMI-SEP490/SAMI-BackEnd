@@ -31,6 +31,11 @@ router.get('/',
     contractController.getContracts
 );
 
+router.get('/pending-action',
+    requireRole(['tenant']),
+    contractController.getPendingActionForTenant
+);
+
 router.get('/:id',
     requireRole(['owner', 'manager', 'tenant']),
     validateContractId,

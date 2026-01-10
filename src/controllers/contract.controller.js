@@ -40,8 +40,8 @@ class ContractController {
             }
 
             // [UPDATED] Lấy IP và User Agent để ghi log bằng chứng Consent
-            const ipAddress = req.ip || req.socket.remoteAddress;
-            const userAgent = req.headers['user-agent'];
+            const userAgent = req.headers['x-device-info'] || req.headers['user-agent'];
+            const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
             const contract = await contractService.approveContract(
                 parseInt(id),
@@ -158,8 +158,8 @@ class ContractController {
             }
 
             // [UPDATED] Lấy IP và User Agent cho log Termination Consent
-            const ipAddress = req.ip || req.socket.remoteAddress;
-            const userAgent = req.headers['user-agent'];
+            const userAgent = req.headers['x-device-info'] || req.headers['user-agent'];
+            const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
             const contract = await contractService.handleTerminationRequest(
                 parseInt(id),
@@ -258,7 +258,32 @@ class ContractController {
         }
     }
 
+    async getPendingActionForTenant(req, res, next) {
+        try {
+            // req.user được giải mã từ middleware authenticate
+            const userId = req.user.user_id;
 
+            if (!userId) {
+                return res.status(400).json({
+                    success: false,
+                    message: "User context not found."
+                });
+            }
+
+            const pendingContract = await contractService.findPendingActionContract(userId);
+
+            res.json({
+                success: true,
+                has_pending_action: !!pendingContract,
+                data: pendingContract,
+                message: pendingContract
+                    ? "Bạn có hợp đồng cần xử lý."
+                    : "Không có yêu cầu nào."
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
     // 13. AI Processing (Vẫn dùng single file)
     async processContractWithAI(req, res, next) {
         try {
