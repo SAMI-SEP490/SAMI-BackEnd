@@ -61,15 +61,14 @@ class ContractAddendumService {
             throw new Error('Invalid changes format. Must be valid JSON object');
         }
 
-        if (addendum_type !== 'early_termination') {
-            await this._validateOverlap(
-                contract, // Pass full contract to get contract end_date
-                addendum_type,
-                parsedChanges,
-                effective_from,
-                effective_to
-            );
-        }
+        await this._validateOverlap(
+            contract,
+            addendum_type,
+            parsedChanges,
+            effective_from,
+            effective_to
+        );
+
         // Get the next addendum number
         const latestAddendum = await prisma.contract_addendums.findFirst({
             where: { contract_id: contractId },
@@ -123,6 +122,30 @@ class ContractAddendumService {
                 where: { building_id: addendum.contract.room_history.building_id }
             });
             addendum.contract.room_history.building = building;
+        }
+
+        // [NEW] GỬI EMAIL THÔNG BÁO CHO TENANT
+        try {
+            const tenantUser = addendum.contract.tenant?.user;
+            if (tenantUser?.email) {
+                // Link deep link hoặc web link
+                const actionUrl = `${FRONTEND_URL}/contracts/${contractId}/addendums/${addendum.addendum_id}`;
+
+                await emailService.sendAddendumApprovalEmail(
+                    tenantUser.email,
+                    tenantUser.full_name,
+                    {
+                        type: addendum.addendum_type,
+                        contractNumber: addendum.contract.contract_number,
+                        effectiveDate: addendum.effective_from || new Date()
+                    },
+                    actionUrl
+                );
+                console.log(`📧 Addendum approval email sent to ${tenantUser.email}`);
+            }
+        } catch (emailError) {
+            console.error("❌ Failed to send addendum email:", emailError.message);
+            // Không throw error để tránh revert transaction tạo addendum
         }
 
         return this.formatAddendumResponse(addendum);
@@ -289,7 +312,7 @@ class ContractAddendumService {
     }
 
     // APPROVE - Tenant duyệt phụ lục (Apply changes to contract)
-    async approveAddendum(addendumId, currentUser) {
+    async approveAddendum(addendumId, currentUser, ipAddress = null, userAgent = null) {
         // Validate addendum exists and is pending_approval
         const addendum = await prisma.contract_addendums.findUnique({
             where: { addendum_id: addendumId },
@@ -325,7 +348,21 @@ class ContractAddendumService {
         if (addendum.status !== 'pending_approval') {
             throw new Error(`Addendum cannot be approved. Current status: ${addendum.status}`);
         }
-
+        try {
+            await consentService.logConsent({
+                userId: currentUser.user_id,
+                contractId: addendum.contract_id,
+                addendumId: addendum.addendum_id, // Link to specific addendum
+                consentType: 'CONTRACT_ADDENDUM', // Enum ConsentType
+                action: 'ACCEPTED',               // Enum ConsentAction
+                ipAddress: ipAddress || "unknown",
+                deviceInfo: userAgent || "unknown",
+            });
+        } catch (error) {
+            console.error("Failed to log consent:", error.message);
+            // Tùy chọn: throw error nếu yêu cầu bắt buộc phải log thành công mới cho duyệt
+            throw new Error(`Cannot approve addendum: Failed to log consent - ${error.message}`);
+        }
         // Parse changes_snapshot
         let changesData = {};
         if (addendum.changes_snapshot) {
@@ -449,7 +486,7 @@ class ContractAddendumService {
     }
 
     // REJECT - Tenant từ chối phụ lục
-    async rejectAddendum(addendumId, reason = '', currentUser) {
+    async rejectAddendum(addendumId, reason = '', currentUser, ipAddress = null, userAgent = null) {
         // Validate addendum exists and is pending_approval
         const addendum = await prisma.contract_addendums.findUnique({
             where: { addendum_id: addendumId },
@@ -472,7 +509,19 @@ class ContractAddendumService {
         if (addendum.status !== 'pending_approval') {
             throw new Error(`Addendum cannot be rejected. Current status: ${addendum.status}`);
         }
-
+        try {
+            await consentService.logConsent({
+                userId: currentUser.user_id,
+                contractId: addendum.contract_id,
+                addendumId: addendum.addendum_id,
+                consentType: 'CONTRACT_ADDENDUM',
+                action: 'REVOKED', // Dùng REVOKED để biểu thị việc từ chối ký
+                ipAddress: ipAddress || "unknown",
+                deviceInfo: userAgent || "unknown",
+            });
+        } catch (error) {
+            console.error("Failed to log rejection consent:", error.message);
+        }
         // Update addendum status to rejected (do NOT update contract)
         const rejectedAddendum = await prisma.contract_addendums.update({
             where: { addendum_id: addendumId },
@@ -537,19 +586,35 @@ class ContractAddendumService {
             throw new Error('Cannot update addendum for non-active contract');
         }
 
-        if (newType !== 'early_termination') {
-            // Need contract for end_date fallback
-            const contract = await prisma.contracts.findUnique({where: {contract_id: existingAddendum.contract_id}});
+        const newType = addendum_type || existingAddendum.addendum_type;
+        const newStart = effective_from || existingAddendum.effective_from;
+        const newEnd = effective_to || existingAddendum.effective_to;
 
-            await this._validateOverlap(
-                contract,
-                newType,
-                newChanges,
-                newStart,
-                newEnd,
-                addendumId // Exclude self
-            );
+        let newChanges = existingAddendum.changes_snapshot;
+        if (changes !== undefined) {
+            if (changes === null) newChanges = null;
+            else {
+                try {
+                    newChanges = typeof changes === 'string' ? JSON.parse(changes) : changes;
+                } catch (error) { throw new Error('Invalid changes format'); }
+            }
         }
+
+        // [QUAN TRỌNG] Validate Logic & Overlap với giá trị mới tính toán được
+        if (newType && newChanges) {
+            this._validateAddendumTypeAndChanges(newType, newChanges);
+        }
+
+        // Gọi validate overlap (trừ chính nó ra - excludeId)
+        await this._validateOverlap(
+            existingAddendum.contract,
+            newType,
+            newChanges,
+            newStart,
+            newEnd,
+            addendumId
+        );
+
         // Prepare update data
         const updateData = { updated_at: new Date() };
 
@@ -962,7 +1027,7 @@ class ContractAddendumService {
                 if (!hasValidKey) throw new Error('Payment terms change must include cycle or penalty rate');
                 break;
 
-            // early_termination thường không cần changes JSON phức tạp, hoặc chỉ cần ngày termination
+
         }
     }
     async _validateOverlap(contract, newType, newChanges, newStart, newEnd, excludeId = null) {
@@ -984,7 +1049,6 @@ class ContractAddendumService {
             where: {
                 contract_id: contract.contract_id,
                 status: { in: ['approved', 'pending_approval'] },
-                addendum_type: { not: 'early_termination' },
                 addendum_id: excludeId ? { not: excludeId } : undefined
             }
         });
