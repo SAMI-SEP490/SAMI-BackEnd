@@ -87,9 +87,16 @@ class ContractAddendumController {
     async approveAddendum(req, res, next) {
         try {
             const { id } = req.params;
+
+            // [UPDATED] Lấy IP và User Agent để ghi log bằng chứng Consent
+            const userAgent = req.headers['x-device-info'] || req.headers['user-agent'];
+            const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
             const result = await contractAddendumService.approveAddendum(
                 parseInt(id),
-                req.user
+                req.user,
+                ipAddress,
+                userAgent
             );
 
             res.json({
@@ -107,10 +114,16 @@ class ContractAddendumController {
         try {
             const { id } = req.params;
             const { reason } = req.body;
+
+            const userAgent = req.headers['x-device-info'] || req.headers['user-agent'];
+            const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
             const addendum = await contractAddendumService.rejectAddendum(
                 parseInt(id),
                 reason || '',
-                req.user
+                req.user,
+                ipAddress,
+                userAgent
             );
 
             res.json({
