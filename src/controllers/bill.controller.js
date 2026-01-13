@@ -157,7 +157,7 @@ class BillController {
         } catch (err) { next(err); }
     }
 
-    // [UPDATED] Trigger Full Auto-Billing Cycle (Manual)
+    // [TEST] Trigger Full Auto-Billing Cycle (Manual)
     async refreshBillStatuses(req, res, next) {
         try {
             // 1. Mark Overdue
@@ -175,6 +175,22 @@ class BillController {
                 }
             });
         } catch (err) { next(err); }
+    }
+
+    // [TEST] Trigger Reminder Scan (Manual)
+    async triggerReminders(req, res, next) {
+        try {
+            // Call the service function directly
+            const result = await BillService.scanAndSendReminders();
+            
+            res.json({
+                success: true,
+                message: "Reminder scan finished",
+                data: result
+            });
+        } catch (err) {
+            next(err);
+        }
     }
 }
 

@@ -135,6 +135,21 @@ cron.schedule('0 0 0 * * *', async () => {
     timezone: "Asia/Ho_Chi_Minh" // Critical: Runs at VN Midnight
 });
 
+// Overdue Reminder - Run every day at 17:30 (5:30 PM)
+// Format: Minute Hour Day Month DayOfWeek
+cron.schedule('30 17 * * *', async () => {
+    try {
+        console.log('🔔 Running Bill Reminder Scan...');
+        const result = await BillService.scanAndSendReminders();
+        console.log(`🔔 Reminders sent: ${result.sent}/${result.found}`);
+    } catch (e) {
+        console.error('Error in Bill Reminder Cron:', e);
+    }
+}, {
+    scheduled: true,
+    timezone: "Asia/Ho_Chi_Minh" // Critical: Runs at VN Midnight
+});
+
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
