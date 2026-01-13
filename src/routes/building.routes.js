@@ -35,6 +35,13 @@ router.get('/manager/assigned',
     requireRole(['manager']),
     buildingController.getAssignedBuildings
 );
+
+// Endpoint cho Tenant xem thông tin tòa nhà mình đang ở
+router.get('/tenant/my-info',
+    requireRole(['tenant']),
+    buildingController.getMyBuildingDetails
+);
+
 // READ - Lấy thông tin tòa nhà theo ID
 router.get('/:id',
     requireRole(['owner', 'manager']),

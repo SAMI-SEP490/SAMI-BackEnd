@@ -220,6 +220,25 @@ class BuildingController {
             next(err);
         }
     }
+
+    async getMyBuildingDetails(req, res, next) {
+        try {
+            const userId = req.user.userId || req.user.id || req.user.user_id;
+
+            if (!userId) {
+                throw new Error('User ID not found in request');
+            }
+
+            const data = await buildingService.getMyBuildingDetails(parseInt(userId));
+
+            res.json({
+                success: true,
+                data: data
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
 }
 
 module.exports = new BuildingController();

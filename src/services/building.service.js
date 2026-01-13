@@ -920,6 +920,53 @@ class BuildingService {
       note: assignment.note,
     };
   }
+
+  async getMyBuildingDetails(tenantUserId) {
+    // 1. Tìm tất cả hợp đồng ACTIVE của tenant này
+    const activeContracts = await prisma.contracts.findMany({
+      where: {
+        tenant_user_id: tenantUserId,
+        status: 'active', // Chỉ lấy hợp đồng đang hiệu lực
+        deleted_at: null
+      },
+      include: {
+        room_history: { // Relation defined in schema: contract -> room
+          include: {
+            building: {
+              select: {
+                building_id: true,
+                name: true,
+                electric_unit_price: true,
+                water_unit_price: true,
+                service_fee: true,
+                bill_due_day: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // 2. Lọc ra danh sách tòa nhà duy nhất (tránh trùng lặp nếu thuê 2 phòng cùng tòa)
+    const uniqueBuildingsMap = new Map();
+
+    activeContracts.forEach(contract => {
+      const building = contract.room_history?.building;
+      if (building && !uniqueBuildingsMap.has(building.building_id)) {
+        uniqueBuildingsMap.set(building.building_id, {
+          building_id: building.building_id,
+          building_name: building.name,
+          electric_unit_price: building.electric_unit_price,
+          water_unit_price: building.water_unit_price,
+          service_fee: building.service_fee,
+          bill_due_day: building.bill_due_day
+        });
+      }
+    });
+
+    // 3. Convert Map values to Array
+    return Array.from(uniqueBuildingsMap.values());
+  }
 } // [FIX] Đã đóng ngoặc Class
 
 module.exports = new BuildingService();
