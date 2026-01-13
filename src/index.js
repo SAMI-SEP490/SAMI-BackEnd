@@ -29,6 +29,7 @@ const botRoutes = require('./routes/bot.routes');
 const chatbotRoutes = require('./routes/chatbot.routes.js');
 const parkingSlotRoutes = require('./routes/parking-slot.routes.js');
 const consentRoutes = require('./routes/consent.routes');
+const appRoutes = require('./routes/app.routes');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
 const cron = require('node-cron');
 const BillService = require('./services/bill.service');
@@ -171,6 +172,7 @@ app.use('/api/chatbot', chatbotRoutes);
 app.use('/api/parking-slots', parkingSlotRoutes);
 app.use('/api/utility', utilityRoutes);
 app.use('/api/consent', consentRoutes);
+app.use('/api/app', appRoutes);
 
 // 404 handler
 app.use(notFound);

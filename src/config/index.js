@@ -78,5 +78,9 @@ module.exports = {
     },
     cors: {
         origins: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3001']
+    },
+    app: {
+        backendUrl: process.env.BACKEND_URL || 'http://localhost:3000',
+        deepLinkScheme: process.env.DEEP_LINK_SCHEME || 'sami://'
     }
 };
