@@ -42,6 +42,12 @@ router.get('/tenant/my-info',
     buildingController.getMyBuildingDetails
 );
 
+// Endpoint lấy danh sách liên hệ (dành cho Tenant)
+router.get('/tenant/contacts',
+    requireRole(['tenant']),
+    buildingController.getBuildingContacts
+);
+
 // READ - Lấy thông tin tòa nhà theo ID
 router.get('/:id',
     requireRole(['owner', 'manager']),
