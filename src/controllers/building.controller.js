@@ -220,6 +220,42 @@ class BuildingController {
             next(err);
         }
     }
+
+    async getMyBuildingDetails(req, res, next) {
+        try {
+            const userId = req.user.userId || req.user.id || req.user.user_id;
+
+            if (!userId) {
+                throw new Error('User ID not found in request');
+            }
+
+            const data = await buildingService.getMyBuildingDetails(parseInt(userId));
+
+            res.json({
+                success: true,
+                data: data
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
+
+    // Lấy danh sách liên hệ (Owner/Manager) cho Tenant
+    async getBuildingContacts(req, res, next) {
+        try {
+            const userId = req.user.userId || req.user.id || req.user.user_id;
+            if (!userId) throw new Error('User ID not found');
+
+            const contacts = await buildingService.getBuildingContactsForTenant(parseInt(userId));
+
+            res.json({
+                success: true,
+                data: contacts
+            });
+        } catch (err) {
+            next(err);
+        }
+    }
 }
 
 module.exports = new BuildingController();

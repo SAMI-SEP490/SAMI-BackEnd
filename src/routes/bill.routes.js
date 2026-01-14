@@ -96,4 +96,10 @@ router.post('/restore/:id', billController.restoreBill);
 // 2. Tự động tạo bill cho tháng tới (nếu đến ngày)
 router.post('/refresh-status', billController.refreshBillStatuses);
 
+// Chạy thủ công tool nhắc nhở
+router.post('/trigger-reminders',
+    requireRole(['owner', 'manager']),
+    billController.triggerReminders
+);
+
 module.exports = router;

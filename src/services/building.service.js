@@ -920,6 +920,148 @@ class BuildingService {
       note: assignment.note,
     };
   }
+
+  async getMyBuildingDetails(tenantUserId) {
+    // 1. Tìm tất cả hợp đồng ACTIVE của tenant này
+    const activeContracts = await prisma.contracts.findMany({
+      where: {
+        tenant_user_id: tenantUserId,
+        status: 'active', // Chỉ lấy hợp đồng đang hiệu lực
+        deleted_at: null
+      },
+      include: {
+        room_history: { // Relation defined in schema: contract -> room
+          include: {
+            building: {
+              select: {
+                building_id: true,
+                name: true,
+                electric_unit_price: true,
+                water_unit_price: true,
+                service_fee: true,
+                bill_due_day: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // 2. Lọc ra danh sách tòa nhà duy nhất (tránh trùng lặp nếu thuê 2 phòng cùng tòa)
+    const uniqueBuildingsMap = new Map();
+
+    activeContracts.forEach(contract => {
+      const building = contract.room_history?.building;
+      if (building && !uniqueBuildingsMap.has(building.building_id)) {
+        uniqueBuildingsMap.set(building.building_id, {
+          building_id: building.building_id,
+          building_name: building.name,
+          electric_unit_price: building.electric_unit_price,
+          water_unit_price: building.water_unit_price,
+          service_fee: building.service_fee,
+          bill_due_day: building.bill_due_day
+        });
+      }
+    });
+
+    // 3. Convert Map values to Array
+    return Array.from(uniqueBuildingsMap.values());
+  }
+
+  async getBuildingContactsForTenant(tenantUserId) {
+    // 1. Tìm các tòa nhà mà tenant đang có hợp đồng Active
+    const activeContracts = await prisma.contracts.findMany({
+      where: {
+        tenant_user_id: tenantUserId,
+        status: 'active',
+        deleted_at: null
+      },
+      include: {
+        room_history: {
+          include: {
+            building: {
+              select: { building_id: true, name: true }
+            }
+          }
+        }
+      }
+    });
+
+    // Lấy danh sách ID tòa nhà duy nhất
+    const uniqueBuildingIds = new Set();
+    const buildingsMap = new Map(); // Để lưu tên tòa nhà
+
+    activeContracts.forEach(c => {
+      const b = c.room_history?.building;
+      if (b) {
+        uniqueBuildingIds.add(b.building_id);
+        buildingsMap.set(b.building_id, b.name);
+      }
+    });
+
+    // 2. Lấy thông tin Owner (Global - Lấy tất cả user có role OWNER)
+    const owners = await prisma.users.findMany({
+      where: {
+        role: 'OWNER',
+        status: 'Active',
+        deleted_at: null
+      },
+      select: {
+        user_id: true,
+        full_name: true,
+        gender: true,
+        phone: true,
+        email: true,
+        avatar_url: true
+      }
+    });
+
+    const formattedOwners = owners.map(o => ({
+      ...o,
+      role: 'OWNER' // Gán nhãn để FE hiển thị
+    }));
+
+    // 3. Loop qua từng tòa nhà để lấy Manager cụ thể
+    const results = [];
+
+    for (const buildingId of uniqueBuildingIds) {
+      // Tìm Manager được gán cho tòa này
+      const managers = await prisma.building_managers.findMany({
+        where: { building_id: buildingId },
+        include: {
+          user: {
+            select: {
+              user_id: true,
+              full_name: true,
+              gender: true,
+              phone: true,
+              email: true,
+              avatar_url: true
+            }
+          }
+        }
+      });
+
+      const formattedManagers = managers.map(m => ({
+        user_id: m.user.user_id,
+        full_name: m.user.full_name,
+        gender: m.user.gender,
+        phone: m.user.phone,
+        email: m.user.email,
+        avatar_url: m.user.avatar_url,
+        role: 'MANAGER'
+      }));
+
+      results.push({
+        building_id: buildingId,
+        building_name: buildingsMap.get(buildingId),
+        contacts: [...formattedOwners, ...formattedManagers] // Gộp Owner + Manager
+      });
+    }
+
+    return results;
+  }
+
 } // [FIX] Đã đóng ngoặc Class
 
 module.exports = new BuildingService();

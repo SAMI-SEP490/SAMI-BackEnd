@@ -29,6 +29,7 @@ const botRoutes = require('./routes/bot.routes');
 const chatbotRoutes = require('./routes/chatbot.routes.js');
 const parkingSlotRoutes = require('./routes/parking-slot.routes.js');
 const consentRoutes = require('./routes/consent.routes');
+const appRoutes = require('./routes/app.routes');
 const { errorHandler, notFound } = require('./middlewares/error.middleware');
 const cron = require('node-cron');
 const BillService = require('./services/bill.service');
@@ -135,6 +136,21 @@ cron.schedule('0 0 0 * * *', async () => {
     timezone: "Asia/Ho_Chi_Minh" // Critical: Runs at VN Midnight
 });
 
+// Overdue Reminder - Run every day at 17:30 (5:30 PM)
+// Format: Minute Hour Day Month DayOfWeek
+cron.schedule('30 17 * * *', async () => {
+    try {
+        console.log('🔔 Running Bill Reminder Scan...');
+        const result = await BillService.scanAndSendReminders();
+        console.log(`🔔 Reminders sent: ${result.sent}/${result.found}`);
+    } catch (e) {
+        console.error('Error in Bill Reminder Cron:', e);
+    }
+}, {
+    scheduled: true,
+    timezone: "Asia/Ho_Chi_Minh" // Critical: Runs at VN Midnight
+});
+
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
@@ -156,6 +172,7 @@ app.use('/api/chatbot', chatbotRoutes);
 app.use('/api/parking-slots', parkingSlotRoutes);
 app.use('/api/utility', utilityRoutes);
 app.use('/api/consent', consentRoutes);
+app.use('/api/app', appRoutes);
 
 // 404 handler
 app.use(notFound);

@@ -6,6 +6,7 @@ const prisma = require('../config/prisma');
 const config = require('../config');
 const { PayOS } = require("@payos/node");
 const NotificationService = require('./notification.service');
+const EmailService = require('../utils/email');
 
 // --- SAFE INITIALIZATION (PayOS) ---
 // (Keep your existing initialization code here - it is correct)
@@ -61,6 +62,17 @@ async function _completePayment(paymentId, transactionId, onlineType) {
             });
         }
 
+        // Trigger Email after transaction commits
+        _triggerReceiptEmail(payment.payment_id);
+
+        // Trigger Push Notification (Fire-and-forget)
+        // We wrap in try-catch so it doesn't crash if notification fails
+        try {
+            await NotificationService.sendPaymentSuccessNotification(payment);
+        } catch (e) {
+            console.error("⚠️ Failed to send payment push notification:", e.message);
+        }
+
         return payment;
     });
 }
@@ -70,6 +82,36 @@ async function _failPayment(paymentId) {
         where: { payment_id: paymentId },
         data: { status: 'failed' }
     });
+}
+
+// Private Helper to Trigger Email (Fire-and-forget)
+async function _triggerReceiptEmail(paymentId) {
+    try {
+        // Fetch full details needed for email
+        const fullPayment = await prisma.bill_payments.findUnique({
+            where: { payment_id: paymentId },
+            include: {
+                payer: true, // Get User Email/Name
+                payment_details: {
+                    include: {
+                        bill: true // Get Bill Numbers
+                    }
+                }
+            }
+        });
+
+        if (fullPayment && fullPayment.payer?.email) {
+            console.log(`📧 Sending receipt to ${fullPayment.payer.email}...`);
+            await EmailService.sendPaymentReceiptEmail(
+                fullPayment.payer.email,
+                fullPayment.payer.full_name,
+                fullPayment
+            );
+        }
+    } catch (e) {
+        console.error("⚠️ Failed to send receipt email:", e.message);
+        // Do not throw error here, payment is already successful
+    }
 }
 
 class PaymentService {
@@ -137,7 +179,6 @@ class PaymentService {
 
         if (code === '00') {
             await _completePayment(payment.payment_id, reference, 'PAYOS');
-            // Notification logic here
         } else {
             await _failPayment(payment.payment_id);
         }
@@ -165,9 +206,8 @@ class PaymentService {
         );
 
         // 2. Transaction
-        return prisma.$transaction(async (tx) => {
-            // Create Payment
-            const payment = await tx.bill_payments.create({
+        const paymentResult = await prisma.$transaction(async (tx) => {
+             const payment = await tx.bill_payments.create({
                 data: {
                     amount: totalAmount,
                     method: 'cash',
@@ -203,6 +243,11 @@ class PaymentService {
             }
             return payment;
         });
+
+        // Trigger Email
+        _triggerReceiptEmail(paymentResult.payment_id);
+
+        return paymentResult;
     }
 
     // --- PRIVATE HELPERS ---

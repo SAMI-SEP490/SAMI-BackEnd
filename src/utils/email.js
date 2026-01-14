@@ -451,6 +451,124 @@ async function sendAddendumApprovalEmail(email, fullName, addendumData, actionUr
 
     return sendEmail(email, subject, html);
 }
+/**
+ * Gửi hóa đơn thanh toán thành công
+ * @param {string} email - Email người nhận
+ * @param {string} fullName - Tên người nhận
+ * @param {object} payment - Object payment từ DB (bao gồm relation payment_details.bill)
+ */
+async function sendPaymentReceiptEmail(email, fullName, payment) {
+    const subject = `✅ Xác nhận thanh toán thành công #${payment.transaction_id || payment.reference}`;
+    
+    // Format helpers
+    const fmtMoney = (n) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(Number(n));
+    const fmtDate = (d) => new Date(d).toLocaleDateString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+
+    // Payment Method Label
+    let methodLabel = "Online";
+    if (payment.method === 'cash') methodLabel = "Tiền mặt";
+    else if (payment.online_type) methodLabel = `${payment.online_type}`;
+
+    // Build Bill List Rows
+    const billRows = payment.payment_details.map(detail => {
+        const billNum = detail.bill?.bill_number || "Unknown Bill";
+        const type = detail.bill?.bill_type || "Fee";
+        const amount = fmtMoney(detail.amount);
+        return `
+            <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 10px 0; color: #555;">${billNum} <small>(${type})</small></td>
+                <td style="padding: 10px 0; text-align: right; font-weight: bold; color: #333;">${amount}</td>
+            </tr>
+        `;
+    }).join('');
+
+    // Use Config + Trampoline logic
+    const backendUrl = config.app.backendUrl;
+    const trampolineLink = `${backendUrl}/api/app/open?path=dashboard`;
+
+    const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <style>
+                /* ... (Keep styles same as before) ... */
+                body { font-family: Helvetica, Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 0; }
+                .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                .receipt-card { background-color: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+                .header { text-align: center; border-bottom: 2px dashed #eee; padding-bottom: 20px; margin-bottom: 20px; }
+                .success-icon { font-size: 48px; margin-bottom: 10px; display: block; }
+                .total-amount { font-size: 32px; color: #27ae60; font-weight: 800; margin: 10px 0; }
+                .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; font-size: 14px; }
+                .label { color: #888; display: block; margin-bottom: 4px; }
+                .value { font-weight: 600; color: #333; }
+                .bill-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
+                .footer { text-align: center; margin-top: 30px; font-size: 12px; color: #999; }
+                
+                /* Button Style */
+                .btn-app {
+                    background: #333; 
+                    color: white; 
+                    padding: 12px 24px; 
+                    text-decoration: none; 
+                    border-radius: 6px; 
+                    font-weight: bold;
+                    display: inline-block;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="receipt-card">
+                    <div class="header">
+                        <span class="success-icon">✅</span>
+                        <h2 style="margin:0; color:#333;">Thanh toán thành công</h2>
+                        <div class="total-amount">${fmtMoney(payment.amount)}</div>
+                        <p style="color:#777; margin:5px 0;">Mã GD: ${payment.transaction_id || payment.reference}</p>
+                    </div>
+
+                    <div class="info-grid">
+                        <div>
+                            <span class="label">Người thanh toán</span>
+                            <span class="value">${fullName}</span>
+                        </div>
+                        <div style="text-align:right;">
+                            <span class="label">Thời gian</span>
+                            <span class="value">${fmtDate(payment.payment_date)}</span>
+                        </div>
+                        <div>
+                            <span class="label">Phương thức</span>
+                            <span class="value">${methodLabel}</span>
+                        </div>
+                        <div style="text-align:right;">
+                            <span class="label">Trạng thái</span>
+                            <span class="value" style="color:#27ae60;">Hoàn thành</span>
+                        </div>
+                    </div>
+
+                    <h3 style="font-size: 16px; border-bottom: 2px solid #333; padding-bottom: 10px; margin-top: 30px;">Chi tiết hóa đơn</h3>
+                    <table class="bill-table">
+                        ${billRows}
+                    </table>
+                    
+                    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; text-align: center;">
+                        <a href="${trampolineLink}" class="btn-app">Mở ứng dụng</a>
+                        
+                        <p style="font-size: 11px; color: #aaa; margin-top: 10px;">
+                            Nếu nút không hoạt động, vui lòng mở ứng dụng SAMI trên điện thoại của bạn.
+                        </p>
+                    </div>
+                </div>
+                <div class="footer">
+                    <p>Cảm ơn bạn đã sử dụng dịch vụ của SAMI.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+    `;
+
+    return sendEmail(email, subject, html);
+}
 // Test email configuration
 async function testEmailConnection() {
     try {
@@ -487,5 +605,6 @@ module.exports = {
     testEmailConnection,
     sendPasswordResetEmail,
     sendContractApprovalEmail,
-    sendAddendumApprovalEmail
+    sendAddendumApprovalEmail,
+    sendPaymentReceiptEmail
 };

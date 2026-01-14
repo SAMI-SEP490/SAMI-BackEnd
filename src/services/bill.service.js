@@ -4,6 +4,7 @@
 
 const prisma = require('../config/prisma');
 const crypto = require('crypto');
+const NotificationService = require('./notification.service');
 
 // Helper: Generate unique bill number (e.g., B-RNT-202601-1234AB)
 function generateBillNumber(year, month, type) {
@@ -847,6 +848,88 @@ class BillService {
       error.statusCode = 409;
       throw error;
     }
+  }
+
+  /**
+     * CRON TASK: Runs daily at 17:00
+     * Scans for bills due in 1 or 2 days and sends push reminders.
+     */
+  async scanAndSendReminders() {
+    console.log(`[BillReminder] Starting scan at ${new Date().toISOString()}...`);
+
+    const today = new Date();
+
+    // Define the window: Tomorrow (1 day out) and Day After (2 days out)
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+
+    const dayAfter = new Date(today);
+    dayAfter.setDate(today.getDate() + 2);
+    dayAfter.setHours(23, 59, 59, 999);
+
+    // Find UNPAID (issued) bills due within this specific window
+    const billsDueSoon = await prisma.bills.findMany({
+      where: {
+        status: 'issued', // Only remind for unpaid bills
+        deleted_at: null,
+        due_date: {
+          gte: tomorrow,  // >= Tomorrow 00:00
+          lte: dayAfter   // <= Day After 23:59
+        }
+      },
+      include: {
+        tenant: {
+          select: { user: { select: { user_id: true, full_name: true } } } // Need user_id for notification
+        },
+        contract: {
+          select: {
+            room_current: { select: { room_number: true } },
+            room_history: { select: { room_number: true } }
+          }
+        }
+      }
+    });
+
+    console.log(`[BillReminder] Found ${billsDueSoon.length} bills due soon.`);
+
+    let sentCount = 0;
+
+    for (const bill of billsDueSoon) {
+      try {
+        // Calculate days left
+        const dueDate = new Date(bill.due_date);
+        const diffTime = Math.abs(dueDate - today);
+        const daysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        // Format Money (Helper from NotificationService logic)
+        const amountStr = new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(Number(bill.total_amount));
+        const roomNum = bill.contract?.room_current?.room_number || bill.contract?.room_history?.room_number || "?";
+
+        // Craft Message
+        const title = `📅 Nhắc nhở: Hóa đơn sắp hết hạn (${daysLeft} ngày)`;
+        const body = `Chào ${bill.tenant?.user.full_name}, hóa đơn phòng ${roomNum} trị giá ${amountStr} sẽ hết hạn vào ngày ${dueDate.toLocaleDateString('vi-VN')}. Vui lòng thanh toán sớm để tránh phí phạt.`;
+
+        // Send Notification
+        await NotificationService.createNotification(
+          null, // Sender = System
+          bill.tenant_user_id,
+          title,
+          body,
+          {
+            type: 'bill_due_soon',
+            bill_id: String(bill.bill_id),
+            days_left: String(daysLeft)
+          }
+        );
+
+        sentCount++;
+      } catch (err) {
+        console.error(`[BillReminder] Failed to send for Bill #${bill.bill_id}:`, err.message);
+      }
+    }
+
+    return { found: billsDueSoon.length, sent: sentCount };
   }
 }
 
