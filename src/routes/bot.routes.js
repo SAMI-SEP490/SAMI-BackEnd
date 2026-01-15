@@ -53,14 +53,6 @@ router.delete('/maintenance/:id',
 );
 
 /**
- * GET /api/bot/maintenance/:id
- * Lấy thông tin maintenance request
- */
-router.get('/maintenance/:id',
-    maintenanceController.getMaintenanceRequestByBot
-);
-
-/**
  * POST /api/bot/vehicle-registration/create
  * Tạo vehicle registration request mới thay mặt tenant
  */
