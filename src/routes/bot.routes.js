@@ -71,61 +71,12 @@ router.put('/vehicle-registration/:id',
 );
 
 /**
- * DELETE /api/bot/vehicle-registration/:id
- * Xóa vehicle registration thay mặt tenant
- */
-router.delete('/vehicle-registration/:id',
-    validateBotVehicleDelete,
-    vehicleController.deleteVehicleRegistrationByBot
-);
-
-/**
  * POST /api/bot/vehicle-registration/:id/cancel
  * Cancel vehicle registration thay mặt tenant
  */
 router.post('/vehicle-registration/:id/cancel',
     validateBotVehicleCancel,
     vehicleController.cancelVehicleRegistrationByBot
-);
-
-/**
- * GET /api/bot/vehicle-registration/:id
- * Lấy thông tin vehicle registration
- */
-router.get('/vehicle-registration/:id',
-    vehicleController.getVehicleRegistrationByBot
-);
-
-/**
- * GET /api/bot/vehicle-registrations
- * Lấy danh sách vehicle registrations của tenant
- */
-router.get('/vehicle-registrations',
-    vehicleController.getVehicleRegistrationsByBot
-);
-
-/**
- * GET /api/bot/vehicles
- * Lấy danh sách vehicles của tenant
- */
-router.get('/vehicles',
-    vehicleController.getVehiclesByBot
-);
-
-/**
- * GET /api/bot/vehicle/:id
- * Lấy thông tin chi tiết vehicle
- */
-router.get('/vehicle/:id',
-    vehicleController.getVehicleByBot
-);
-
-/**
- * GET /api/bot/vehicle-stats
- * Lấy thống kê vehicle registration của tenant
- */
-router.get('/vehicle-stats',
-    vehicleController.getVehicleStatsByBot
 );
 
 /**
