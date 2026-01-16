@@ -53,14 +53,6 @@ router.delete('/maintenance/:id',
 );
 
 /**
- * GET /api/bot/maintenance/:id
- * Lấy thông tin maintenance request
- */
-router.get('/maintenance/:id',
-    maintenanceController.getMaintenanceRequestByBot
-);
-
-/**
  * POST /api/bot/vehicle-registration/create
  * Tạo vehicle registration request mới thay mặt tenant
  */
@@ -79,15 +71,6 @@ router.put('/vehicle-registration/:id',
 );
 
 /**
- * DELETE /api/bot/vehicle-registration/:id
- * Xóa vehicle registration thay mặt tenant
- */
-router.delete('/vehicle-registration/:id',
-    validateBotVehicleDelete,
-    vehicleController.deleteVehicleRegistrationByBot
-);
-
-/**
  * POST /api/bot/vehicle-registration/:id/cancel
  * Cancel vehicle registration thay mặt tenant
  */
@@ -97,93 +80,11 @@ router.post('/vehicle-registration/:id/cancel',
 );
 
 /**
- * GET /api/bot/vehicle-registration/:id
- * Lấy thông tin vehicle registration
- */
-router.get('/vehicle-registration/:id',
-    vehicleController.getVehicleRegistrationByBot
-);
-
-/**
- * GET /api/bot/vehicle-registrations
- * Lấy danh sách vehicle registrations của tenant
- */
-router.get('/vehicle-registrations',
-    vehicleController.getVehicleRegistrationsByBot
-);
-
-/**
- * GET /api/bot/vehicles
- * Lấy danh sách vehicles của tenant
- */
-router.get('/vehicles',
-    vehicleController.getVehiclesByBot
-);
-
-/**
- * GET /api/bot/vehicle/:id
- * Lấy thông tin chi tiết vehicle
- */
-router.get('/vehicle/:id',
-    vehicleController.getVehicleByBot
-);
-
-/**
- * GET /api/bot/vehicle-stats
- * Lấy thống kê vehicle registration của tenant
- */
-router.get('/vehicle-stats',
-    vehicleController.getVehicleStatsByBot
-);
-
-/**
- * GET /api/bot/regulation/:id
- * Lấy thông tin chi tiết regulation
- */
-router.get('/regulation/:id',
-    regulationController.getRegulationByBot
-);
-
-/**
- * GET /api/bot/regulations
- * Lấy danh sách regulations (có filter)
+ * REGULATION ROUTES
+ * GET /api/bot/regulations?tenant_user_id=123
  */
 router.get('/regulations',
     regulationController.getRegulationsByBot
-);
-
-/**
- * GET /api/bot/regulations/building/:buildingId
- * Lấy regulations theo building
- */
-router.get('/regulations/building/:buildingId',
-    regulationController.getRegulationsByBuildingForBot
-);
-
-
-/**
- * POST /api/bot/regulation/:id/feedback
- * Thêm feedback cho regulation thay mặt tenant
- */
-router.post('/regulation/:id/feedback',
-    validateBotRegulationFeedback,
-    regulationController.addRegulationFeedbackByBot
-);
-
-/**
- * GET /api/bot/regulation/:id/feedbacks
- * Lấy danh sách feedbacks của regulation
- */
-router.get('/regulation/:id/feedbacks',
-    regulationController.getRegulationFeedbacksByBot
-);
-
-/**
- * GET /api/bot/regulation/versions/:title
- * Lấy tất cả versions của regulation theo title
- */
-router.get('/regulation/versions/:title',
-    regulationController.getRegulationVersionsByBot
 );
 
 /**

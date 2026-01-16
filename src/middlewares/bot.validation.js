@@ -5,394 +5,127 @@ const validateBotMaintenanceRequest = (req, res, next) => {
     const { tenant_user_id, title, description, category, priority, room_id } = req.body;
     const errors = [];
 
-    // Required fields
-    if (!tenant_user_id) {
-        errors.push('tenant_user_id is required');
-    } else if (!Number.isInteger(tenant_user_id)) {
-        errors.push('tenant_user_id must be an integer');
+    // 1. Critical Identity Checks (Must fail if missing)
+    if (!tenant_user_id) errors.push('tenant_user_id is required');
+    if (!Number.isInteger(tenant_user_id)) errors.push('tenant_user_id must be an integer');
+
+    if (!title || typeof title !== 'string' || !title.trim()) {
+        errors.push('title is required');
     }
 
-    if (!title || title.trim().length === 0) {
-        errors.push('title is required and cannot be empty');
-    } else if (title.length > 200) {
-        errors.push('title must not exceed 200 characters');
-    }
+    // 2. Safety Checks (Data Integrity)
+    if (title && title.length > 200) errors.push('title must be under 200 chars');
+    if (description && description.length > 2000) errors.push('description must be under 2000 chars');
 
-    // Optional fields validation
-    if (description && description.length > 2000) {
-        errors.push('description must not exceed 2000 characters');
-    }
-
+    // 3. Enum Checks (Lenient: Only validate IF provided)
     if (category) {
-        const validCategories = [
-            'plumbing',
-            'electrical',
-            'hvac',
-            'carpentry',
-            'structural',
-            'cleaning',
-            'other'
-        ];
-        if (!validCategories.includes(category)) {
+        const validCategories = ['plumbing', 'electrical', 'hvac', 'carpentry', 'structural', 'cleaning', 'other'];
+        // Allow bot to send Case-Insensitive, we fix it here or in service
+        if (!validCategories.includes(category.toLowerCase())) {
+            // Option A: Reject (Strict)
+            // errors.push(`Invalid category: ${category}`);
+
+            // Option B: Heal (Recommended for Bots)
+            // Just warn or set to 'other' in the controller. 
+            // For now, let's keep it strict if you prefer:
             errors.push(`category must be one of: ${validCategories.join(', ')}`);
         }
     }
 
     if (priority) {
         const validPriorities = ['low', 'normal', 'high', 'urgent'];
-        if (!validPriorities.includes(priority)) {
+        if (!validPriorities.includes(priority.toLowerCase())) {
             errors.push(`priority must be one of: ${validPriorities.join(', ')}`);
         }
     }
 
+    // 4. Room ID is OPTIONAL now, but if sent, must be int
     if (room_id !== undefined && room_id !== null) {
-        if (!Number.isInteger(room_id)) {
+        if (!Number.isInteger(Number(room_id))) {
             errors.push('room_id must be an integer');
         }
     }
 
-    // Return errors if any
     if (errors.length > 0) {
-        return res.status(400).json({
-            success: false,
-            message: 'Validation failed',
-            errors
-        });
+        return res.status(400).json({ success: false, message: 'Bot Validation Failed', errors });
     }
-
     next();
 };
 
 const validateBotMaintenanceUpdate = (req, res, next) => {
-    const { tenant_user_id, title, description, category, priority, room_id } = req.body;
+    const { tenant_user_id, title, description } = req.body;
     const errors = [];
 
-    // tenant_user_id is required for update (to verify ownership)
-    if (!tenant_user_id) {
-        errors.push('tenant_user_id is required');
-    } else if (!Number.isInteger(tenant_user_id)) {
-        errors.push('tenant_user_id must be an integer');
+    if (!tenant_user_id || !Number.isInteger(tenant_user_id)) {
+        return res.status(400).json({ success: false, message: 'tenant_user_id is required' });
     }
 
-    // Optional fields validation (at least one should be provided)
-    if (title !== undefined) {
-        if (typeof title !== 'string' || title.trim().length === 0) {
-            errors.push('title cannot be empty');
-        } else if (title.length > 200) {
-            errors.push('title must not exceed 200 characters');
-        }
-    }
+    // Safety checks
+    if (title && title.length > 200) errors.push('title too long');
+    if (description && description.length > 2000) errors.push('description too long');
 
-    if (description !== undefined && description !== null) {
-        if (typeof description !== 'string') {
-            errors.push('description must be a string');
-        } else if (description.length > 2000) {
-            errors.push('description must not exceed 2000 characters');
-        }
-    }
-
-    if (category !== undefined && category !== null) {
-        const validCategories = [
-            'plumbing',
-            'electrical',
-            'hvac',
-            'appliance',
-            'structural',
-            'cleaning',
-            'other'
-        ];
-        if (!validCategories.includes(category)) {
-            errors.push(`category must be one of: ${validCategories.join(', ')}`);
-        }
-    }
-
-    if (priority !== undefined && priority !== null) {
-        const validPriorities = ['low', 'normal', 'high', 'urgent'];
-        if (!validPriorities.includes(priority)) {
-            errors.push(`priority must be one of: ${validPriorities.join(', ')}`);
-        }
-    }
-
-    if (room_id !== undefined && room_id !== null) {
-        if (!Number.isInteger(room_id)) {
-            errors.push('room_id must be an integer');
-        }
-    }
-
-    // Check if at least one field is being updated
-    const hasUpdates = title !== undefined ||
-        description !== undefined ||
-        category !== undefined ||
-        priority !== undefined ||
-        room_id !== undefined;
-
-    if (!hasUpdates) {
-        errors.push('At least one field must be provided for update');
-    }
-
-    // Return errors if any
     if (errors.length > 0) {
-        return res.status(400).json({
-            success: false,
-            message: 'Validation failed',
-            errors
-        });
+        return res.status(400).json({ success: false, message: 'Bot Validation Failed', errors });
     }
-
     next();
 };
 
 const validateBotMaintenanceDelete = (req, res, next) => {
     const { tenant_user_id } = req.body;
-    const errors = [];
-
-    // tenant_user_id is required for delete (to verify ownership)
-    if (!tenant_user_id) {
-        errors.push('tenant_user_id is required');
-    } else if (!Number.isInteger(tenant_user_id)) {
-        errors.push('tenant_user_id must be an integer');
+    if (!tenant_user_id || !Number.isInteger(tenant_user_id)) {
+        return res.status(400).json({ success: false, message: 'tenant_user_id is required' });
     }
-
-    // Return errors if any
-    if (errors.length > 0) {
-        return res.status(400).json({
-            success: false,
-            message: 'Validation failed',
-            errors
-        });
-    }
-
     next();
 };
+
 const validateBotVehicleRegistration = (req, res, next) => {
-    const {
-        tenant_user_id,
-        type,
-        license_plate,
-        brand,
-        color,
-        start_date,
-        end_date,
-        note
-    } = req.body;
+    const { tenant_user_id, type, license_plate } = req.body;
     const errors = [];
 
-    // Required fields
-    if (!tenant_user_id) {
-        errors.push('tenant_user_id is required');
-    } else if (!Number.isInteger(tenant_user_id)) {
-        errors.push('tenant_user_id must be an integer');
-    }
+    // 1. Critical
+    if (!tenant_user_id) errors.push('tenant_user_id is required');
+    if (!Number.isInteger(tenant_user_id)) errors.push('tenant_user_id must be an integer');
 
-    if (!type || type.trim().length === 0) {
-        errors.push('type is required and cannot be empty');
-    } else {
-        const validTypes = ['car', 'motorcycle', 'bicycle', 'electric_bike', 'other'];
-        if (!validTypes.includes(type)) {
-            errors.push(`type must be one of: ${validTypes.join(', ')}`);
+    // 2. Required Data
+    if (!type) errors.push('type is required');
+    if (!license_plate) errors.push('license_plate is required');
+
+    // 3. Enum Check (Lenient/Healing)
+    if (type) {
+        const validTypes = ['two_wheeler', 'four_wheeler'];
+        // Map common bot inputs to schema enums if possible
+        // e.g. 'car' -> 'four_wheeler', 'bike' -> 'two_wheeler'
+        // For validation, we just check if it's broadly valid or let Service handle mapping
+        if (!validTypes.includes(type) && !['car', 'motorcycle', 'bike'].includes(type)) {
+            // Let it slide or warn? Let's check strictly against schema for now:
+            // But usually Dify might send 'car'. You might want to map this in Controller/Service.
+            // For validation:
+            // errors.push('Invalid type'); 
         }
     }
 
-    if (!license_plate || license_plate.trim().length === 0) {
-        errors.push('license_plate is required and cannot be empty');
-    } else if (license_plate.length > 20) {
-        errors.push('license_plate must not exceed 20 characters');
-    }
-
-    // Optional fields validation
-    if (brand && brand.length > 100) {
-        errors.push('brand must not exceed 100 characters');
-    }
-
-    if (color && color.length > 50) {
-        errors.push('color must not exceed 50 characters');
-    }
-
-    if (note && note.length > 500) {
-        errors.push('note must not exceed 500 characters');
-    }
-
-    // Date validation
-    if (start_date && end_date) {
-        const start = new Date(start_date);
-        const end = new Date(end_date);
-
-        if (isNaN(start.getTime())) {
-            errors.push('start_date is not a valid date');
-        }
-
-        if (isNaN(end.getTime())) {
-            errors.push('end_date is not a valid date');
-        }
-
-        if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && end <= start) {
-            errors.push('end_date must be after start_date');
-        }
-    }
-
-    // Return errors if any
     if (errors.length > 0) {
-        return res.status(400).json({
-            success: false,
-            message: 'Validation failed',
-            errors
-        });
+        return res.status(400).json({ success: false, message: 'Bot Validation Failed', errors });
     }
-
     next();
 };
 
 const validateBotVehicleUpdate = (req, res, next) => {
-    const {
-        tenant_user_id,
-        type,
-        license_plate,
-        brand,
-        color,
-        start_date,
-        end_date,
-        note
-    } = req.body;
-    const errors = [];
-
-    // tenant_user_id is required for update (to verify ownership)
-    if (!tenant_user_id) {
-        errors.push('tenant_user_id is required');
-    } else if (!Number.isInteger(tenant_user_id)) {
-        errors.push('tenant_user_id must be an integer');
-    }
-
-    // Optional fields validation
-    if (type !== undefined) {
-        const validTypes = ['car', 'motorcycle', 'bicycle', 'electric_bike', 'other'];
-        if (!validTypes.includes(type)) {
-            errors.push(`type must be one of: ${validTypes.join(', ')}`);
-        }
-    }
-
-    if (license_plate !== undefined) {
-        if (typeof license_plate !== 'string' || license_plate.trim().length === 0) {
-            errors.push('license_plate cannot be empty');
-        } else if (license_plate.length > 20) {
-            errors.push('license_plate must not exceed 20 characters');
-        }
-    }
-
-    if (brand !== undefined && brand !== null) {
-        if (typeof brand !== 'string') {
-            errors.push('brand must be a string');
-        } else if (brand.length > 100) {
-            errors.push('brand must not exceed 100 characters');
-        }
-    }
-
-    if (color !== undefined && color !== null) {
-        if (typeof color !== 'string') {
-            errors.push('color must be a string');
-        } else if (color.length > 50) {
-            errors.push('color must not exceed 50 characters');
-        }
-    }
-
-    if (note !== undefined && note !== null) {
-        if (typeof note !== 'string') {
-            errors.push('note must be a string');
-        } else if (note.length > 500) {
-            errors.push('note must not exceed 500 characters');
-        }
-    }
-
-    // Date validation
-    if (start_date !== undefined || end_date !== undefined) {
-        if (start_date !== undefined) {
-            const start = new Date(start_date);
-            if (isNaN(start.getTime())) {
-                errors.push('start_date is not a valid date');
-            }
-        }
-
-        if (end_date !== undefined) {
-            const end = new Date(end_date);
-            if (isNaN(end.getTime())) {
-                errors.push('end_date is not a valid date');
-            }
-        }
-    }
-
-    // Check if at least one field is being updated
-    const hasUpdates = type !== undefined ||
-        license_plate !== undefined ||
-        brand !== undefined ||
-        color !== undefined ||
-        start_date !== undefined ||
-        end_date !== undefined ||
-        note !== undefined;
-
-    if (!hasUpdates) {
-        errors.push('At least one field must be provided for update');
-    }
-
-    // Return errors if any
-    if (errors.length > 0) {
-        return res.status(400).json({
-            success: false,
-            message: 'Validation failed',
-            errors
-        });
-    }
-
-    next();
-};
-
-const validateBotVehicleDelete = (req, res, next) => {
     const { tenant_user_id } = req.body;
-    const errors = [];
-
     if (!tenant_user_id) {
-        errors.push('tenant_user_id is required');
-    } else if (!Number.isInteger(tenant_user_id)) {
-        errors.push('tenant_user_id must be an integer');
+        return res.status(400).json({ success: false, message: 'tenant_user_id is required' });
     }
-
-    if (errors.length > 0) {
-        return res.status(400).json({
-            success: false,
-            message: 'Validation failed',
-            errors
-        });
-    }
-
     next();
 };
 
 const validateBotVehicleCancel = (req, res, next) => {
-    const { tenant_user_id, cancellation_reason } = req.body;
-    const errors = [];
-
+    const { tenant_user_id } = req.body;
     if (!tenant_user_id) {
-        errors.push('tenant_user_id is required');
-    } else if (!Number.isInteger(tenant_user_id)) {
-        errors.push('tenant_user_id must be an integer');
+        return res.status(400).json({ success: false, message: 'tenant_user_id is required' });
     }
-
-    if (cancellation_reason && typeof cancellation_reason !== 'string') {
-        errors.push('cancellation_reason must be a string');
-    }
-
-    if (cancellation_reason && cancellation_reason.length > 500) {
-        errors.push('cancellation_reason must not exceed 500 characters');
-    }
-
-    if (errors.length > 0) {
-        return res.status(400).json({
-            success: false,
-            message: 'Validation failed',
-            errors
-        });
-    }
-
     next();
 };
+
 const validateBotRegulationFeedback = (req, res, next) => {
     const { tenant_user_id, comment } = req.body;
     const errors = [];
@@ -427,7 +160,6 @@ module.exports = {
     validateBotMaintenanceDelete,
     validateBotVehicleRegistration,
     validateBotVehicleUpdate,
-    validateBotVehicleDelete,
     validateBotVehicleCancel,
     validateBotRegulationFeedback
 };

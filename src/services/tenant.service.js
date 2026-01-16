@@ -374,233 +374,211 @@ class TenantService {
         // Reuse hàm _formatTenantResult có sẵn để nhất quán data trả về
         return tenants.map(tenant => this._formatTenantResult(tenant));
     }
+
+    /**
+     * Get Rich Context for Chatbot (RAG)
+     */
     async getTenantChatbotContext(tenantUserId) {
-        // 1. Find owners (Global contacts)
-        const owners = await prisma.users.findMany({
-            where: { role: 'OWNER', deleted_at: null },
-            select: { full_name: true, phone: true }
-        });
-        
-        // 2. Find tenant and all related data
-        const tenantInfo = await prisma.tenants.findUnique({
+        // 1. Fetch Tenant Basic Info
+        const tenantUser = await prisma.users.findUnique({
             where: { user_id: tenantUserId },
             include: {
-                users: { select: { full_name: true, user_id: true, gender: true, birthday: true } },
-                
-                // --- Bill History (Last 12 items) ---
-                bills: {
-                    where: { 
-                        deleted_at: null,
-                        status: { not: 'draft' } // Exclude drafts, keep everything else
-                    },
-                    select: { 
-                        bill_id: true, 
-                        bill_number: true, 
-                        due_date: true, 
-                        total_amount: true, 
-                        penalty_amount: true, 
-                        description: true,
-                        status: true // Need status to tell Paid vs Unpaid
-                    },
-                    orderBy: { billing_period_start: 'desc' }, // Newest first
-                    take: 12 // Limit to last 1 year
-                },
-                // -------------------------------------------------
+                tenants: true // Get tenant specific fields like ID number
+            }
+        });
 
-                // Direct Room Link
-                rooms: {
-                    select: {
-                        room_id: true,
-                        room_number: true,
-                        buildings: {
-                            select: {
-                                name: true,
-                                // Get managers for this specific building
+        if (!tenantUser || tenantUser.role !== 'TENANT') {
+            throw new Error('Tenant not found or invalid role');
+        }
+
+        // 2. Fetch Active Residences (Rooms via Contracts or RoomTenants)
+        // We use contracts as the primary source for "Active" rentals
+        const activeContracts = await prisma.contracts.findMany({
+            where: {
+                tenant_user_id: tenantUserId,
+                status: { in: ['active', 'pending'] },
+                deleted_at: null
+            },
+            include: {
+                room_history: { // The room associated with contract
+                    include: {
+                        building: {
+                            include: {
                                 building_managers: {
-                                    include: { users: { select: { full_name: true, phone: true } } }
+                                    include: { user: { select: { full_name: true, phone: true } } }
                                 }
                             }
                         }
                     }
                 },
-
-                // --- Active Contract with Addendums ---
-                contracts: {
-                    where: { 
-                        // Fetch 'active' OR 'pending' (e.g. renewal pending)
-                        status: { in: ['active', 'pending'] }, 
-                        deleted_at: null 
-                    },
-                    // We need 'include' (or select) to get addendums + s3_key
-                    select: {
-                        contract_id: true,
-                        start_date: true,
-                        end_date: true,
-                        rent_amount: true,
-                        deposit_amount: true,
-                        status: true,
-                        s3_key: true, // Need this to check if PDF exists
-                        contract_addendums: {
-                            orderBy: { version: 'desc' },
-                            take: 1,
-                            select: { summary: true, changes: true }
-                        }
-                    },
-                    orderBy: { created_at: 'desc' },
+                contract_addendums: {
+                    orderBy: { addendum_number: 'desc' }, // Latest addendum
                     take: 1
-                },
-                // ------------------------------------------------
-
-                // Pending Maintenance
-                maintenance_requests: {
-                    where: { status: { in: ['pending', 'in_progress'] } },
-                    select: { request_id: true, title: true, status: true, created_at: true },
-                    orderBy: { created_at: 'desc' }
-                },
-
-                // Vehicle Registrations
-                vehicle_registration: {
-                    where: { status: { in: ['requested', 'rejected'] } },
-                    select: { assignment_id: true, status: true, reason: true, requested_at: true },
-                    orderBy: { requested_at: 'desc' }
-                },
-
-                // Active Vehicles
-                vehicles: {
-                    where: { deactivated_at: null, status: 'active' }, 
-                    select: { vehicle_id: true, type: true, license_plate: true, brand: true, color: true, status: true },
-                    orderBy: { registered_at: 'desc' }
                 }
             }
         });
 
-        // 3. Time Calculation (Vietnam Time)
-        const now = new Date();
-        const vnTimeFormatter = new Intl.DateTimeFormat('vi-VN', {
-            timeZone: 'Asia/Ho_Chi_Minh',
-            year: 'numeric', month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', second: '2-digit',
-            hour12: false
+        // 3. Fetch Global Owners (Backup contact)
+        const owners = await prisma.users.findMany({
+            where: { role: 'OWNER', status: 'Active' },
+            select: { full_name: true, phone: true }
         });
-        
-        // Example: "05:30:00 12/12/2025"
-        const currentTimeStr = vnTimeFormatter.format(now);
-        
-        // Get just the hour (0-23) for logic checks
+
+        // 4. Fetch Last 12 Bills (All Types)
+        const recentBills = await prisma.bills.findMany({
+            where: {
+                tenant_user_id: tenantUserId,
+                status: { not: 'draft' },
+                deleted_at: null
+            },
+            orderBy: { due_date: 'desc' },
+            take: 12,
+            select: {
+                bill_id: true,
+                bill_number: true,
+                bill_type: true,
+                total_amount: true,
+                status: true,
+                due_date: true,
+                description: true
+            }
+        });
+
+        // 5. Fetch Maintenance History (All Statuses)
+        const maintenanceHistory = await prisma.maintenance_requests.findMany({
+            where: {
+                tenant_user_id: tenantUserId,
+            },
+            orderBy: { created_at: 'desc' },
+            take: 12, // Increased to 12 as requested
+            select: {
+                request_id: true,
+                title: true,
+                status: true,
+                priority: true,
+                created_at: true,
+                updated_at: true,
+                room: { select: { room_number: true } }
+            }
+        });
+
+        // 6. Fetch Vehicle Data (Registrations + Active Vehicles)
+        // A. Pending Registrations
+        const pendingRegistrations = await prisma.vehicle_registrations.findMany({
+            where: {
+                requested_by: tenantUserId,
+                status: 'requested'
+            },
+            orderBy: { requested_at: 'desc' },
+            select: {
+                registration_id: true,
+                vehicle_type: true,
+                license_plate: true,
+                brand: true,
+                status: true,
+                requested_at: true
+            }
+        });
+
+        // B. Active Vehicles (Approved & Parking)
+        const activeVehicles = await prisma.vehicles.findMany({
+            where: {
+                tenant_user_id: tenantUserId,
+                status: 'active'
+            },
+            include: {
+                slot: { // Include parking slot info
+                    include: { building: { select: { name: true } } }
+                }
+            }
+        });
+
+        // --- DATA TRANSFORMATION ---
+
+        // Contacts List (Unique list of Managers + Owners)
+        const contactsMap = new Map();
+
+        // Add Owners
+        owners.forEach(o => contactsMap.set(o.phone, { name: o.full_name, role: 'Owner', phone: o.phone }));
+
+        // Add Managers from Active Buildings
+        activeContracts.forEach(c => {
+            const managers = c.room_history?.building?.building_managers || [];
+            managers.forEach(m => {
+                if (m.user) {
+                    contactsMap.set(m.user.phone, { name: m.user.full_name, role: 'Manager', phone: m.user.phone });
+                }
+            });
+        });
+
+        // Format Contracts & Rooms
+        const rentedSpaces = activeContracts.map(c => {
+            const addendum = c.contract_addendums[0];
+            return {
+                contract_id: c.contract_id,
+                status: c.status,
+                room_number: c.room_history?.room_number || "Unknown",
+                building_name: c.room_history?.building?.name || "Unknown",
+                rent_amount: Number(c.rent_amount),
+                end_date: c.end_date, // Or calculate from addendum if needed
+                has_active_addendum: !!addendum
+            };
+        });
+
+        // Time Info
+        const now = new Date();
+        const vnTime = new Intl.DateTimeFormat('vi-VN', {
+            timeZone: 'Asia/Ho_Chi_Minh',
+            dateStyle: 'full',
+            timeStyle: 'medium'
+        }).format(now);
+
         const currentHour = parseInt(new Intl.DateTimeFormat('en-US', {
             timeZone: 'Asia/Ho_Chi_Minh',
             hour: 'numeric',
             hour12: false
         }).format(now));
 
-        if (!tenantInfo) {
-            const error = new Error('Tenant not found');
-            error.statusCode = 404;
-            throw error;
-        }
-
-        // --- FORMAT DATA FOR AI ---
-        
-        // 1. Bill History
-        const bill_history = tenantInfo.bills.map(bill => ({
-            bill_id: bill.bill_id,
-            bill_number: bill.bill_number || `ID: ${bill.bill_id}`,
-            description: bill.description,
-            total_due: (Number(bill.total_amount) || 0) + (Number(bill.penalty_amount) || 0),
-            status: bill.status, 
-            due_date: bill.due_date
-        }));
-
-        // 2. UPDATED: Contract Info
-        let active_contract = null;
-        if (tenantInfo.contracts.length > 0) {
-            const c = tenantInfo.contracts[0];
-            const latestAddendum = c.contract_addendums[0];
-
-            // Calculate effective end date if addendum changed it
-            // Assuming 'changes' JSON might contain { new_end_date: "..." }
-            const addendumEndDate = latestAddendum?.changes?.new_end_date;
-
-            active_contract = {
-                contract_id: c.contract_id,
-                start_date: c.start_date,
-                original_end_date: c.end_date,
-                current_end_date: addendumEndDate ? new Date(addendumEndDate) : c.end_date,
-                rent_amount: Number(c.rent_amount),
-                deposit_amount: Number(c.deposit_amount),
-                status: c.status,
-                has_file: !!c.s3_key, // True if PDF exists
-                addendum_note: latestAddendum ? `Có phụ lục: ${latestAddendum.summary}` : null
-            };
-        }
-
-        // 3. Contacts
-        const contacts = [];
-        if (tenantInfo.rooms?.buildings?.building_managers) {
-            tenantInfo.rooms.buildings.building_managers.forEach(mgr => {
-                contacts.push({ role: 'Manager', name: mgr.users.full_name, phone: mgr.users.phone });
-            });
-        }
-        owners.forEach(owner => {
-            contacts.push({ role: 'Owner', name: owner.full_name, phone: owner.phone });
-        });
-        
-        // 4. Maintenance
-        const pending_maintenance = tenantInfo.maintenance_requests.map(req => ({
-            request_id: req.request_id,
-            title: req.title,
-            status: req.status,
-            created_at: req.created_at
-        }));
-
-        // 5. Pending Registrations
-        const pending_registrations = tenantInfo.vehicle_registration.map(reg => {
-            let info = {};
-            try { info = JSON.parse(reg.reason || '{}'); } catch (e) { info = { note: "Error parsing" }; }
-            return {
-                registration_id: reg.assignment_id,
-                status: reg.status,
-                requested_at: reg.requested_at,
-                type: info.type,
-                license_plate: info.license_plate,
-                brand: info.brand,
-                color: info.color
-            };
-        });
-        
-        // 6. Active Vehicles
-        const active_vehicles = tenantInfo.vehicles.map(v => ({
-            vehicle_id: v.vehicle_id,
-            type: v.type,
-            license_plate: v.license_plate,
-            brand: v.brand,
-            color: v.color,
-            status: v.status
-        }));
-
-        // Calculate age
-        const birthDate = tenantInfo.users.birthday ? new Date(tenantInfo.users.birthday) : new Date();
-        const age = new Date().getFullYear() - birthDate.getFullYear();
-
-        // --- FINAL JSON RESPONSE ---
         return {
-            current_time_str: currentTimeStr, // Human readable for Bot to speak
-            current_hour: currentHour,        // Number for Bot to do logic (e.g. if hour > 22)
-            time_zone: "Asia/Ho_Chi_Minh (GMT+7)",
-            tenant_user_id: tenantInfo.users.user_id,
-            tenant_name: tenantInfo.users.full_name,
-            tenant_gender: tenantInfo.users.gender,
-            tenant_age: age,
-            room_id: tenantInfo.room_id,
-            room_number: tenantInfo.rooms?.room_number || "N/A",
-            building_name: tenantInfo.rooms?.buildings?.name || "N/A",
-            current_date: new Date().toISOString(),
-            bill_history: bill_history,             
-            contract_info: active_contract, // Renamed to match Dify Schema
-            contacts: contacts,
-            pending_maintenance: pending_maintenance,
-            pending_vehicle_registrations: pending_registrations,
-            active_vehicles: active_vehicles
+            meta: {
+                query_time: vnTime,
+                current_hour: currentHour,
+                tenant_name: tenantUser.full_name,
+                tenant_id: tenantUser.user_id
+            },
+            residency: {
+                active_contracts_count: activeContracts.length,
+                spaces: rentedSpaces
+            },
+            finance: {
+                unpaid_bills_count: recentBills.filter(b => b.status === 'issued' || b.status === 'overdue').length,
+                history: recentBills.map(b => ({
+                    id: b.bill_id,
+                    type: b.bill_type,
+                    amount: Number(b.total_amount),
+                    status: b.status,
+                    due: b.due_date ? b.due_date.toISOString().split('T')[0] : null
+                }))
+            },
+            maintenance: {
+                history: maintenanceHistory.map(m => ({
+                    id: m.request_id,
+                    title: m.title,
+                    status: m.status,
+                    priority: m.priority,
+                    room: m.room?.room_number,
+                    created_at: m.created_at ? m.created_at.toISOString().split('T')[0] : null
+                }))
+            },
+            vehicles: {
+                pending_registrations: pendingRegistrations,
+                active_vehicles: activeVehicles.map(v => ({
+                    plate: v.license_plate,
+                    brand: v.brand || 'Vehicle',
+                    parking_slot: v.slot ? `${v.slot.slot_number} (${v.slot.building?.name})` : 'No Slot Assigned'
+                }))
+            },
+            contacts: Array.from(contactsMap.values())
         };
     }
 

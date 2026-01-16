@@ -278,171 +278,25 @@ class RegulationController {
 
     // ============ BOT ENDPOINTS ============
 
-    /**
-     * Bot lấy thông tin regulation
-     */
-    async getRegulationByBot(req, res, next) {
-        try {
-            const { id } = req.params;
-            const { tenant_user_id } = req.query;
-
-            if (tenant_user_id && !Number.isInteger(parseInt(tenant_user_id))) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'tenant_user_id must be an integer'
-                });
-            }
-
-            const regulation = await regulationService.getRegulationByBot(
-                parseInt(id),
-                tenant_user_id ? parseInt(tenant_user_id) : null,
-                req.bot
-            );
-
-            res.json({
-                success: true,
-                data: regulation
-            });
-        } catch (err) {
-            next(err);
-        }
-    }
-
-    /**
-     * Bot lấy danh sách regulations với filter
-     */
     async getRegulationsByBot(req, res, next) {
         try {
+            const { tenant_user_id } = req.query; // Passed by Bot
             const filters = {
-                building_id: req.query.building_id,
-                status: req.query.status,
-                target: req.query.target,
-                version: req.query.version,
-                page: req.query.page,
-                limit: req.query.limit
+                limit: req.query.limit,
+                page: req.query.page
             };
+
+            if (!tenant_user_id) {
+                return res.status(400).json({ success: false, message: 'tenant_user_id is required' });
+            }
 
             const result = await regulationService.getRegulationsByBot(
+                parseInt(tenant_user_id),
                 filters,
                 req.bot
             );
 
-            res.json({
-                success: true,
-                data: result
-            });
-        } catch (err) {
-            next(err);
-        }
-    }
-
-    /**
-     * Bot lấy regulations theo building
-     */
-    async getRegulationsByBuildingForBot(req, res, next) {
-        try {
-            const { buildingId } = req.params;
-            const buildingIdInt = buildingId === 'null' ? null : parseInt(buildingId);
-
-            const filters = {
-                status: req.query.status,
-                target: req.query.target,
-                latest_only: req.query.latest_only,
-                page: req.query.page,
-                limit: req.query.limit
-            };
-
-            const result = await regulationService.getRegulationsByBuildingForBot(
-                buildingIdInt,
-                filters,
-                req.bot
-            );
-
-            res.json({
-                success: true,
-                data: result
-            });
-        } catch (err) {
-            next(err);
-        }
-    }
-
-    /**
-     * Bot thêm feedback cho regulation thay mặt tenant
-     */
-    async addRegulationFeedbackByBot(req, res, next) {
-        try {
-            const { id } = req.params;
-            const { tenant_user_id, comment } = req.body;
-
-            const feedback = await regulationService.addRegulationFeedbackByBot(
-                parseInt(id),
-                tenant_user_id,
-                comment,
-                req.bot
-            );
-
-            console.log(`[BOT] Added feedback to regulation ${id} for tenant ${tenant_user_id}`);
-
-            res.status(201).json({
-                success: true,
-                message: 'Feedback added successfully by bot',
-                data: feedback,
-                bot_info: {
-                    created_by: req.bot.name,
-                    created_at: req.bot.authenticated_at
-                }
-            });
-        } catch (err) {
-            next(err);
-        }
-    }
-
-    /**
-     * Bot lấy feedbacks của regulation
-     */
-    async getRegulationFeedbacksByBot(req, res, next) {
-        try {
-            const { id } = req.params;
-
-            const filters = {
-                page: req.query.page,
-                limit: req.query.limit
-            };
-
-            const result = await regulationService.getRegulationFeedbacksByBot(
-                parseInt(id),
-                filters,
-                req.bot
-            );
-
-            res.json({
-                success: true,
-                data: result
-            });
-        } catch (err) {
-            next(err);
-        }
-    }
-
-    /**
-     * Bot lấy versions của regulation
-     */
-    async getRegulationVersionsByBot(req, res, next) {
-        try {
-            const { title } = req.params;
-            const { building_id } = req.query;
-
-            const versions = await regulationService.getRegulationVersionsByBot(
-                title,
-                building_id,
-                req.bot
-            );
-
-            res.json({
-                success: true,
-                data: versions
-            });
+            res.json({ success: true, data: result });
         } catch (err) {
             next(err);
         }
