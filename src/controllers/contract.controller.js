@@ -3,6 +3,7 @@
 // Update: Pass IP & User-Agent for Consent Logging
 
 const contractService = require('../services/contract.service');
+const prisma = require('../config/prisma');
 
 class ContractController {
     // 1. Tạo hợp đồng mới
@@ -305,32 +306,101 @@ class ContractController {
     }
 
 
-    // 15. [BOT] Lấy link download cho Bot
+    // 15. [BOT] Lấy link download hợp đồng
+    // Supports multi-contract scenarios
     async getMyContractFileForBot(req, res, next) {
         try {
-            const { tenant_user_id } = req.body;
-            if (!tenant_user_id) return res.json({ url: null, message: "Lỗi: Thiếu ID." });
+            const { tenant_user_id, contract_id, room_number } = req.body;
+            
+            if (!tenant_user_id) {
+                return res.status(400).json({ success: false, message: "Missing tenant_user_id" });
+            }
 
             const mockUser = { role: 'TENANT', user_id: parseInt(tenant_user_id) };
 
-            let result = await contractService.getContracts({ status: 'active', page: 1, limit: 1 }, mockUser);
-            let contract = result.data?.[0];
+            // 1. Fetch ALL active/pending contracts that have files
+            const contracts = await prisma.contracts.findMany({
+                where: {
+                    tenant_user_id: parseInt(tenant_user_id),
+                    status: { in: ['active', 'pending'] },
+                    deleted_at: null,
+                    s3_key: { not: null } // Must have a file
+                },
+                include: {
+                    room_history: { 
+                        select: { 
+                            room_number: true, 
+                            building: { select: { name: true } } 
+                        } 
+                    }
+                },
+                orderBy: { created_at: 'desc' }
+            });
 
-            if (!contract || !contract.s3_key) {
-                result = await contractService.getContracts({ status: 'pending', page: 1, limit: 1 }, mockUser);
-                contract = result.data?.[0];
+            if (contracts.length === 0) {
+                return res.json({ 
+                    success: false, 
+                    message: "Không tìm thấy hợp đồng nào có file đính kèm." 
+                });
             }
 
-            if (!contract || !contract.s3_key) {
-                return res.json({ url: null, message: "Chưa có file hợp đồng." });
+            // 2. Identify Target Contract
+            let targetContract = null;
+
+            if (contract_id) {
+                // If Bot passed a specific ID (from previous context)
+                targetContract = contracts.find(c => c.contract_id === parseInt(contract_id));
+            } else if (room_number) {
+                // If User said "Give me contract for Room 101"
+                // Normalize strings for comparison
+                targetContract = contracts.find(c => 
+                    c.room_history?.room_number.toString() === room_number.toString()
+                );
             }
 
-            const dl = await contractService.downloadContract(contract.contract_id, mockUser);
-            res.json({ url: dl.download_url, message: "Link tải hợp đồng (1h):" });
+            // 3. Logic Branching
+            
+            // Scenario A: We found a specific target OR the tenant only has 1 contract total
+            if (targetContract || contracts.length === 1) {
+                const contract = targetContract || contracts[0];
+                
+                // Generate Link
+                const downloadInfo = await contractService.downloadContract(contract.contract_id, mockUser);
+                
+                return res.json({
+                    success: true,
+                    message: `Link tải hợp đồng phòng ${contract.room_history.room_number}`,
+                    data: {
+                        type: "single_link", // Bot checks this type
+                        contract_id: contract.contract_id,
+                        room_number: contract.room_history.room_number,
+                        building_name: contract.room_history.building.name,
+                        file_name: downloadInfo.file_name,
+                        download_url: downloadInfo.download_url
+                    }
+                });
+            }
+
+            // Scenario B: Ambiguity (Multiple contracts found, no specific target)
+            // Bot should use this list to ask the user "Which room?"
+            return res.json({
+                success: true,
+                message: "Tìm thấy nhiều hợp đồng. Vui lòng chỉ định phòng.",
+                data: {
+                    type: "multiple_choices", // Bot checks this type
+                    options: contracts.map(c => ({
+                        contract_id: c.contract_id,
+                        room_number: c.room_history.room_number,
+                        building_name: c.room_history.building.name,
+                        status: c.status
+                    }))
+                }
+            });
 
         } catch (err) {
-            console.error(err);
-            res.json({ url: null, message: "Lỗi hệ thống." });
+            console.error("Bot Contract Download Error:", err);
+            // Don't expose internal errors to Bot user, just say system error
+            res.status(500).json({ success: false, message: "Lỗi hệ thống khi lấy file." });
         }
     }
 }

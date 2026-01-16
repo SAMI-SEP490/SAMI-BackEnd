@@ -32,30 +32,45 @@ class PaymentController {
 
     async createPayOSLinkByBot(req, res, next) {
         try {
-            // 1. Get data from Bot request
-            // Note: Bot might send bill_id as a single number or string
             const { tenant_user_id, bill_id } = req.body;
 
             if (!tenant_user_id || !bill_id) {
-                return res.status(400).json({ success: false, message: "Missing required fields" });
+                return res.status(400).json({ success: false, message: "Missing required fields: tenant_user_id, bill_id" });
             }
 
-            // 2. Ensure billIds is an array (Bot might send just one ID)
-            const billIds = Array.isArray(bill_id) ? bill_id : [parseInt(bill_id)];
+            // Handle: bill_id can be "123" (string), 123 (int), or [123, 124] (array)
+            let billIds = [];
+            if (Array.isArray(bill_id)) {
+                billIds = bill_id.map(id => parseInt(id));
+            } else {
+                // Split comma-separated string if needed: "123,124"
+                billIds = String(bill_id).split(',').map(id => parseInt(id.trim()));
+            }
 
-            // 3. Call the existing service
-            const result = await PaymentService.createPayOSLink(tenant_user_id, billIds);
+            // Filter out NaNs
+            billIds = billIds.filter(id => !isNaN(id));
 
-            // 4. Return URL
+            if (billIds.length === 0) {
+                return res.status(400).json({ success: false, message: "Invalid bill_id format" });
+            }
+
+            // Call Service
+            const result = await PaymentService.createPayOSLink(parseInt(tenant_user_id), billIds);
+
             res.json({
                 success: true,
+                message: "Payment link created successfully",
                 data: {
                     checkoutUrl: result.checkoutUrl,
-                    message: "Payment link created successfully."
+                    bill_ids: billIds
                 }
             });
         } catch (err) {
-            next(err);
+            // Return friendly error message for Bot
+            res.status(500).json({
+                success: false,
+                message: err.message || "Failed to create payment link"
+            });
         }
     }
 
