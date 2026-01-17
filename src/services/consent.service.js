@@ -236,6 +236,120 @@ class ConsentService {
             },
         });
     }
+
+    async getVersionById(versionId) {
+        return await prisma.consent_versions.findUnique({
+            where: { version_id: parseInt(versionId) }
+        });
+    }
+
+    /**
+     * [C] Create Draft: Tạo bản nháp mới (Chưa active)
+     */
+    async draftConsentVersion(consentType, versionNumber, content) {
+        const contentHash = crypto
+            .createHash('sha256')
+            .update(content)
+            .digest('hex');
+
+        // Chỉ tạo, không set is_active = true
+        return await prisma.consent_versions.create({
+            data: {
+                consent_type: consentType,
+                version_number: versionNumber,
+                content: content,
+                content_hash: contentHash,
+                is_active: false, // Mặc định là bản nháp
+            },
+        });
+    }
+
+    /**
+     * [U] Update Draft: Sửa nội dung bản nháp
+     * Chỉ cho phép sửa khi chưa Active và chưa có ai ký
+     */
+    async updateConsentVersion(versionId, newContent, newVersionNumber) {
+        const id = parseInt(versionId);
+
+        // 1. Kiểm tra tồn tại và trạng thái
+        const version = await prisma.consent_versions.findUnique({
+            where: { version_id: id }
+        });
+
+        if (!version) {
+            throw new Error('Version not found');
+        }
+
+        // BLOCK: Không cho sửa bản đang chạy
+        if (version.is_active) {
+            throw new Error('Cannot update an ACTIVE version. Please draft a new version instead.');
+        }
+
+        // BLOCK: Không cho sửa bản đã có người ký (an toàn dữ liệu)
+        const hasLogs = await prisma.consent_logs.findFirst({
+            where: { version_id: id }
+        });
+        if (hasLogs) {
+            throw new Error('Cannot update this version because users have already signed/interacted with it.');
+        }
+
+        // 2. Chuẩn bị data update
+        const updateData = {};
+        if (newContent) {
+            updateData.content = newContent;
+            updateData.content_hash = crypto.createHash('sha256').update(newContent).digest('hex');
+        }
+        if (newVersionNumber) {
+            updateData.version_number = newVersionNumber;
+        }
+
+        // 3. Thực hiện update
+        return await prisma.consent_versions.update({
+            where: { version_id: id },
+            data: updateData
+        });
+    }
+
+    /**
+     * [Action] Publish: Công bố bản nháp thành bản chính thức
+     */
+    async publishConsentVersion(versionId) {
+        const id = parseInt(versionId);
+
+        // 1. Lấy thông tin version cần publish
+        const versionToPublish = await prisma.consent_versions.findUnique({
+            where: { version_id: id }
+        });
+
+        if (!versionToPublish) {
+            throw new Error('Version not found');
+        }
+
+        if (versionToPublish.is_active) {
+            return versionToPublish; // Đã active rồi thì thôi
+        }
+
+        // 2. Sử dụng transaction để đảm bảo tính nhất quán
+        // - Tắt tất cả version cũ cùng loại
+        // - Bật version mới
+        return await prisma.$transaction(async (tx) => {
+            // Deactivate old versions
+            await tx.consent_versions.updateMany({
+                where: {
+                    consent_type: versionToPublish.consent_type,
+                    is_active: true
+                },
+                data: { is_active: false }
+            });
+
+            // Activate new version
+            return await tx.consent_versions.update({
+                where: { version_id: id },
+                data: { is_active: true }
+            });
+        });
+    }
+
 }
 
 module.exports = new ConsentService();

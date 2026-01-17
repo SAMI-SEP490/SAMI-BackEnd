@@ -517,6 +517,8 @@ model consent_versions {
   created_at DateTime @default(now()) @db.Timestamp(6)
   updated_at DateTime @updatedAt @db.Timestamp(6)
 
+  is_major_update Boolean @default(true)
+
   // Relations
   consent_logs consent_logs[]
 

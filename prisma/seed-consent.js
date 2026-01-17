@@ -12,7 +12,9 @@ async function seedConsentVersions() {
     try {
         console.log('🌱 Seeding consent versions...\n');
 
+        // ============================================================
         // 1. Terms of Service
+        // ============================================================
         const tosContent = `
 ĐIỀU KHOẢN SỬ DỤNG DỊCH VỤ
 
@@ -36,7 +38,7 @@ Cập nhật lần cuối: ${new Date().toLocaleDateString('vi-VN')}
 
 3. THANH TOÁN
    - Tiền thuê phải được thanh toán vào ngày đầu tiên của mỗi tháng
-   - Phí phạt 2% sẽ được áp dụng cho mỗi ngày trễ hạn
+   - Phí phạt sẽ được áp dụng cho mỗi ngày trễ hạn
    - Tiền đặt cọc sẽ được hoàn trả sau khi kết thúc hợp đồng
 
 4. CHÍNH SÁCH HỦY BỎ
@@ -71,7 +73,9 @@ Cập nhật lần cuối: ${new Date().toLocaleDateString('vi-VN')}
         });
         console.log('✅ Created Terms of Service v1.0');
 
+        // ============================================================
         // 2. Privacy Policy
+        // ============================================================
         const privacyContent = `
 CHÍNH SÁCH BẢO MẬT
 
@@ -137,22 +141,29 @@ Cập nhật lần cuối: ${new Date().toLocaleDateString('vi-VN')}
         });
         console.log('✅ Created Privacy Policy v1.0');
 
+        // ============================================================
         // 3. Contract Signing
+        // ============================================================
         const contractContent = `
-ĐIỀU KHOẢN KÝ KẾT HỢP ĐỒNG
+ĐIỀU KHOẢN KÝ KẾT HỢP ĐỒNG ĐIỆN TỬ
 
-1. XÁC NHẬN
-   Bằng việc ký hợp đồng điện tử này, bạn xác nhận:
-   - Đã đọc và hiểu đầy đủ nội dung hợp đồng
-   - Đồng ý với tất cả các điều khoản được nêu trong hợp đồng
-   - Thông tin cung cấp là chính xác và trung thực
+1. XÁC NHẬN PHÁP LÝ
+   Bằng việc thực hiện thao tác ký kết điện tử này, bạn xác nhận:
+   - Đã đọc, hiểu rõ và đồng ý với toàn bộ điều khoản trong Hợp đồng thuê.
+   - Các thông tin cá nhân cung cấp là chính xác, đầy đủ và trung thực.
+   - Bạn có đủ năng lực hành vi dân sự để thực hiện giao dịch này.
 
-2. CHỮ KÝ ĐIỆN TỬ
-   - Chữ ký điện tử có giá trị pháp lý tương đương chữ ký viết tay
-   - Bạn chịu trách nhiệm về tính bảo mật của tài khoản
+2. GIÁ TRỊ CỦA CHỮ KÝ ĐIỆN TỬ
+   - Chữ ký điện tử/Xác thực OTP được tạo ra có giá trị pháp lý ràng buộc tương đương với chữ ký viết tay và con dấu (nếu có) theo Luật Giao dịch điện tử.
+   - Hợp đồng điện tử sau khi ký kết có giá trị làm chứng cứ trong trường hợp xảy ra tranh chấp.
 
-3. HIỆU LỰC
-   Hợp đồng có hiệu lực kể từ ngày ký và được lưu trữ trong hệ thống.
+3. TRÁCH NHIỆM BẢO MẬT
+   - Bạn có trách nhiệm bảo mật thiết bị và mã xác thực (OTP) dùng để ký kết.
+   - Mọi giao dịch phát sinh từ tài khoản của bạn được coi là do chính bạn thực hiện.
+
+4. LƯU TRỮ VÀ TRA CỨU
+   - Hợp đồng đã ký sẽ được gửi về email của bạn và lưu trữ an toàn trên hệ thống.
+   - Bạn có thể truy cập và tải về bản sao hợp đồng bất cứ lúc nào.
         `.trim();
 
         const contractHash = crypto.createHash('sha256').update(contractContent).digest('hex');
@@ -175,11 +186,101 @@ Cập nhật lần cuối: ${new Date().toLocaleDateString('vi-VN')}
         });
         console.log('✅ Created Contract Signing v1.0');
 
+        // ============================================================
+        // 4. Contract Termination (Mới thêm)
+        // ============================================================
+        const terminationContent = `
+ĐIỀU KHOẢN VÀ XÁC NHẬN CHẤM DỨT HỢP ĐỒNG
+
+1. NGUYÊN TẮC CHẤM DỨT
+   Việc chấm dứt hợp đồng thuê phải tuân thủ các quy định đã nêu trong Hợp đồng thuê nhà và pháp luật hiện hành.
+
+2. NGHĨA VỤ CỦA BÊN THUÊ KHI CHẤM DỨT
+   - Bàn giao lại mặt bằng/phòng ốc nguyên trạng như khi nhận (trừ hao mòn tự nhiên).
+   - Thanh toán đầy đủ các khoản tiền thuê, điện, nước, dịch vụ còn nợ tính đến ngày bàn giao.
+   - Hoàn trả chìa khóa, thẻ từ và các tài sản khác thuộc sở hữu của Bên cho thuê.
+
+3. QUY ĐỊNH VỀ TIỀN CỌC
+   - Tiền cọc sẽ được hoàn trả sau khi trừ các chi phí sửa chữa hư hỏng (nếu có) và các khoản nợ tồn đọng.
+   - Trường hợp chấm dứt trước hạn không đúng quy định (như không báo trước), tiền cọc có thể bị tịch thu theo điều khoản Hợp đồng.
+
+4. XÁC NHẬN ĐIỆN TỬ
+   Bằng việc xác nhận này, bạn đồng ý:
+   - Chấm dứt hiệu lực của Hợp đồng thuê hiện tại.
+   - Các biên bản bàn giao và thanh lý sẽ được lập và ký kết để hoàn tất thủ tục.
+        `.trim();
+
+        const terminationHash = crypto.createHash('sha256').update(terminationContent).digest('hex');
+
+        const termination = await prisma.consent_versions.upsert({
+            where: {
+                consent_type_version_number: {
+                    consent_type: 'CONTRACT_TERMINATION',
+                    version_number: 'v1.0'
+                }
+            },
+            update: {},
+            create: {
+                consent_type: 'CONTRACT_TERMINATION',
+                version_number: 'v1.0',
+                content: terminationContent,
+                content_hash: terminationHash,
+                is_active: true,
+            },
+        });
+        console.log('✅ Created Contract Termination v1.0');
+
+        // ============================================================
+        // 5. Contract Addendum (Mới thêm)
+        // ============================================================
+        const addendumContent = `
+ĐIỀU KHOẢN KÝ KẾT PHỤ LỤC HỢP ĐỒNG
+
+1. MỐI QUAN HỆ VỚI HỢP ĐỒNG GỐC
+   - Phụ lục này là một bộ phận không thể tách rời của Hợp đồng thuê nhà đã ký kết.
+   - Các điều khoản không được đề cập trong Phụ lục này vẫn giữ nguyên hiệu lực theo Hợp đồng gốc.
+
+2. NỘI DUNG ĐIỀU CHỈNH
+   Bạn xác nhận đồng ý với các thay đổi được ghi nhận trong Phụ lục này, bao gồm nhưng không giới hạn ở:
+   - Gia hạn thời gian thuê.
+   - Điều chỉnh giá thuê hoặc phí dịch vụ.
+   - Thay đổi số lượng người ở hoặc điều khoản sử dụng.
+
+3. NGUYÊN TẮC ÁP DỤNG
+   Trong trường hợp có sự mâu thuẫn giữa nội dung của Phụ lục này và Hợp đồng gốc, nội dung trong Phụ lục này sẽ được ưu tiên áp dụng.
+
+4. HIỆU LỰC
+   Phụ lục có hiệu lực kể từ ngày được hai bên xác nhận ký kết điện tử thành công.
+        `.trim();
+
+        const addendumHash = crypto.createHash('sha256').update(addendumContent).digest('hex');
+
+        const addendum = await prisma.consent_versions.upsert({
+            where: {
+                consent_type_version_number: {
+                    consent_type: 'CONTRACT_ADDENDUM',
+                    version_number: 'v1.0'
+                }
+            },
+            update: {},
+            create: {
+                consent_type: 'CONTRACT_ADDENDUM',
+                version_number: 'v1.0',
+                content: addendumContent,
+                content_hash: addendumHash,
+                is_active: true,
+            },
+        });
+        console.log('✅ Created Contract Addendum v1.0');
+
+
         console.log('\n✅ Seeding completed successfully!');
         console.log('\nCreated versions:');
         console.log(`- Terms of Service: ${tos.version_id}`);
         console.log(`- Privacy Policy: ${privacy.version_id}`);
         console.log(`- Contract Signing: ${contract.version_id}`);
+        console.log(`- Contract Termination: ${termination.version_id}`);
+        console.log(`- Contract Addendum: ${addendum.version_id}`);
 
     } catch (error) {
         console.error('❌ Error seeding consent versions:', error);
