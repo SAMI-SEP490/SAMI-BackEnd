@@ -232,39 +232,48 @@ class BillService {
   }
 
   async createUtilityBill(room, building, reading, due_date, created_by) {
-    // Calculate costs (Standard logic)
+    // 1. Determine the standard "Month" boundaries
+    const monthStart = new Date(reading.billing_year, reading.billing_month - 1, 1);
+    const monthEnd = new Date(reading.billing_year, reading.billing_month, 0);
+
+    // 2. Fetch Contract Start Date (Handle if not populated)
+    let contractStart = null;
+    if (room.current_contract && room.current_contract.start_date) {
+      contractStart = new Date(room.current_contract.start_date);
+    } else if (room.current_contract_id) {
+      // Fallback: Fetch if only ID provided
+      const c = await prisma.contracts.findUnique({
+        where: { contract_id: room.current_contract_id },
+        select: { start_date: true }
+      });
+      if (c) contractStart = new Date(c.start_date);
+    }
+
+    // 3. [FIX] Dynamic Start Date Logic
+    // If Contract starts AFTER the 1st of this billing month, use Contract Start.
+    // Example: Bill Jan (1-31). Contract starts Jan 18. -> Period: Jan 18 - Jan 31.
+    let periodStart = monthStart;
+
+    if (contractStart && contractStart > monthStart && contractStart <= monthEnd) {
+      periodStart = contractStart;
+      console.log(`[BillLogic] Adjusted Utility Start for Room ${room.room_number}: ${monthStart.toISOString().split('T')[0]} -> ${periodStart.toISOString().split('T')[0]}`);
+    }
+
+    // 4. Calculate Costs
     const electricUsed = reading.curr_electric - reading.prev_electric;
     const waterUsed = reading.curr_water - reading.prev_water;
-
     const electricCost = electricUsed * Number(reading.electric_price);
     const waterCost = waterUsed * Number(reading.water_price);
     const serviceFee = Number(building.service_fee || 0);
-
     const totalAmount = electricCost + waterCost + serviceFee;
 
-    // Period: 1st to End of Billing Month
-    const periodStart = new Date(reading.billing_year, reading.billing_month - 1, 1);
-    const periodEnd = new Date(reading.billing_year, reading.billing_month, 0);
-
-    // Check Contract Start Date [NEW]
-    const contract = room.current_contract;
-    // We fetch contract if it wasn't fully included (in Manual/Bulk calls usually passed differently, but here we assume room.current_contract is populated or fetched)
-    // If room is passed with full contract object:
-    if (contract && contract.start_date) {
-      if (periodStart < new Date(contract.start_date)) {
-        // Optional: Allow if reading period overlaps start date partially? 
-        // Strict rule: If period START is before contract START, block it.
-        throw new Error(`Billing period (${periodStart.toISOString().split('T')[0]}) is before contract start date.`);
-      }
-    }
-
-    // Overlap Check (Specific to Utilities)
-    // Prevent creating a second 'utilities' bill for this room & period
-    await this._checkBillOverlap(room.room_id, periodStart, periodEnd, null, 'utilities');
+    // 5. Overlap Check
+    // Now safe because periodStart is guaranteed >= contractStart (if within month)
+    await this._checkBillOverlap(room.room_id, periodStart, monthEnd, null, 'utilities');
 
     const billNumber = generateBillNumber(reading.billing_year, reading.billing_month, 'utilities');
 
-    // Transaction: Create Bill AND Link Reading
+    // 6. Create
     return prisma.$transaction(async (tx) => {
       const newBill = await tx.bills.create({
         data: {
@@ -272,8 +281,8 @@ class BillService {
           contract_id: room.current_contract_id,
           tenant_user_id: room.current_contract.tenant_user_id,
           bill_type: 'utilities',
-          billing_period_start: periodStart,
-          billing_period_end: periodEnd,
+          billing_period_start: periodStart, // <--- Used the adjusted date
+          billing_period_end: monthEnd,
           due_date: due_date,
           total_amount: totalAmount,
           status: 'issued',
