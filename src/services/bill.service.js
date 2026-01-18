@@ -34,7 +34,7 @@ class BillService {
     const paymentDeadline = new Date(today);
     paymentDeadline.setDate(today.getDate() + 10);
 
-    console.log(`[AutoBill] Running scan for Day ${currentDayOfMonth}...`);
+    console.log(`[AutoBill] --- Starting Scan for Day ${currentDayOfMonth} ---`);
 
     // A. RENT BILLS (Based on Contract Start Day)
     // Only fetch ACTIVE contracts
@@ -47,25 +47,38 @@ class BillService {
     });
 
     let rentCount = 0;
+    let rentSkipped = 0;
+
     for (const contract of activeContracts) {
-      // Check if TODAY is the contract's cycle day
       if (this._shouldCreateRentBill(contract, today)) {
-        await this.createRentBill({
-          contract_id: contract.contract_id,
-          tenant_user_id: contract.tenant_user_id,
-          amount: contract.rent_amount,
-          // Period starts TODAY
-          periodStart: today,
-          // Deadline is 5 days from now
-          dueDate: paymentDeadline,
-          cycleMonths: contract.payment_cycle_months
-        });
-        rentCount++;
+        try {
+          // Attempt to create bill
+          await this.createRentBill({
+            contract_id: contract.contract_id,
+            tenant_user_id: contract.tenant_user_id,
+            amount: contract.rent_amount,
+            periodStart: today,
+            dueDate: paymentDeadline,
+            cycleMonths: contract.payment_cycle_months
+          });
+          
+          console.log(`[AutoBill] ✅ Created Rent Bill for Contract ${contract.contract_number}`);
+          rentCount++;
+
+        } catch (error) {
+          // [LOGGING] Check if it's our specific "Overlap" error
+          if (error.statusCode === 409) {
+            console.log(`[AutoBill] ⏭️ SKIPPED Rent for Contract ${contract.contract_number}: Manual bill already exists for this period.`);
+            rentSkipped++;
+          } else {
+            // Real error, log it but don't stop the loop
+            console.error(`[AutoBill] ❌ ERROR creating Rent for Contract ${contract.contract_number}:`, error.message);
+          }
+        }
       }
     }
 
-    // B. UTILITY BILLS (Based on Building.bill_due_day)
-    // Find buildings where TODAY is the billing day
+    // --- B. UTILITY BILLS ---
     const buildingsDue = await prisma.buildings.findMany({
       where: {
         is_active: true,
@@ -75,16 +88,21 @@ class BillService {
 
     let utilityCount = 0;
     for (const building of buildingsDue) {
-      await this._processUtilityBillsForBuilding(building, paymentDeadline);
-      utilityCount++;
+      const result = await this._processUtilityBillsForBuilding(building, paymentDeadline);
+      utilityCount += result.created;
     }
 
-    return { rent_created: rentCount, utility_batches: utilityCount };
+    console.log(`[AutoBill] --- Scan Complete ---`);
+    return { 
+        rent_created: rentCount, 
+        rent_skipped: rentSkipped,
+        utility_created: utilityCount 
+    };
   }
 
   /**
-       * Helper: Logic to check if Rent should be generated TODAY
-       */
+   * Helper: Logic to check if Rent should be generated TODAY
+   */
   _shouldCreateRentBill(contract, today) {
     const start = new Date(contract.start_date);
 
@@ -124,10 +142,12 @@ class BillService {
     const rooms = await prisma.rooms.findMany({
       where: {
         building_id: building.building_id,
-        current_contract_id: { not: null } // Only occupied rooms
+        current_contract_id: { not: null }
       },
       include: { current_contract: true }
     });
+
+    let created = 0;
 
     for (const room of rooms) {
       // Find reading for last month
@@ -141,11 +161,25 @@ class BillService {
         }
       });
 
-      // If reading exists and NOT billed yet
+      // Logic: Only process if reading exists AND hasn't been linked to a bill yet
       if (reading && !reading.bill_id) {
-        await this.createUtilityBill(room, building, reading, dueDate);
+        try {
+            await this.createUtilityBill(room, building, reading, dueDate);
+            console.log(`[AutoBill] ✅ Created Utility Bill for Room ${room.room_number}`);
+            created++;
+        } catch (error) {
+            if (error.statusCode === 409) {
+                console.log(`[AutoBill] ⏭️ SKIPPED Utility for Room ${room.room_number}: Bill exists.`);
+            } else {
+                console.error(`[AutoBill] ❌ ERROR Utility for Room ${room.room_number}:`, error.message);
+            }
+        }
+      } else if (reading && reading.bill_id) {
+          // Already billed (Reading is linked)
+          // console.log(`[AutoBill] Info: Room ${room.room_number} reading already billed.`);
       }
     }
+    return { created };
   }
 
   // ==========================================
@@ -153,14 +187,15 @@ class BillService {
   // ==========================================
 
   async createRentBill({ contract_id, tenant_user_id, amount, periodStart, dueDate, cycleMonths = 1 }) {
-    // Task 3: Rent Cap Check
     const contract = await prisma.contracts.findUnique({ where: { contract_id }, select: { rent_amount: true, room_id: true } });
+    
+    // Rent Cap Check
     if (Number(amount) > Number(contract.rent_amount)) throw new Error(`Bill amount exceeds contract rent`);
 
     const periodEnd = new Date(periodStart);
     periodEnd.setMonth(periodEnd.getMonth() + cycleMonths);
 
-    // Uses Contract ID for overlap check (Schema Update)
+    // [IMPORTANT] Overlap Check
     await this._checkBillOverlap(contract.room_id, periodStart, periodEnd, null, 'monthly_rent');
 
     const billNumber = generateBillNumber(periodStart.getFullYear(), periodStart.getMonth() + 1, 'monthly_rent');
@@ -828,8 +863,6 @@ class BillService {
   }
 
   async _checkBillOverlap(roomId, startDate, endDate, excludeBillId = null, billType = null) {
-    // Build the where clause
-    // Ensure you fetch contracts first since bills don't have room_id
     const contracts = await prisma.contracts.findMany({ where: { room_id: roomId }, select: { contract_id: true } });
     const contractIds = contracts.map(c => c.contract_id);
     if (contractIds.length === 0) return;
@@ -843,9 +876,11 @@ class BillService {
     if (billType) whereClause.bill_type = billType;
 
     const overlappingBill = await prisma.bills.findFirst({ where: whereClause, select: { bill_number: true, bill_type: true } });
+
+    // THIS IS WHAT TRIGGERS THE SKIP IN AUTO-BILLING
     if (overlappingBill) {
       const error = new Error(`Khoảng thời gian trùng với hóa đơn: ${overlappingBill.bill_number}`);
-      error.statusCode = 409;
+      error.statusCode = 409; // Conflict
       throw error;
     }
   }
