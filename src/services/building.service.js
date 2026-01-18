@@ -846,6 +846,8 @@ class BuildingService {
       // ✅ GIÁ ĐIỆN / NƯỚC
       electric_unit_price: building.electric_unit_price,
       water_unit_price: building.water_unit_price,
+      service_fee: building.service_fee,
+      bill_due_day: building.bill_due_day,
 
       // ✅ THÊM 2 FIELD BÃI XE (MỚI)
       max_4_wheel_slot: building.max_4_wheel_slot,

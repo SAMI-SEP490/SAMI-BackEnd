@@ -62,17 +62,12 @@ router.get('/unbilled-rooms', billController.getUnbilledRooms);
 // Tạo hóa đơn Nháp (Chưa gửi cho khách, có thể sửa thoải mái)
 router.post('/create/draft', validate(createDraftBillSchema), billController.createDraftBill);
 
-// Tạo và Phát hành ngay (Gửi cho khách luôn, yêu cầu dữ liệu phải chuẩn)
-// Có validate: Tổng tiền không được lớn hơn tiền hợp đồng
-router.post('/create/issue', validate(createIssuedBillSchema), billController.createIssuedBill);
-
-// --- CHỈNH SỬA (EDIT) ---
+// POST /api/bills/bulk
+// Body: { building_id: 1, bill_type: 'utilities', month: 2, year: 2026, due_date: '...' }
+router.post('/create/bulk', billController.createBulkBill);
 
 // Sửa hóa đơn Nháp (Có thể sửa tiền, dịch vụ, hoặc chuyển trạng thái sang 'issued' để phát hành)
 router.put('/edit/draft/:id', validate(updateDraftBillSchema), billController.updateDraftBill);
-
-// Sửa hóa đơn Đã phát hành (Chỉ được sửa ngày, ghi chú. KHÔNG được sửa số tiền)
-router.put('/edit/issue/:id', validate(updateIssuedBillSchema), billController.updateIssuedBill);
 
 // --- GIA HẠN (EXTENSION) - [NEW] ---
 

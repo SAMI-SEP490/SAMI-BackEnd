@@ -66,13 +66,30 @@ class BillController {
         } catch (err) { next(err); }
     }
     
-    async createIssuedBill(req, res, next) {
+    async createBulkBill(req, res, next) {
         try {
-            const createdById = req.user.user_id;
-            // Now supports validation for 'service_charges' and 'rent cap' logic
-            const newBill = await BillService.createIssuedBill(req.body, createdById);
-            res.status(201).json({ success: true, message: "Bill created and issued", data: newBill });
-        } catch (err) { next(err); }
+            const { building_id, ...data } = req.body;
+
+            if (!building_id) {
+                return res.status(400).json({ success: false, message: "Building ID is required" });
+            }
+
+            // Optional: Verify Manager Access to Building here if not handled by middleware
+
+            const result = await BillService.createBulkBill(
+                parseInt(building_id),
+                data,
+                req.user.user_id
+            );
+
+            res.json({
+                success: true,
+                message: `Bulk process complete. Created: ${result.success}, Failed: ${result.failed}`,
+                data: result
+            });
+        } catch (err) {
+            next(err);
+        }
     }
 
     // --- EDIT ACTIONS ---
@@ -86,17 +103,6 @@ class BillController {
             const updatedBill = await BillService.updateDraftBill(billId, req.body);
             const message = req.body.status === 'issued' ? "Bill published successfully" : "Draft bill updated";
             res.status(200).json({ success: true, message: message, data: updatedBill });
-        } catch (err) { next(err); }
-    }
-    
-    async updateIssuedBill(req, res, next) {
-        try {
-            const billId = parseInt(req.params.id, 10);
-            if (isNaN(billId)) return res.status(400).json({ success: false, message: "Invalid Bill ID" });
-            
-            // Restricted update (only dates/notes, no money changes)
-            const updatedBill = await BillService.updateIssuedBill(billId, req.body);
-            res.status(200).json({ success: true, message: "Issued bill updated", data: updatedBill });
         } catch (err) { next(err); }
     }
 
