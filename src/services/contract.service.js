@@ -23,7 +23,7 @@ const CONTRACT_STATUS = {
   EXPIRED: "expired",
 };
 const MAX_RETROACTIVE_MONTHS = 6;
-const MAX_DURATION_MONTHS = 120;
+const MAX_DURATION_MONTHS = 60;
 // Base URL frontend của bạn (Lấy từ env hoặc hardcode)
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 

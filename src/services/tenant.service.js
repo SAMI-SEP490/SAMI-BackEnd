@@ -582,30 +582,27 @@ class TenantService {
         };
     }
 
-    /**
-     * [NEW] Tìm kiếm chính xác Tenant theo SĐT hoặc CCCD
-     */
-    async lookupTenantByExactInfo(identifier) {
+    async lookupTenantByExactInfo(identifier, buildingId = null) {
         if (!identifier) return null;
 
         const cleanId = identifier.trim();
 
+        // [UPDATE] Xây dựng điều kiện Where cơ bản
+        const whereCondition = {
+            OR: [
+                { user: { phone: cleanId } }, // Schema relation là 'user' [cite: 15]
+                { id_number: cleanId }
+            ]
+        };
+
+        // [UPDATE] Nếu có buildingId, thêm điều kiện lọc
+        if (buildingId) {
+            whereCondition.building_id = parseInt(buildingId);
+        }
+
         const tenant = await prisma.tenants.findFirst({
-            where: {
-                OR: [
-                    {
-                        // FIX 1: Đổi 'users' thành 'user' (theo schema)
-                        user: {
-                            phone: cleanId
-                        }
-                    },
-                    {
-                        id_number: cleanId
-                    }
-                ]
-            },
+            where: whereCondition, // Sử dụng điều kiện đã build
             include: {
-                // FIX 2: Đổi 'users' thành 'user'
                 user: {
                     select: {
                         user_id: true,
@@ -619,8 +616,6 @@ class TenantService {
                         avatar_url: true,
                     }
                 },
-                // FIX 3: Lấy phòng qua bảng trung gian room_tenants_history
-                // (Schema tenants không có trực tiếp 'rooms')
                 room_tenants_history: {
                     where: { is_current: true },
                     take: 1,
@@ -631,9 +626,7 @@ class TenantService {
                                 room_number: true,
                                 floor: true,
                                 building_id: true,
-                                building: { // relation trong model rooms là 'building'
-                                    select: { name: true }
-                                }
+                                building: { select: { name: true } }
                             }
                         }
                     }
@@ -643,15 +636,12 @@ class TenantService {
 
         if (!tenant) return null;
 
-        // FIX 4: Mapping lại dữ liệu để khớp với format của hàm _formatTenantResult
-        // Vì Prisma trả về 'user' (số ít) nhưng hàm format đang đợi 'users' (số nhiều)
-        // Và lấy phòng từ mảng history ra
         const currentRoom = tenant.room_tenants_history[0]?.room || null;
 
         const formattedTenantData = {
             ...tenant,
-            users: tenant.user, // Map 'user' -> 'users'
-            rooms: currentRoom  // Map room tìm được vào 'rooms'
+            users: tenant.user,
+            rooms: currentRoom
         };
 
         return this._formatTenantResult(formattedTenantData);
