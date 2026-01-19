@@ -217,7 +217,7 @@ class TenantController {
 
     async lookupTenant(req, res, next) {
         try {
-            const { q } = req.query; // 'q' là từ khóa (SĐT hoặc CCCD)
+            const { q, building_id } = req.query; // 'q' là từ khóa (SĐT hoặc CCCD)
 
             if (!q) {
                 return res.status(400).json({
