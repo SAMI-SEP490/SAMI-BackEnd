@@ -47,23 +47,29 @@ class GuestController {
         try {
             const filters = {
                 status: req.query.status,
-                host_user_id: req.query.host_user_id ? parseInt(req.query.host_user_id) : undefined,
-                room_id: req.query.room_id ? parseInt(req.query.room_id) : undefined,
+                host_user_id: req.query.host_user_id
+                    ? Number(req.query.host_user_id)
+                    : undefined,
+                room_id: req.query.room_id
+                    ? Number(req.query.room_id)
+                    : undefined,
+                building_id: req.query.building_id
+                    ? Number(req.query.building_id)
+                    : undefined,
                 arrival_date_from: req.query.arrival_date_from,
                 arrival_date_to: req.query.arrival_date_to,
-                page: req.query.page,
-                limit: req.query.limit
+                page: req.query.page ? Number(req.query.page) : 1,
+                limit: req.query.limit ? Number(req.query.limit) : 10,
             };
 
             const result = await guestService.getGuestRegistrations(
                 filters,
-                req.user.user_id,
-                req.user.role
+                req.user // ✅ truyền full user
             );
 
             res.json({
                 success: true,
-                data: result
+                data: result,
             });
         } catch (err) {
             next(err);

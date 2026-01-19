@@ -35,7 +35,7 @@ const cron = require('node-cron');
 const BillService = require('./services/bill.service');
 const utilityRoutes = require('./routes/utility.routes');
 const { getCloudWatchLogger } = require('./utils/cloudwatch-logger');
-
+const VehicleService = require('./services/vehicle.service');
 const app = express();
 
 // Security middleware
@@ -106,7 +106,18 @@ app.get('/health', async (req, res) => {
 // ==========================================
 // 🕒 CRON JOBS (Scheduled Tasks)
 // ==========================================
-
+cron.schedule('0 0 0 * * *', async () => {
+    console.log('🧹 [CRON] Cleaning expired vehicles...');
+    try {
+        const deletedCount = await VehicleService.cleanupExpiredVehicles();
+        console.log(`✅ [CRON] Deleted ${deletedCount} expired vehicles`);
+    } catch (error) {
+        console.error('❌ [CRON] Vehicle cleanup failed:', error);
+    }
+}, {
+    scheduled: true,
+    timezone: "Asia/Ho_Chi_Minh"
+});
 // Schedule: Runs at 00:00:00 every day
 // Format: Seconds(optional) Minutes Hours DayOfMonth Month DayOfWeek
 cron.schedule('0 0 0 * * *', async () => {

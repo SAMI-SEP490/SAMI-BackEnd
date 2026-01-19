@@ -5,10 +5,28 @@ const prisma = require("../config/prisma");
 const NotificationService = require("./notification.service");
 
 class GuestService {
+
   // Tenant creates a guest registration with multiple guests
   async createGuestRegistration(tenantUserId, data) {
+    function isValidVietnamCCCD(cccd) {
+      if (!cccd) return false;
+
+      // 12 digits
+      if (!/^\d{12}$/.test(cccd)) return false;
+
+      const genderCenturyDigit = cccd.charAt(3);
+
+      // Chỉ chấp nhận 0,1,2,3
+      if (!["0", "1", "2", "3"].includes(genderCenturyDigit)) {
+        return false;
+      }
+
+      return true;
+    }
+    function normalizeIdNumber(id) {
+  return id?.trim();
+}
     const {
-      guest_count,
       room_id,
       arrival_date,
       departure_date,
@@ -16,113 +34,193 @@ class GuestService {
       guest_details,
     } = data;
 
-    // Verify tenant exists
+    // ===============================
+    // Validate tenant & room hiện tại
+    // ===============================
     const tenant = await prisma.tenants.findUnique({
       where: { user_id: tenantUserId },
+      include: {
+        room_tenants_history: {
+          where: { is_current: true },
+          include: {
+            room: true
+          }
+        }
+      }
     });
 
     if (!tenant) {
-      throw new Error("Tenant not found");
+      throw new Error("Không tìm thấy người thuê");
     }
 
-    // If room_id provided, verify it exists
-    if (room_id) {
-      const room = await prisma.rooms.findUnique({
-        where: { room_id },
-      });
+    const currentRoom = tenant.room_tenants_history[0]?.room;
 
-      if (!room) {
-        throw new Error("Room not found");
-      }
+    if (!currentRoom) {
+      throw new Error("Người thuê không có phòng đang ở");
     }
 
-    // Validate dates
-    if (arrival_date && departure_date) {
-      const arrival = new Date(arrival_date);
-      const departure = new Date(departure_date);
-
-      if (departure <= arrival) {
-        throw new Error("Departure date must be after arrival date");
-      }
+    if (room_id && room_id !== currentRoom.room_id) {
+      throw new Error("Phòng báo cáo không khớp với phòng đang ở");
     }
 
-    // Validate guest_details is required and not empty
-    if (!guest_details || guest_details.length === 0) {
-      throw new Error(
-        "Guest details are required. At least one guest must be specified."
-      );
-    }
-
-    // Validate guest_count vs guest_details
-    if (guest_count && guest_count !== guest_details.length) {
-      throw new Error(
-        `Guest count (${guest_count}) does not match number of guest details (${guest_details.length})`
-      );
-    }
-
-    // Calculate final guest count from guest_details
-    const finalGuestCount = guest_details.length;
-
-    // Create guest registration with details
-    const registration = await prisma.guest_registrations.create({
-      data: {
-        host_user_id: tenant.user_id,
-        room_id,
-        arrival_date,
-        departure_date,
-        note,
-        submitted_at: new Date(),
-        guest_details: {
-          create: guest_details.map((detail) => ({
-            full_name: detail.full_name,
-            id_type: detail.id_type || "national_id",
-            id_number: detail.id_number,
-            date_of_birth: detail.date_of_birth
-              ? new Date(detail.date_of_birth)
-              : null,
-            nationality: detail.nationality,
-            gender: detail.gender,
-            relationship: detail.relationship,
-            note: detail.note,
-          })),
-        },
+    // Validate hợp đồng hiệu lực
+    const activeContracts = await prisma.contracts.findMany({
+      where: {
+        tenant_user_id: tenantUserId,
+        status: "active",
+        deleted_at: null
       },
-
-      include: {
-        host: {
-          include: {
-            user: {
-              select: {
-                user_id: true,
-                full_name: true,
-                email: true,
-                phone: true,
-              },
-            },
-          },
-        },
-        room: {
-          select: {
-            room_id: true,
-            room_number: true,
-            floor: true,
-            building: {
-              select: {
-                building_id: true,
-                name: true,
-              },
-            },
-          },
-        },
-        guest_details: {
-          orderBy: {
-            detail_id: "asc",
-          },
-        },
-      },
+      select: {
+        start_date: true,
+        end_date: true
+      }
     });
 
-    return registration;
+    if (activeContracts.length === 0) {
+      throw new Error("Không có hợp đồng thuê đang hiệu lực");
+    }
+
+    const contractStart = new Date(
+      Math.min(...activeContracts.map(c => new Date(c.start_date)))
+    );
+    const contractEnd = new Date(
+      Math.max(...activeContracts.map(c => new Date(c.end_date)))
+    );
+
+    contractStart.setHours(0, 0, 0, 0);
+    contractEnd.setHours(23, 59, 59, 999);
+
+    // Validate ngày đến / đi
+    const arrival = new Date(arrival_date);
+    const departure = new Date(departure_date);
+
+    if (departure <= arrival) {
+      throw new Error("Ngày đi phải sau ngày đến");
+    }
+
+    const diffDays =
+      (departure.getTime() - arrival.getTime()) / (1000 * 60 * 60 * 24);
+
+    if (diffDays > 30) {
+      throw new Error("Thời gian tạm trú không được vượt quá 30 ngày");
+    }
+
+    if (arrival < contractStart || departure > contractEnd) {
+      throw new Error("Thời gian tạm trú phải nằm trong thời hạn hợp đồng thuê");
+    }
+
+    // ===============================
+    // Validate guest_details
+    // ===============================
+    if (!guest_details || guest_details.length === 0) {
+      throw new Error("Phải khai báo ít nhất 1 khách");
+    }
+
+    for (const guest of guest_details) {
+      if (!guest.full_name) {
+        throw new Error("Thiếu họ tên khách");
+      }
+
+      if (guest.id_type === "national_id") {
+        if (!isValidVietnamCCCD(guest.id_number)) {
+          throw new Error(
+            `CCCD không hợp lệ: ${guest.id_number}`
+          );
+        }
+      }
+    }
+    // Collect CCCD khách
+    const guestIdNumbers = guest_details
+      .filter(g => g.id_type === "national_id" && g.id_number)
+      .map(g => normalizeIdNumber(g.id_number));
+
+    // ---- A. CCCD tenant đang có contract active ----
+    const activeTenants = await prisma.contracts.findMany({
+      where: {
+        status: "active",
+        deleted_at: null
+      },
+      include: {
+        tenant: {
+          select: {
+            id_number: true
+          }
+        }
+      }
+    });
+
+    const tenantIdNumbers = activeTenants
+      .map(c => normalizeIdNumber(c.tenant?.id_number))
+      .filter(Boolean);
+
+    // Check trùng tenant
+    for (const id of guestIdNumbers) {
+      if (tenantIdNumbers.includes(id)) {
+        throw new Error(
+          `CCCD ${id} đã tồn tại trong danh sách người thuê đang ở`
+        );
+      }
+    }
+
+    // ---- B. CCCD guest còn hiệu lực ----
+    const now = new Date();
+
+    const activeGuests = await prisma.guest_details.findMany({
+      where: {
+        id_number: {
+          in: guestIdNumbers
+        },
+        registration: {
+          status: "approved",
+          arrival_date: { lte: now },
+          departure_date: { gte: now }
+        }
+      },
+      select: {
+        id_number: true
+      }
+    });
+
+    if (activeGuests.length > 0) {
+      throw new Error(
+        `CCCD ${activeGuests[0].id_number} đã được báo cáo tạm trú và còn hiệu lực`
+      );
+    }
+    // ===============================
+    // Create báo cáo (AUTO APPROVED)
+    // ===============================
+    return prisma.guest_registrations.create({
+      data: {
+        host_user_id: tenantUserId,
+        room_id: currentRoom.room_id,
+        arrival_date: arrival,
+        departure_date: departure,
+        status: "approved",
+        approved_at: new Date(),
+        note,
+        guest_details: {
+          create: guest_details.map(g => ({
+            full_name: g.full_name,
+            id_type: g.id_type || "national_id",
+            id_number: g.id_number,
+            date_of_birth: g.date_of_birth
+              ? new Date(g.date_of_birth)
+              : null,
+            gender: g.gender,
+            relationship: g.relationship,
+            note: g.note
+          }))
+        }
+      },
+      include: {
+        room: {
+          include: {
+            building: true
+          }
+        },
+        guest_details: true
+      }
+    });
   }
 
   // Get guest registration by ID
@@ -191,103 +289,165 @@ class GuestService {
   }
 
   // Get all guest registrations with filters
-  async getGuestRegistrations(filters, userId, userRole) {
-    const {
-      status,
-      host_user_id,
-      room_id,
-      arrival_date_from,
-      arrival_date_to,
-      page = 1,
-      limit = 10,
-    } = filters;
+  async getGuestRegistrations(filters, user) {
+  const {
+    status,
+    host_user_id,
+    room_id,
+    building_id,
+    arrival_date_from,
+    arrival_date_to,
+    page = 1,
+    limit = 10,
+  } = filters;
 
-    const where = {};
+  const where = {};
 
-    // Apply role-based filtering
-    if (userRole === "TENANT") {
-      where.host_user_id = userId;
-    } else if (host_user_id) {
-      where.host_user_id = host_user_id;
+  // ================= ROLE FILTER =================
+
+  // TENANT: chỉ xem báo cáo của mình
+  if (user.role === "TENANT") {
+    where.host_user_id = user.user_id;
+  }
+
+  // MANAGER: chỉ xem báo cáo trong building được phân công
+  if (user.role === "MANAGER") {
+    const managerBuilding = await prisma.building_managers.findFirst({
+      where: { user_id: user.user_id },
+      select: { building_id: true },
+    });
+
+    if (!managerBuilding) {
+      throw new Error("Quản lý chưa được phân công tòa nhà");
     }
 
-    if (status) {
-      where.status = status;
-    }
-
-    if (room_id) {
-      where.room_id = room_id;
-    }
-
-    if (arrival_date_from || arrival_date_to) {
-      where.arrival_date = {};
-      if (arrival_date_from) {
-        where.arrival_date.gte = new Date(arrival_date_from);
-      }
-      if (arrival_date_to) {
-        where.arrival_date.lte = new Date(arrival_date_to);
-      }
-    }
-
-    const skip = (page - 1) * limit;
-
-    const [registrations, total] = await Promise.all([
-      prisma.guest_registrations.findMany({
-        where,
-        skip,
-        take: parseInt(limit),
-        orderBy: { created_at: "desc" },
-        include: {
-          host: {
-            select: {
-              user_id: true,
-              user: {
-                select: {
-                  user_id: true,
-                  full_name: true,
-                  email: true,
-                  phone: true,
-                },
-              },
-            },
-          },
-          room: {
-            select: {
-              room_id: true,
-              room_number: true,
-              floor: true,
-              building: {
-                select: {
-                  building_id: true,
-                  name: true,
-                },
-              },
-            },
-          },
-          approver: {
-            select: {
-              user_id: true,
-              full_name: true,
-            },
-          },
-          guest_details: {
-            orderBy: { detail_id: "asc" },
-          },
-        },
-      }),
-      prisma.guest_registrations.count({ where }),
-    ]);
-
-    return {
-      registrations,
-      pagination: {
-        total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        totalPages: Math.ceil(total / limit),
-      },
+    where.room = {
+      building_id: managerBuilding.building_id,
     };
   }
+
+  // OWNER: xem tất cả, có thể filter theo building
+  if (user.role === "OWNER" && building_id) {
+    where.room = {
+      building_id,
+    };
+  }
+
+  // ================= BUSINESS FILTER =================
+  if (status) {
+    where.status = status;
+  }
+
+  if (host_user_id && user.role === "OWNER") {
+    where.host_user_id = host_user_id;
+  }
+
+  if (room_id) {
+    where.room_id = room_id;
+  }
+
+  if (arrival_date_from || arrival_date_to) {
+    where.arrival_date = {};
+    if (arrival_date_from) {
+      where.arrival_date.gte = new Date(arrival_date_from);
+    }
+    if (arrival_date_to) {
+      where.arrival_date.lte = new Date(arrival_date_to);
+    }
+  }
+
+  const skip = (page - 1) * limit;
+
+  const [registrations, total] = await Promise.all([
+    prisma.guest_registrations.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy: { created_at: "desc" },
+
+      select: {
+        registration_id: true,
+        arrival_date: true,
+        departure_date: true,
+        status: true,
+        note: true,
+        created_at: true,
+        submitted_at: true,
+
+        // ================= GUEST =================
+        guest_details: {
+          select: {
+            detail_id: true,
+            full_name: true,
+            id_number: true,
+          },
+        },
+
+        _count: {
+          select: {
+            guest_details: true,
+          },
+        },
+
+        // ================= HOST =================
+        host: {
+          select: {
+            user_id: true,
+            user: {
+              select: {
+                full_name: true,
+                phone: true,
+                email: true,
+              },
+            },
+          },
+        },
+
+        // ================= ROOM =================
+        room: {
+          select: {
+            room_id: true,
+            room_number: true,
+            floor: true,
+            building: {
+              select: {
+                building_id: true,
+                name: true,
+              },
+            },
+          },
+        },
+
+        // ================= APPROVER =================
+        approver: {
+          select: {
+            user_id: true,
+            full_name: true,
+          },
+        },
+      },
+    }),
+
+    prisma.guest_registrations.count({ where }),
+  ]);
+
+  // ================= MAP guest_count =================
+  const mappedRegistrations = registrations.map((r) => ({
+    ...r,
+    guest_count: r._count.guest_details,
+    _count: undefined,
+  }));
+
+  return {
+    registrations: mappedRegistrations,
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+}
 
   // Update guest registration (only by tenant who created it, and only if status is pending)
   async updateGuestRegistration(registrationId, tenantUserId, data) {
@@ -361,8 +521,8 @@ class GuestService {
         guest_details && guest_details.length > 0
           ? guest_details.length
           : guest_count !== undefined
-          ? guest_count
-          : existing.guest_count;
+            ? guest_count
+            : existing.guest_count;
 
       // Update main registration
       await tx.guest_registrations.update({
@@ -638,28 +798,16 @@ class GuestService {
     });
 
     if (!registration) {
-      throw new Error("Guest registration not found");
+      throw new Error("Không tìm thấy báo cáo khách");
     }
 
     // Tenant can only cancel their own pending registrations
     if (userRole === "TENANT") {
       if (registration.host_user_id !== userId) {
-        throw new Error("Unauthorized to cancel this registration");
+        throw new Error("Không có quyền hủy báo cáo này");
       }
-      if (registration.status !== "pending") {
-        throw new Error("Can only cancel pending registrations");
-      }
-    }
-
-    // Manager/Owner can cancel any registration except completed ones
-    if (["MANAGER", "OWNER"].includes(userRole)) {
-      if (
-        registration.status === "rejected" ||
-        registration.status === "cancelled"
-      ) {
-        throw new Error(
-          `Cannot cancel registration with status: ${registration.status}`
-        );
+      if (registration.status == "cancelled" || registration.status == "expired") {
+        throw new Error("Báo cáo đã được hủy hoặc hết hạn, không thể hủy lạ");
       }
     }
 
@@ -716,7 +864,7 @@ class GuestService {
     });
 
     if (!registration) {
-      throw new Error("Guest registration not found");
+      throw new Error("Không tìm thấy báo cáo khách");
     }
 
     // Check authorization
