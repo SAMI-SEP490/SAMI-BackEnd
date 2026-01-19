@@ -142,17 +142,69 @@ class AuthService {
     if (!isValidPassword) {
       throw new Error("Invalid credentials");
     }
+    // ============================================================
+    // [UPDATE] LOGIC KIỂM TRA HỢP ĐỒNG (TENANT/USER)
+    // Cho phép đăng nhập nếu có ÍT NHẤT 1 hợp đồng đang hiệu lực
+    // ============================================================
     if (user.role === "TENANT" || user.role === "USER") {
-      const hasContract = await prisma.contracts.findFirst({
+      const today = new Date();
+      today.setHours(0, 0, 0, 0); // Reset giờ về 0h00
+
+      // 1. Thử tìm xem có BẤT KỲ hợp đồng nào "Đang hiệu lực" không
+      // (Trạng thái không bị cấm VÀ Ngày bắt đầu <= Hôm nay)
+      const validContract = await prisma.contracts.findFirst({
         where: {
           tenant_user_id: user.user_id,
           deleted_at: null,
-        },
+          status: {
+            notIn: ['rejected', 'terminated', 'expired'] // Không nằm trong các trạng thái cấm
+          },
+          start_date: {
+            lte: today // Ngày bắt đầu nhỏ hơn hoặc bằng hôm nay
+          }
+        }
       });
 
-      if (!hasContract) {
-        throw new Error("Tài khoản chưa có hợp đồng thuê phòng nào. Vui lòng liên hệ quản lý.");
+      // 2. Nếu KHÔNG tìm thấy hợp đồng hợp lệ nào, ta mới chặn và báo lỗi chi tiết
+      // Dựa trên hợp đồng mới nhất để User biết lý do chính xác
+      if (!validContract) {
+
+        // Lấy hợp đồng mới nhất để check lỗi
+        const latestContract = await prisma.contracts.findFirst({
+          where: {
+            tenant_user_id: user.user_id,
+            deleted_at: null,
+          },
+          orderBy: {
+            created_at: 'desc',
+          },
+        });
+
+        // Case 2.1: Tài khoản mới tinh, chưa có hợp đồng nào
+        if (!latestContract) {
+          throw new Error("Tài khoản chưa có hợp đồng thuê phòng nào. Vui lòng liên hệ quản lý.");
+        }
+
+        // Case 2.2: Hợp đồng mới nhất đã bị hủy/hết hạn/từ chối
+        const invalidStatuses = ['rejected', 'terminated', 'expired'];
+        if (invalidStatuses.includes(latestContract.status)) {
+          throw new Error("Tất cả hợp đồng của bạn đã kết thúc, hết hạn hoặc bị từ chối. Vui lòng liên hệ quản lý.");
+        }
+
+        // Case 2.3: Hợp đồng có trạng thái OK (Active/Pending) nhưng NGÀY BẮT ĐẦU ở tương lai
+        const startDate = new Date(latestContract.start_date);
+        startDate.setHours(0, 0, 0, 0);
+
+        if (startDate > today) {
+          const dateStr = startDate.toLocaleDateString("vi-VN");
+          throw new Error(`Hợp đồng của bạn chưa đến ngày hiệu lực. Bạn chỉ có thể đăng nhập bắt đầu từ ngày ${dateStr}.`);
+        }
+
+        // Nếu lọt qua hết các case trên mà vẫn không có validContract (trường hợp hiếm gặp), chặn mặc định
+        throw new Error("Không tìm thấy hợp đồng hợp lệ để đăng nhập.");
       }
+
+      // Nếu validContract tồn tại -> Code sẽ chạy tiếp xuống dưới để tạo Token
     }
     // Check if this is first login (user not verified yet)
     if (!user.is_verified) {

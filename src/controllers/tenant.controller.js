@@ -226,7 +226,7 @@ class TenantController {
                 });
             }
 
-            const tenant = await TenantService.lookupTenantByExactInfo(q);
+            const tenant = await TenantService.lookupTenantByExactInfo(q, building_id);
 
             if (!tenant) {
                 return res.status(404).json({
