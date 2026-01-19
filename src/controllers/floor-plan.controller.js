@@ -192,34 +192,44 @@ class FloorPlanController {
   }
 
   // Xóa floor plan
-  async deleteFloorPlan(req, res, next) {
-    try {
-      const { id } = req.params;
-      const userId = req.user.user_id;
-      const userRole = req.user.role;
+async deleteFloorPlan(req, res, next) {
+  try {
+    const { id } = req.params;
+    const userId = req.user.user_id;
+    const userRole = req.user.role;
 
-      // Chỉ OWNER mới có quyền xóa floor plan
-      if (userRole !== "OWNER") {
-        return res.status(200).json({
-          success: true,
-          message: "Access denied: Only owners can delete floor plans",
-        });
-      }
-
-      const result = await floorPlanService.deleteFloorPlan(
-        parseInt(id),
-        userId,
-        userRole
-      );
-
-      res.json({
-        success: true,
-        ...result,
+    // Chỉ OWNER mới có quyền xóa floor plan
+    if (userRole !== "OWNER") {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied: Only owners can delete floor plans",
       });
-    } catch (err) {
-      next(err);
     }
+
+    const result = await floorPlanService.deleteFloorPlan(
+      parseInt(id),
+      userId,
+      userRole
+    );
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    // ✅ Business rule: không cho xóa vì có hợp đồng
+    const msg = err?.message || "Không thể xóa floor plan";
+    if (msg.includes("Không thể xóa tầng") || msg.includes("hợp đồng")) {
+      return res.status(409).json({
+        success: false,
+        message: msg,
+      });
+    }
+
+    // lỗi khác giữ nguyên flow cũ
+    return next(err);
   }
+}
 
   // Thống kê floor plans
   async getFloorPlanStatistics(req, res, next) {
