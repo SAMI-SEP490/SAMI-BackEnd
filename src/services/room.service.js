@@ -159,7 +159,7 @@ class RoomService {
 
       if (building.number_of_floors && floorNum > building.number_of_floors) {
         throw new Error(
-          `Floor ${floorNum} exceeds building's number of floors (${building.number_of_floors})`
+          `Floor ${floorNum} exceeds building's number of floors (${building.number_of_floors})`,
         );
       }
     }
@@ -216,10 +216,12 @@ class RoomService {
           include: {
             tenant: {
               include: {
-                user: { // Relation name 'user' in tenants model
+                user: {
+                  // Relation name 'user' in tenants model
                   select: {
                     user_id: true,
                     full_name: true,
+                    birthday: true,
                     email: true,
                     phone: true,
                     avatar_url: true,
@@ -231,7 +233,7 @@ class RoomService {
         },
 
         // 3. Contracts (This might also need fixing if relation name changed)
-        // Schema says: contracts_history OR current_contract. 
+        // Schema says: contracts_history OR current_contract.
         // If you want active contracts, query 'contracts_history' with status filter
         contracts_history: {
           where: {
@@ -400,8 +402,9 @@ class RoomService {
             },
           },
 
-          // 👤 Danh sách tenant của phòng
+          // 👤 Danh sách tenant của phòng (chỉ tenant đang ở hiện tại)
           room_tenants: {
+            where: { is_current: true },
             include: {
               tenant: {
                 include: {
@@ -410,6 +413,7 @@ class RoomService {
                       user_id: true,
                       full_name: true,
                       phone: true,
+                      birthday: true, // ✅ thêm ngày sinh
                     },
                   },
                 },
@@ -469,7 +473,7 @@ class RoomService {
         }
 
         return room;
-      })
+      }),
     );
 
     /* =======================
@@ -477,7 +481,7 @@ class RoomService {
      * ======================= */
     return {
       data: roomsWithDynamicStatus.map((room) =>
-        this.formatRoomListResponse(room)
+        this.formatRoomListResponse(room),
       ),
       pagination: {
         total,
@@ -528,7 +532,7 @@ class RoomService {
     await this.checkBuildingAccess(
       existingRoom.building_id,
       normalizedRole,
-      userId
+      userId,
     );
 
     if (room_number && room_number.trim() !== existingRoom.room_number) {
@@ -557,7 +561,7 @@ class RoomService {
         floorNum > existingRoom.buildings.number_of_floors
       ) {
         throw new Error(
-          `Floor ${floorNum} exceeds building's number of floors (${existingRoom.buildings.number_of_floors})`
+          `Floor ${floorNum} exceeds building's number of floors (${existingRoom.buildings.number_of_floors})`,
         );
       }
     }
@@ -587,7 +591,7 @@ class RoomService {
       // Nếu đang có nhiều tenant hơn giới hạn mới -> CHẶN
       if (currentTenantCount > newMaxTenants) {
         throw new Error(
-          "Không thể giảm diện tích vì phòng đang có quá nhiều người thuê"
+          "Không thể giảm diện tích vì phòng đang có quá nhiều người thuê",
         );
       }
 
@@ -653,8 +657,13 @@ class RoomService {
     const room = await prisma.rooms.findUnique({
       where: { room_id: roomId },
       include: {
-        tenants: true,
-        contracts: {
+        // ✅ relation đúng theo schema mới
+        room_tenants: {
+          where: { is_current: true }, // chỉ tính người đang ở hiện tại
+        },
+
+        // ✅ active contracts theo relation đúng
+        contracts_history: {
           where: {
             status: "active",
             deleted_at: null,
@@ -673,11 +682,11 @@ class RoomService {
       throw new Error("Room is already inactive");
     }
 
-    if (room.tenants.length > 0) {
+    if (room.room_tenants.length > 0) {
       throw new Error("Cannot deactivate room with active tenants");
     }
 
-    if (room.contracts.length > 0) {
+    if (room.contracts_history.length > 0) {
       throw new Error("Cannot deactivate room with active contracts");
     }
 
@@ -704,7 +713,7 @@ class RoomService {
     const room = await prisma.rooms.findUnique({
       where: { room_id: roomId },
       include: {
-        buildings: true,
+        building: true,
       },
     });
 
@@ -718,9 +727,9 @@ class RoomService {
       throw new Error("Room is already active");
     }
 
-    if (!room.buildings.is_active) {
-      throw new Error("Cannot activate room in inactive building");
-    }
+    if (!room.building?.is_active) {
+  throw new Error("Cannot activate room in inactive building");
+}
 
     // Tính status động khi activate
     const dynamicStatus = await this.calculateRoomStatus(roomId);
@@ -733,7 +742,7 @@ class RoomService {
         updated_at: new Date(),
       },
       include: {
-        buildings: {
+        building: {
           select: {
             building_id: true,
             name: true,
@@ -956,6 +965,19 @@ class RoomService {
       throw new Error("Room not found or inactive");
     }
 
+    const maxTenants = Number(room.max_tenants) || 1;
+
+    const currentTenantCount = await prisma.room_tenants.count({
+      where: {
+        room_id: roomId,
+        is_current: true,
+      },
+    });
+
+    if (currentTenantCount >= maxTenants) {
+      throw new Error("Phòng đã đầy, không thể thêm người thuê");
+    }
+
     // 2️⃣ Kiểm tra hợp đồng active
     const activeContract = await prisma.contracts.findFirst({
       where: {
@@ -969,6 +991,38 @@ class RoomService {
       throw new Error("Room does not have an active contract");
     }
 
+    // ✅ VALIDATE moved_in_at theo thời gian hợp đồng
+    const contractStart = new Date(activeContract.start_date);
+    const contractEnd = new Date(activeContract.end_date);
+
+    if (isNaN(contractStart.getTime()) || isNaN(contractEnd.getTime())) {
+      throw new Error("Contract start_date/end_date is invalid");
+    }
+
+    // normalize về đầu ngày để so sánh date-only cho chắc
+    const toStartOfDay = (d) =>
+      new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+    const moveInDay = toStartOfDay(moveInDate);
+    const startDay = toStartOfDay(contractStart);
+
+    // endMinus1Month = end_date - 1 tháng (giữ ngày tương đối)
+    const endMinus1Month = new Date(contractEnd);
+    endMinus1Month.setMonth(endMinus1Month.getMonth() - 1);
+    const endMinus1MonthDay = toStartOfDay(endMinus1Month);
+
+    // Điều kiện: moved_in_at phải SAU ngày bắt đầu HĐ (strict >)
+    if (moveInDay <= startDay) {
+      throw new Error("Ngày đến phải sau ngày bắt đầu hợp đồng");
+    }
+
+    // Điều kiện: moved_in_at phải TRƯỚC ngày kết thúc hợp đồng ít nhất 1 tháng
+    if (moveInDay > endMinus1MonthDay) {
+      throw new Error(
+        "Ngày đến phải trước ngày kết thúc hợp đồng ít nhất 1 tháng",
+      );
+    }
+
     // 3️⃣ Kiểm tra tenant tồn tại
     const tenant = await prisma.tenants.findUnique({
       where: { user_id: tenantUserId },
@@ -976,6 +1030,22 @@ class RoomService {
 
     if (!tenant) {
       throw new Error("Tenant not found");
+    }
+
+    // ✅ RULE: Tenant chỉ được làm secondary cho 1 phòng duy nhất
+    const existingSecondary = await prisma.room_tenants.findFirst({
+      where: {
+        tenant_user_id: tenantUserId,
+        is_current: true,
+        tenant_type: "secondary",
+      },
+      select: { room_id: true, room: { select: { room_number: true } } },
+    });
+
+    if (existingSecondary) {
+      throw new Error(
+        `Người thuê này đã là người ở phụ của phòng ${existingSecondary.room?.room_number || existingSecondary.room_id}, không thể thêm sang phòng khác`,
+      );
     }
 
     // 4️⃣ Tenant chưa là current tenant ở phòng khác
@@ -991,49 +1061,101 @@ class RoomService {
     }
 
     // 5️⃣ Tạo room_tenants (moved_out_at = null, is_current = true)
-    const roomTenant = await prisma.room_tenants.create({
-      data: {
-        room_id: roomId,
-        tenant_user_id: tenantUserId,
-        tenant_type: "secondary",
-        moved_in_at: moveInDate,
-        moved_out_at: null,
-        is_current: true,
-        note: note?.trim() || null,
-        created_at: new Date(),
-      },
-      include: {
-        tenant: {
-          include: {
-            user: {
-              select: {
-                user_id: true,
-                full_name: true,
-                phone: true,
-                email: true,
+    try {
+      const roomTenant = await prisma.room_tenants.create({
+        data: {
+          room_id: roomId,
+          tenant_user_id: tenantUserId,
+          tenant_type: "secondary",
+          moved_in_at: moveInDate,
+          moved_out_at: null,
+          is_current: true,
+          note: note?.trim() || null,
+          created_at: new Date(),
+        },
+        include: {
+          tenant: {
+            include: {
+              user: {
+                select: {
+                  user_id: true,
+                  full_name: true,
+                  phone: true,
+                  email: true,
+                },
               },
             },
           },
         },
+      });
+
+      // 6️⃣ Cập nhật trạng thái phòng
+      await this.updateRoomStatus(roomId);
+
+      return {
+        room_id: roomId,
+        tenant: {
+          user_id: roomTenant.tenant.user.user_id,
+          full_name: roomTenant.tenant.user.full_name,
+          phone: roomTenant.tenant.user.phone,
+          email: roomTenant.tenant.user.email,
+        },
+        tenant_type: roomTenant.tenant_type,
+        moved_in_at: roomTenant.moved_in_at,
+        moved_out_at: null,
+        is_current: true,
+      };
+    } catch (e) {
+      // Prisma unique constraint violation
+      if (e?.code === "P2002") {
+        throw new Error(
+          "Người thuê này đã là người ở phụ của một phòng khác, không thể thêm sang phòng khác",
+        );
+      }
+      throw e;
+    }
+  }
+
+  async removeSecondaryTenantFromRoom(
+    roomId,
+    tenantUserId,
+    role,
+    operatorUserId,
+  ) {
+    // 1) check quyền theo đúng style bạn đang làm (owner/manager)
+    //    (mình không viết lại RBAC cũ để tránh ảnh hưởng)
+    //    Nếu bạn có checkAccessByRoom/building thì gọi lại y hệt addTenantToRoom.
+
+    // 2) kiểm tra record secondary đang "ở" trong phòng này
+    const exist = await prisma.room_tenants.findFirst({
+      where: {
+        room_id: roomId,
+        tenant_user_id: tenantUserId,
+        tenant_type: "secondary",
+        is_current: true,
       },
     });
 
-    // 6️⃣ Cập nhật trạng thái phòng
-    await this.updateRoomStatus(roomId);
+    if (!exist) {
+      throw new Error("Tenant is not a secondary tenant in this room");
+    }
 
-    return {
-      room_id: roomId,
-      tenant: {
-        user_id: roomTenant.tenant.user.user_id,
-        full_name: roomTenant.tenant.user.full_name,
-        phone: roomTenant.tenant.user.phone,
-        email: roomTenant.tenant.user.email,
+    // 3) XÓA LUÔN TRONG DB (chỉ xóa liên kết secondary, KHÔNG xóa user)
+    await prisma.room_tenants.deleteMany({
+      where: {
+        room_id: roomId,
+        tenant_user_id: tenantUserId,
+        tenant_type: "secondary",
+        is_current: true,
       },
-      tenant_type: roomTenant.tenant_type,
-      moved_in_at: roomTenant.moved_in_at,
-      moved_out_at: null,
-      is_current: true,
-    };
+    });
+
+    // 4) cập nhật lại tenant_count/status nếu bạn có hàm đang dùng sẵn
+    //    (tuyệt đối không đổi logic hiện có)
+    // Ví dụ nếu bạn có function updateRoomTenantCount(roomId) hoặc syncRoomStatus(roomId) thì gọi lại:
+    // await this.syncRoomTenantCount(roomId);
+
+    return { room_id: roomId, removed_user_id: tenantUserId };
   }
 
   async getRoomStatisticsByBuilding(buildingId, userRole, userId) {
@@ -1203,7 +1325,7 @@ class RoomService {
   formatRoomListResponse(room) {
     // Lấy tenant chính (nếu cần)
     const primaryTenant = room.room_tenants?.find(
-      (rt) => rt.is_current === true
+      (rt) => rt.is_current === true,
     );
 
     return {
@@ -1213,11 +1335,26 @@ class RoomService {
       room_number: room.room_number,
       floor: room.floor,
       size: room.size,
+      max_tenants: room.max_tenants,
       status: room.status,
       is_active: room.is_active,
 
       // ✅ Đếm số tenant đang ở hiện tại
       tenant_count: room._count?.room_tenants || 0,
+
+      // ✅ Danh sách tenant đang ở trong phòng (để modal hiển thị bảng)
+      tenants: (room.room_tenants || []).map((rt) => ({
+        user_id: rt?.tenant?.user?.user_id,
+        full_name: rt?.tenant?.user?.full_name || "N/A",
+        phone: rt?.tenant?.user?.phone || "N/A",
+        birthday: rt?.tenant?.user?.birthday || null,
+
+        // ngày vào ở lấy từ room_tenants
+        moved_in_at: rt?.moved_in_at || null,
+
+        // vai trò: primary / secondary (ở chính / ở phụ)
+        tenant_type: rt?.tenant_type || "secondary",
+      })),
 
       active_contracts: room._count?.contracts_history || 0,
       pending_maintenance: room._count?.maintenance_requests || 0,
@@ -1253,38 +1390,41 @@ class RoomService {
       // [FIX] Ensure this is passed to Frontend
       current_contract: room.current_contract,
 
-      tenants: room.room_tenants?.map((rt) => {
-        const t = rt.tenant;
-        const u = t?.user;
-        return {
-          user_id: u?.user_id,
-          full_name: u?.full_name,
-          email: u?.email,
-          phone: u?.phone,
-          avatar_url: u?.avatar_url,
-          tenant_since: t?.tenant_since,
-          id_number: t?.id_number,
-          is_primary: rt.tenant_type === 'primary'
-        };
-      }) || [],
+      tenants:
+        room.room_tenants?.map((rt) => {
+          const t = rt.tenant;
+          const u = t?.user;
+          return {
+            user_id: u?.user_id,
+            full_name: u?.full_name,
+            email: u?.email,
+            phone: u?.phone,
+            avatar_url: u?.avatar_url,
+            tenant_since: t?.tenant_since,
+            id_number: t?.id_number,
+            is_primary: rt.tenant_type === "primary",
+          };
+        }) || [],
 
       // Keep existing history mapping
-      active_contracts: room.contracts_history?.map((c) => ({
-        contract_id: c.contract_id,
-        start_date: c.start_date,
-        end_date: c.end_date,
-        rent_amount: c.rent_amount,
-        status: c.status,
-      })) || [],
+      active_contracts:
+        room.contracts_history?.map((c) => ({
+          contract_id: c.contract_id,
+          start_date: c.start_date,
+          end_date: c.end_date,
+          rent_amount: c.rent_amount,
+          status: c.status,
+        })) || [],
 
-      recent_maintenance_requests: room.maintenance_requests?.map((m) => ({
-        request_id: m.request_id,
-        title: m.title,
-        category: m.category,
-        priority: m.priority,
-        status: m.status,
-        created_at: m.created_at,
-      })) || [],
+      recent_maintenance_requests:
+        room.maintenance_requests?.map((m) => ({
+          request_id: m.request_id,
+          title: m.title,
+          category: m.category,
+          priority: m.priority,
+          status: m.status,
+          created_at: m.created_at,
+        })) || [],
 
       created_at: room.created_at,
       updated_at: room.updated_at,

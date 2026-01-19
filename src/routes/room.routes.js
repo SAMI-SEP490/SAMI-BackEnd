@@ -100,4 +100,12 @@ router.post(
   roomController.addTenantToRoom
 );
 
+// REMOVE SECONDARY TENANT - Xóa tenant ở phụ khỏi phòng
+router.delete(
+  "/:id/tenants/:tenantUserId",
+  requireRole(["owner", "manager"]),
+  validateRoomId,
+  roomController.removeSecondaryTenantFromRoom
+);
+
 module.exports = router;
