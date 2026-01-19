@@ -77,7 +77,18 @@ class AuthService {
     if (!isValidPassword) {
       throw new Error("Invalid credentials");
     }
+    if (user.role === "TENANT" || user.role === "USER") {
+      const hasContract = await prisma.contracts.findFirst({
+        where: {
+          tenant_user_id: user.user_id,
+          deleted_at: null,
+        },
+      });
 
+      if (!hasContract) {
+        throw new Error("Tài khoản chưa có hợp đồng thuê phòng nào. Vui lòng liên hệ quản lý.");
+      }
+    }
     // Check if this is first login (user not verified yet)
     if (!user.is_verified) {
       // Generate OTP
