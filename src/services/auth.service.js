@@ -17,6 +17,67 @@ const config = require("../config");
 class AuthService {
   async register(data) {
     const { email, password, phone, full_name, gender, birthday } = data;
+
+    /* =======================
+     VALIDATE INPUT
+  ======================= */
+
+    if (!email) {
+      throw new Error("Email is required");
+    }
+
+    if (!password) {
+      throw new Error("Password is required");
+    }
+
+    if (!birthday) {
+      throw new Error("Birthday is required");
+    }
+
+    /* =======================
+     PASSWORD VALIDATION
+     - >= 8 ký tự
+     - 1 chữ hoa
+     - 1 chữ thường
+     - 1 số
+     - 1 ký tự đặc biệt
+  ======================= */
+    const passwordRegex =
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
+
+    if (!passwordRegex.test(password)) {
+      throw new Error(
+        "Password must be at least 8 characters long and include uppercase, lowercase, number, and special character",
+      );
+    }
+
+    /* =======================
+     AGE VALIDATION
+  ======================= */
+    const birthDate = new Date(birthday);
+    const today = new Date();
+
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+
+    if (
+      monthDiff < 0 ||
+      (monthDiff === 0 && today.getDate() < birthDate.getDate())
+    ) {
+      age--;
+    }
+
+    if (age < 18) {
+      throw new Error("User must be at least 18 years old");
+    }
+
+    if (age > 150) {
+      throw new Error("User age is too large");
+    }
+
+    /* =======================
+     CHECK EXISTING USER
+  ======================= */
     const existingUser = await prisma.users.findFirst({
       where: {
         OR: [{ email }, { phone }],
@@ -27,10 +88,11 @@ class AuthService {
       throw new Error("User with this email or phone already exists");
     }
 
-    // Hash password
+    /* =======================
+     CREATE USER
+  ======================= */
     const hashedPassword = await hashPassword(password);
 
-    // Create user
     const user = await prisma.users.create({
       data: {
         email,
@@ -38,12 +100,15 @@ class AuthService {
         phone,
         full_name,
         gender,
-        birthday: birthday ? new Date(birthday) : null,
+        birthday: birthDate,
         status: "Active",
         is_verified: false,
       },
     });
 
+    /* =======================
+     RESPONSE
+  ======================= */
     return {
       id: user.user_id,
       email: user.email,
@@ -266,7 +331,7 @@ class AuthService {
     // Verify current password
     const isValidPassword = await comparePassword(
       currentPassword,
-      user.password_hash
+      user.password_hash,
     );
 
     if (!isValidPassword) {
@@ -314,7 +379,7 @@ class AuthService {
 
     if (cooldown) {
       throw new Error(
-        "Please wait before requesting another password reset OTP"
+        "Please wait before requesting another password reset OTP",
       );
     }
 
@@ -591,7 +656,7 @@ class AuthService {
         // Upload ảnh lên S3 sử dụng method uploadAvatar mới
         const uploadResult = await s3Service.uploadAvatar(
           avatarFile.buffer,
-          avatarFile.originalname
+          avatarFile.originalname,
         );
 
         console.log("S3 upload result:", uploadResult);
@@ -607,7 +672,7 @@ class AuthService {
         if (currentUser && currentUser.avatar_url) {
           // Extract s3_key from old URL
           const oldS3Key = s3Service.extractS3KeyFromUrl(
-            currentUser.avatar_url
+            currentUser.avatar_url,
           );
           if (oldS3Key && oldS3Key.startsWith("avatars/")) {
             // Chỉ xóa nếu là avatar (safety check)
