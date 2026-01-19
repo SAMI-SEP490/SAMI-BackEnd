@@ -272,7 +272,7 @@ class ContractService {
   }
 
   // ============================================
-  // CREATE CONTRACT (Logic mới + Gửi Email)
+  // CREATE CONTRACT (Updated: Require File + Validate End Date)
   // ============================================
   async createContract(data, files = null, currentUser = null) {
     const {
@@ -287,12 +287,16 @@ class ContractService {
       note,
     } = data;
 
-    // 1. Validation Basics
+    // --- [NEW] 1. Validate bắt buộc có file ---
+    if (!files || files.length === 0) {
+      throw new Error("Hợp đồng bắt buộc phải có file đính kèm (PDF hoặc ảnh).");
+    }
+
+    // Validation Basics
     if (!room_id || !tenant_user_id || !start_date || !duration_months || !rent_amount) {
       throw new Error("Missing required fields: room_id, tenant_user_id, start_date, duration_months, rent_amount");
     }
 
-    // ... (Giữ nguyên logic validate và prepare data) ...
     let validPenalty = 0;
     if (penalty_rate) {
       const rate = parseFloat(penalty_rate);
@@ -307,12 +311,24 @@ class ContractService {
     const startDate = new Date(start_date);
     const duration = parseInt(duration_months);
 
+    // Validate logic ngày bắt đầu (không quá cũ, duration hợp lệ)
     this.validateDateLogic(startDate, duration);
 
     const endDate = this.calculateEndDate(startDate, duration);
     if (startDate >= endDate) throw new Error("Calculated end date is invalid");
 
-    // 2. Logic Check
+    // --- [NEW] 2. Validate Ngày kết thúc phải sau hiện tại ---
+    // (Ngăn chặn tạo hợp đồng đã hết hạn ngay lập tức)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Reset giờ để so sánh ngày
+
+    // Nếu bạn muốn ngày kết thúc phải LỚN HƠN hôm nay (Tương lai)
+    if (endDate <= today) {
+      throw new Error("Ngày kết thúc hợp đồng phải sau thời điểm hiện tại.");
+    }
+
+
+    // Logic Check Room & Permission
     const room = await prisma.rooms.findUnique({
       where: { room_id: roomId },
       include: { building: true },
@@ -330,11 +346,10 @@ class ContractService {
     const conflictingContract = await this.checkContractConflict(roomId, startDate, endDate);
     if (conflictingContract) throw new Error(`Room conflict: Contract #${conflictingContract.contract_id}`);
 
-    // 3. FILE PROCESSING
+    // 3. FILE PROCESSING (Luôn chạy vì đã validate ở bước 1)
     let fileData = {};
-    if (files && files.length > 0) {
-      fileData = await this._processUploadFiles(files);
-    }
+    // Không cần check files.length nữa vì đã check ở đầu hàm
+    fileData = await this._processUploadFiles(files);
 
     // 4. DB Creation
     const result = await prisma.$transaction(async (tx) => {
@@ -355,23 +370,21 @@ class ContractService {
           payment_cycle_months: payment_cycle_months ? parseInt(payment_cycle_months) : 1,
           status: CONTRACT_STATUS.PENDING,
           note,
-          ...fileData,
+          ...fileData, // Spread file data (s3_key, file_name, etc.)
           created_at: new Date(),
           updated_at: new Date(),
         },
         include: {
           room_history: { include: { building: true } },
-          tenant: { include: { user: true } }, // Quan trọng: include user để lấy email
+          tenant: { include: { user: true } },
         },
       });
     });
 
-    // 5. [NEW] GỬI EMAIL THÔNG BÁO CHO TENANT
+    // 5. GỬI EMAIL THÔNG BÁO CHO TENANT
     try {
       const tenantUser = result.tenant?.user;
       if (tenantUser?.email) {
-        // Tạo link để user click vào xem hợp đồng (Deep link hoặc Web link)
-        // Ví dụ: https://myapp.com/contracts/123
         const actionUrl = `${FRONTEND_URL}/contracts/${result.contract_id}`;
 
         await emailService.sendContractApprovalEmail(
@@ -389,7 +402,6 @@ class ContractService {
       }
     } catch (emailError) {
       console.error("❌ Failed to send contract approval email:", emailError.message);
-      // Không throw error để tránh revert transaction tạo contract
     }
 
     return this.formatContractResponse(result);
@@ -581,6 +593,11 @@ class ContractService {
     if (start_date || duration_months) {
       const shouldCheckPast = !!start_date;
       this.validateDateLogic(targetStartDate, targetDuration, shouldCheckPast);
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (targetEndDate <= today) {
+      throw new Error("Ngày kết thúc hợp đồng (sau khi cập nhật) phải sau thời điểm hiện tại.");
     }
     const conflicting = await this.checkContractConflict(
         targetRoomId,
