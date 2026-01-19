@@ -19,43 +19,82 @@ class AuthService {
     const { email, password, phone, full_name, gender, birthday } = data;
 
     /* =======================
-     VALIDATE INPUT
+     VALIDATE INPUT CƠ BẢN
   ======================= */
-
     if (!email) {
-      throw new Error("Email is required");
+      throw new Error("Email là bắt buộc");
     }
 
     if (!password) {
-      throw new Error("Password is required");
+      throw new Error("Mật khẩu là bắt buộc");
     }
 
     if (!birthday) {
-      throw new Error("Birthday is required");
+      throw new Error("Ngày sinh là bắt buộc");
     }
 
     /* =======================
-     PASSWORD VALIDATION
-     - >= 8 ký tự
-     - 1 chữ hoa
-     - 1 chữ thường
-     - 1 số
-     - 1 ký tự đặc biệt
+     NORMALIZE & VALIDATE FULL NAME
+     - Không chứa số
+     - Chuẩn hóa khoảng trắng
+     - Tự động viết hoa chữ cái đầu mỗi từ
+  ======================= */
+    let normalizedFullName = full_name;
+
+    if (full_name) {
+      // Không chứa số
+      if (/\d/.test(full_name)) {
+        throw new Error("Họ và tên không được chứa chữ số");
+      }
+
+      // Chuẩn hóa khoảng trắng
+      normalizedFullName = full_name.trim().replace(/\s+/g, " ");
+
+      // Viết hoa chữ cái đầu mỗi từ
+      normalizedFullName = normalizedFullName
+        .split(" ")
+        .map((word) => {
+          if (!word) return word;
+          return word.charAt(0).toUpperCase() + word.slice(1);
+        })
+        .join(" ");
+    }
+
+    /* =======================
+     VALIDATE PHONE
+     - 10 hoặc 11 số
+     - Bắt đầu bằng 0
+  ======================= */
+    if (phone) {
+      const phoneRegex = /^0\d{9,10}$/;
+      if (!phoneRegex.test(phone)) {
+        throw new Error(
+          "Số điện thoại phải bắt đầu bằng số 0 và có 10 hoặc 11 chữ số",
+        );
+      }
+    }
+
+    /* =======================
+     VALIDATE PASSWORD
   ======================= */
     const passwordRegex =
       /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
 
     if (!passwordRegex.test(password)) {
       throw new Error(
-        "Password must be at least 8 characters long and include uppercase, lowercase, number, and special character",
+        "Mật khẩu phải có ít nhất 8 ký tự, bao gồm chữ hoa, chữ thường, số và ký tự đặc biệt",
       );
     }
 
     /* =======================
-     AGE VALIDATION
+     VALIDATE TUỔI
   ======================= */
     const birthDate = new Date(birthday);
     const today = new Date();
+
+    if (birthDate > today) {
+      throw new Error("Ngày sinh không được vượt quá ngày hiện tại");
+    }
 
     let age = today.getFullYear() - birthDate.getFullYear();
     const monthDiff = today.getMonth() - birthDate.getMonth();
@@ -68,15 +107,15 @@ class AuthService {
     }
 
     if (age < 18) {
-      throw new Error("User must be at least 18 years old");
+      throw new Error("Người dùng phải đủ 18 tuổi trở lên");
     }
 
     if (age > 150) {
-      throw new Error("User age is too large");
+      throw new Error("Tuổi người dùng không hợp lệ");
     }
 
     /* =======================
-     CHECK EXISTING USER
+     CHECK USER ĐÃ TỒN TẠI
   ======================= */
     const existingUser = await prisma.users.findFirst({
       where: {
@@ -85,7 +124,7 @@ class AuthService {
     });
 
     if (existingUser) {
-      throw new Error("User with this email or phone already exists");
+      throw new Error("Email hoặc số điện thoại đã tồn tại");
     }
 
     /* =======================
@@ -98,7 +137,7 @@ class AuthService {
         email,
         password_hash: hashedPassword,
         phone,
-        full_name,
+        full_name: normalizedFullName,
         gender,
         birthday: birthDate,
         status: "Active",
@@ -142,17 +181,69 @@ class AuthService {
     if (!isValidPassword) {
       throw new Error("Invalid credentials");
     }
+    // ============================================================
+    // [UPDATE] LOGIC KIỂM TRA HỢP ĐỒNG (TENANT/USER)
+    // Cho phép đăng nhập nếu có ÍT NHẤT 1 hợp đồng đang hiệu lực
+    // ============================================================
     if (user.role === "TENANT" || user.role === "USER") {
-      const hasContract = await prisma.contracts.findFirst({
+      const today = new Date();
+      today.setHours(0, 0, 0, 0); // Reset giờ về 0h00
+
+      // 1. Thử tìm xem có BẤT KỲ hợp đồng nào "Đang hiệu lực" không
+      // (Trạng thái không bị cấm VÀ Ngày bắt đầu <= Hôm nay)
+      const validContract = await prisma.contracts.findFirst({
         where: {
           tenant_user_id: user.user_id,
           deleted_at: null,
-        },
+          status: {
+            notIn: ['rejected', 'terminated', 'expired'] // Không nằm trong các trạng thái cấm
+          },
+          start_date: {
+            lte: today // Ngày bắt đầu nhỏ hơn hoặc bằng hôm nay
+          }
+        }
       });
 
-      if (!hasContract) {
-        throw new Error("Tài khoản chưa có hợp đồng thuê phòng nào. Vui lòng liên hệ quản lý.");
+      // 2. Nếu KHÔNG tìm thấy hợp đồng hợp lệ nào, ta mới chặn và báo lỗi chi tiết
+      // Dựa trên hợp đồng mới nhất để User biết lý do chính xác
+      if (!validContract) {
+
+        // Lấy hợp đồng mới nhất để check lỗi
+        const latestContract = await prisma.contracts.findFirst({
+          where: {
+            tenant_user_id: user.user_id,
+            deleted_at: null,
+          },
+          orderBy: {
+            created_at: 'desc',
+          },
+        });
+
+        // Case 2.1: Tài khoản mới tinh, chưa có hợp đồng nào
+        if (!latestContract) {
+          throw new Error("Tài khoản chưa có hợp đồng thuê phòng nào. Vui lòng liên hệ quản lý.");
+        }
+
+        // Case 2.2: Hợp đồng mới nhất đã bị hủy/hết hạn/từ chối
+        const invalidStatuses = ['rejected', 'terminated', 'expired'];
+        if (invalidStatuses.includes(latestContract.status)) {
+          throw new Error("Tất cả hợp đồng của bạn đã kết thúc, hết hạn hoặc bị từ chối. Vui lòng liên hệ quản lý.");
+        }
+
+        // Case 2.3: Hợp đồng có trạng thái OK (Active/Pending) nhưng NGÀY BẮT ĐẦU ở tương lai
+        const startDate = new Date(latestContract.start_date);
+        startDate.setHours(0, 0, 0, 0);
+
+        if (startDate > today) {
+          const dateStr = startDate.toLocaleDateString("vi-VN");
+          throw new Error(`Hợp đồng của bạn chưa đến ngày hiệu lực. Bạn chỉ có thể đăng nhập bắt đầu từ ngày ${dateStr}.`);
+        }
+
+        // Nếu lọt qua hết các case trên mà vẫn không có validContract (trường hợp hiếm gặp), chặn mặc định
+        throw new Error("Không tìm thấy hợp đồng hợp lệ để đăng nhập.");
       }
+
+      // Nếu validContract tồn tại -> Code sẽ chạy tiếp xuống dưới để tạo Token
     }
     // Check if this is first login (user not verified yet)
     if (!user.is_verified) {

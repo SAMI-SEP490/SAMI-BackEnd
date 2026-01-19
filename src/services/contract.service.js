@@ -23,7 +23,7 @@ const CONTRACT_STATUS = {
   EXPIRED: "expired",
 };
 const MAX_RETROACTIVE_MONTHS = 6;
-const MAX_DURATION_MONTHS = 120;
+const MAX_DURATION_MONTHS = 60;
 // Base URL frontend của bạn (Lấy từ env hoặc hardcode)
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 
@@ -164,6 +164,14 @@ class ContractService {
             `Start date cannot be older than ${MAX_RETROACTIVE_MONTHS} months from today.`
         );
       }
+    }
+
+    const maxFutureDate = new Date();
+    maxFutureDate.setMonth(today.getMonth() + 1);
+    maxFutureDate.setHours(0, 0, 0, 0);
+
+    if (start > maxFutureDate) {
+      throw new Error("Ngày bắt đầu không được vượt quá 1 tháng kể từ hiện tại.");
     }
 
     // 2. Kiểm tra thời hạn không quá lớn (Luôn kiểm tra)
