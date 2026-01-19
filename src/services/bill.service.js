@@ -327,19 +327,60 @@ class BillService {
     if (!['other', 'utilities'].includes(data.bill_type)) {
       throw new Error("Manual creation is only allowed for 'other' or 'utilities' bills.");
     }
+
+    // Fetch Contract
     const contract = await prisma.contracts.findUnique({ where: { contract_id: data.contract_id } });
     if (!contract) throw new Error("Contract not found");
-    if (new Date(data.billing_period_start) < new Date(contract.start_date)) {
-      throw new Error("Billing period cannot start before the contract start date.");
+
+    // Parse Dates
+    const billingStart = new Date(data.billing_period_start);
+    const billingEnd = new Date(data.billing_period_end);
+    const dueDate = new Date(data.due_date);
+    const contractStart = new Date(contract.start_date);
+    const contractEnd = new Date(contract.end_date);
+
+    // [VALIDATION 1] Start Date vs Contract Start
+    if (billingStart < contractStart) {
+      throw new Error(`Billing period start (${billingStart.toISOString().split('T')[0]}) cannot be before contract start (${contractStart.toISOString().split('T')[0]}).`);
     }
-    const billNumber = generateBillNumber(new Date().getFullYear(), new Date().getMonth() + 1, data.bill_type);
+
+    // [VALIDATION 2] End Date vs Contract End (NEW)
+    if (billingEnd > contractEnd) {
+      throw new Error(`Billing period end (${billingEnd.toISOString().split('T')[0]}) cannot exceed contract end date (${contractEnd.toISOString().split('T')[0]}).`);
+    }
+
+    // [VALIDATION 3] Due Date vs Billing End (NEW)
+    if (dueDate < billingEnd) {
+      throw new Error("Due date must be after or equal to the billing period end date.");
+    }
+
+    // [VALIDATION 4] Start vs End (Basic sanity check)
+    if (billingStart > billingEnd) {
+      throw new Error("Billing start date cannot be after end date.");
+    }
+
+    const billNumber = generateBillNumber(
+      new Date().getFullYear(),
+      new Date().getMonth() + 1,
+      data.bill_type
+    );
+
     return prisma.bills.create({
       data: {
-        ...data, bill_number: billNumber, status: 'draft', created_by: createdById,
-        billing_period_start: new Date(data.billing_period_start), billing_period_end: new Date(data.billing_period_end), due_date: new Date(data.due_date),
+        ...data,
+        bill_number: billNumber,
+        status: 'draft',
+        created_by: createdById,
+        billing_period_start: billingStart,
+        billing_period_end: billingEnd,
+        due_date: dueDate,
         service_charges: data.service_charges ? {
           create: data.service_charges.map(charge => ({
-            service_type: charge.service_type, quantity: charge.quantity, unit_price: charge.unit_price, amount: charge.amount, description: charge.description
+            service_type: charge.service_type,
+            quantity: charge.quantity,
+            unit_price: charge.unit_price,
+            amount: charge.amount,
+            description: charge.description
           }))
         } : undefined
       },
@@ -351,34 +392,77 @@ class BillService {
    * Update Draft Bill (Edit OR Publish)
    */
   async updateDraftBill(billId, data) {
-    const originalDraft = await prisma.bills.findUnique({ where: { bill_id: billId }, include: { contract: true } });
+    const originalDraft = await prisma.bills.findUnique({
+      where: { bill_id: billId },
+      include: { contract: true }
+    });
+
     if (!originalDraft || originalDraft.status !== "draft") {
-      const error = new Error("Only draft bills can be updated here."); error.statusCode = 403; throw error;
+      const error = new Error("Only draft bills can be updated here.");
+      error.statusCode = 403;
+      throw error;
     }
-    if (data.billing_period_start) {
-      if (new Date(data.billing_period_start) < new Date(originalDraft.contract.start_date)) throw new Error("Billing period cannot start before the contract start date.");
-    }
+
+    // Validate Dates if they are being updated
+    // We merge with original data to ensure the full set is valid
+    const billingStart = data.billing_period_start ? new Date(data.billing_period_start) : new Date(originalDraft.billing_period_start);
+    const billingEnd = data.billing_period_end ? new Date(data.billing_period_end) : new Date(originalDraft.billing_period_end);
+    const dueDate = data.due_date ? new Date(data.due_date) : new Date(originalDraft.due_date);
+    const contractStart = new Date(originalDraft.contract.start_date);
+    const contractEnd = new Date(originalDraft.contract.end_date);
+
+    if (billingStart < contractStart) throw new Error("Billing period start cannot be before contract start date.");
+    if (billingEnd > contractEnd) throw new Error("Billing period end cannot exceed contract end date.");
+    if (dueDate < billingEnd) throw new Error("Due date must be after or equal to billing period end.");
+    if (billingStart > billingEnd) throw new Error("Billing start date cannot be after end date.");
+
+    // --- CASE A: PUBLISHING UTILITY BILL ---
     if (data.status === "issued" && originalDraft.bill_type === 'utilities') {
       return this._publishUtilityBillFromDraft(originalDraft, data);
     }
+
+    // --- CASE B: STANDARD UPDATE/PUBLISH (Other) ---
     const { service_charges, ...mainData } = data;
     let updateData = { ...mainData, updated_at: new Date() };
+
     if (data.status === "issued") {
       const finalData = { ...originalDraft, ...data };
-      const periodStart = new Date(finalData.billing_period_start);
-      const periodEnd = new Date(finalData.billing_period_end);
-      await this._checkBillOverlap((await this._getRoomIdFromContract(originalDraft.contract_id)), periodStart, periodEnd, billId, originalDraft.bill_type);
-      updateData.bill_number = generateBillNumber(periodStart.getFullYear(), periodStart.getMonth() + 1, originalDraft.bill_type);
+      await this._checkBillOverlap(
+        (await this._getRoomIdFromContract(originalDraft.contract_id)),
+        billingStart,
+        billingEnd,
+        billId,
+        originalDraft.bill_type
+      );
+
+      updateData.bill_number = generateBillNumber(
+        billingStart.getFullYear(),
+        billingStart.getMonth() + 1,
+        originalDraft.bill_type
+      );
     }
-    if (data.billing_period_start) updateData.billing_period_start = new Date(data.billing_period_start);
-    if (data.billing_period_end) updateData.billing_period_end = new Date(data.billing_period_end);
-    if (data.due_date) updateData.due_date = new Date(data.due_date);
+
+    if (data.billing_period_start) updateData.billing_period_start = billingStart;
+    if (data.billing_period_end) updateData.billing_period_end = billingEnd;
+    if (data.due_date) updateData.due_date = dueDate;
+
     return prisma.$transaction(async (tx) => {
-      const updatedBill = await tx.bills.update({ where: { bill_id: billId }, data: updateData });
+      const updatedBill = await tx.bills.update({
+        where: { bill_id: billId },
+        data: updateData,
+      });
+
       if (service_charges && Array.isArray(service_charges)) {
         await tx.bill_service_charges.deleteMany({ where: { bill_id: billId } });
         await tx.bill_service_charges.createMany({
-          data: service_charges.map(charge => ({ bill_id: billId, service_type: charge.service_type, quantity: charge.quantity, unit_price: charge.unit_price, amount: charge.amount, description: charge.description }))
+          data: service_charges.map(charge => ({
+            bill_id: billId,
+            service_type: charge.service_type,
+            quantity: charge.quantity,
+            unit_price: charge.unit_price,
+            amount: charge.amount,
+            description: charge.description
+          }))
         });
       }
       return updatedBill;
