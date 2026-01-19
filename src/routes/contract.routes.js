@@ -49,7 +49,6 @@ router.put('/:id',
     validateContractId,
     upload.array('contract_file'), // Chấp nhận PDF hoặc Ảnh
     handleUploadError,
-    validateUpdateContract,
     contractController.updateContract
 );
 
