@@ -1056,49 +1056,59 @@ class RoomService {
     }
 
     // 5️⃣ Tạo room_tenants (moved_out_at = null, is_current = true)
-    const roomTenant = await prisma.room_tenants.create({
-      data: {
-        room_id: roomId,
-        tenant_user_id: tenantUserId,
-        tenant_type: "secondary",
-        moved_in_at: moveInDate,
-        moved_out_at: null,
-        is_current: true,
-        note: note?.trim() || null,
-        created_at: new Date(),
-      },
-      include: {
-        tenant: {
-          include: {
-            user: {
-              select: {
-                user_id: true,
-                full_name: true,
-                phone: true,
-                email: true,
+    try {
+      const roomTenant = await prisma.room_tenants.create({
+        data: {
+          room_id: roomId,
+          tenant_user_id: tenantUserId,
+          tenant_type: "secondary",
+          moved_in_at: moveInDate,
+          moved_out_at: null,
+          is_current: true,
+          note: note?.trim() || null,
+          created_at: new Date(),
+        },
+        include: {
+          tenant: {
+            include: {
+              user: {
+                select: {
+                  user_id: true,
+                  full_name: true,
+                  phone: true,
+                  email: true,
+                },
               },
             },
           },
         },
-      },
-    });
+      });
 
-    // 6️⃣ Cập nhật trạng thái phòng
-    await this.updateRoomStatus(roomId);
+      // 6️⃣ Cập nhật trạng thái phòng
+      await this.updateRoomStatus(roomId);
 
-    return {
-      room_id: roomId,
-      tenant: {
-        user_id: roomTenant.tenant.user.user_id,
-        full_name: roomTenant.tenant.user.full_name,
-        phone: roomTenant.tenant.user.phone,
-        email: roomTenant.tenant.user.email,
-      },
-      tenant_type: roomTenant.tenant_type,
-      moved_in_at: roomTenant.moved_in_at,
-      moved_out_at: null,
-      is_current: true,
-    };
+      return {
+        room_id: roomId,
+        tenant: {
+          user_id: roomTenant.tenant.user.user_id,
+          full_name: roomTenant.tenant.user.full_name,
+          phone: roomTenant.tenant.user.phone,
+          email: roomTenant.tenant.user.email,
+        },
+        tenant_type: roomTenant.tenant_type,
+        moved_in_at: roomTenant.moved_in_at,
+        moved_out_at: null,
+        is_current: true,
+      };
+    } catch (e) {
+      // Prisma unique constraint violation
+      if (e?.code === "P2002") {
+        throw new Error(
+          "Người thuê này đã là người ở phụ của một phòng khác, không thể thêm sang phòng khác",
+        );
+      }
+      throw e;
+    }
   }
 
   async removeSecondaryTenantFromRoom(

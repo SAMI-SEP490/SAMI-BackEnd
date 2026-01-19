@@ -374,7 +374,7 @@ model room_tenants {
   tenant_type    tenant_type
   moved_in_at    DateTime    @db.Date
   moved_out_at   DateTime?   @db.Date
-  is_current     Boolean?    @default(false)
+  is_current     Boolean     @default(false)
   note           String?
   created_at     DateTime?   @default(now()) @db.Timestamp(6)
 
@@ -385,6 +385,7 @@ model room_tenants {
   @@index([room_id], map: "idx_room_tenants_room")
   @@index([tenant_user_id], map: "idx_room_tenants_tenant")
   @@index([room_id, tenant_type, is_current], map: "idx_room_tenants_type_current")
+  @@unique([tenant_user_id, tenant_type, is_current], map: "uniq_tenant_type_current")
 }
 
 // ============================================
