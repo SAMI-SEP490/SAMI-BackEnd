@@ -582,42 +582,59 @@ class TenantService {
         };
     }
 
-    async lookupTenantByExactInfo(identifier, buildingId = null) {
-        if (!identifier) return null;
+    async lookupTenant(keyword, buildingId = null) {
+        if (!keyword) return null;
 
-        const cleanId = identifier.trim();
+        const cleanKeyword = keyword.trim();
 
-        // [UPDATE] Xây dựng điều kiện Where cơ bản
-        const whereCondition = {
-            OR: [
-                { user: { phone: cleanId } },
-                { id_number: cleanId }
-            ]
-        };
-
-
-        if (buildingId) {
-            whereCondition.building_id = parseInt(buildingId);
-        }
-
-        const tenant = await prisma.tenants.findFirst({
-            where: whereCondition, // Sử dụng điều kiện đã build
+        const tenants = await prisma.tenants.findMany({
+            where: {
+                OR: [
+                    {
+                        // [FIX 1] Đổi 'users' -> 'user' (theo schema)
+                        user: {
+                            full_name: {
+                                contains: cleanKeyword,
+                                mode: 'insensitive',
+                            }
+                        }
+                    },
+                    {
+                        // [FIX 1] Đổi 'users' -> 'user'
+                        user: {
+                            phone: {
+                                contains: cleanKeyword
+                            }
+                        }
+                    },
+                    {
+                        id_number: {
+                            contains: cleanKeyword
+                        }
+                    }
+                ],
+                // Filter theo building_id nếu có
+                building_id: buildingId ? parseInt(buildingId) : undefined
+            },
+            take: 5,
             include: {
+                // [FIX 1] Đổi 'users' -> 'user'
                 user: {
                     select: {
                         user_id: true,
                         full_name: true,
                         phone: true,
                         email: true,
-                        gender: true,
+                        avatar_url: true,
+                        gender: true,       // Thêm các trường này để _formatTenantResult không bị lỗi
                         birthday: true,
                         status: true,
                         is_verified: true,
-                        avatar_url: true,
                     }
                 },
+                // [FIX 2] Đổi 'rooms' -> 'room_tenants_history' vì schema không có quan hệ rooms trực tiếp
                 room_tenants_history: {
-                    where: { is_current: true },
+                    where: { is_current: true }, // Chỉ lấy phòng đang ở
                     take: 1,
                     include: {
                         room: {
@@ -625,8 +642,7 @@ class TenantService {
                                 room_id: true,
                                 room_number: true,
                                 floor: true,
-                                building_id: true,
-                                building: { select: { name: true } }
+                                building_id: true
                             }
                         }
                     }
@@ -634,17 +650,19 @@ class TenantService {
             }
         });
 
-        if (!tenant) return null;
+        if (!tenants || tenants.length === 0) return null;
 
-        const currentRoom = tenant.room_tenants_history[0]?.room || null;
+        const mappedTenants = tenants.map(t => {
+            const currentRoom = t.room_tenants_history?.[0]?.room || null;
+            return {
+                ...t,
+                users: t.user, // Rename 'user' (Prisma) thành 'users' (Format cần)
+                rooms: currentRoom // Rename 'room_tenants_history' thành 'rooms' (Format cần)
+            };
+        });
 
-        const formattedTenantData = {
-            ...tenant,
-            users: tenant.user,
-            rooms: currentRoom
-        };
 
-        return this._formatTenantResult(formattedTenantData);
+        return mappedTenants.map(t => this._formatTenantResult(t));
     }
 
     async findBestMatchTenant(searchData) {
