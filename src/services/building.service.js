@@ -7,24 +7,11 @@ const NotificationService = require("./notification.service");
 class BuildingService {
   // CREATE - Tạo tòa nhà mới
   async createBuilding(data) {
-    const { name, address, number_of_floors, total_area, bill_due_day } = data;
+    const { name, address, number_of_floors, total_area, bill_closing_day } = data;
 
     // ===== VALIDATE CƠ BẢN =====
     if (!name || !name.trim()) {
       throw new Error("Missing required field: name");
-    }
-
-    if (bill_due_day === undefined || bill_due_day === null) {
-      throw new Error("Missing required field: bill_due_day");
-    }
-
-    const parsedBillDueDay = parseInt(bill_due_day);
-    if (
-      isNaN(parsedBillDueDay) ||
-      parsedBillDueDay < 1 ||
-      parsedBillDueDay > 31
-    ) {
-      throw new Error("bill_due_day must be an integer between 1 and 31");
     }
 
     const normalizedName = name.trim();
@@ -70,7 +57,7 @@ class BuildingService {
           address: address?.trim() || null,
           number_of_floors: parsedFloors,
           total_area: parsedArea,
-          bill_due_day: parsedBillDueDay, // ✅ ĐÃ THÊM
+          bill_closing_day: bill_closing_day ? parseInt(bill_closing_day) : null,
           is_active: true,
         },
       });
@@ -140,7 +127,15 @@ class BuildingService {
 
   // READ - Lấy danh sách tòa nhà (có phân trang và filter)
   async getBuildings(filters = {}) {
-    const { name, address, is_active, page = 1, limit = 20 } = filters;
+    let { name, address, is_active, page, limit } = filters;
+
+    // Ensure page and limit are integers
+    // Parse strings to int, default to 1 and 20 if invalid/missing
+    page = parseInt(page);
+    limit = parseInt(limit);
+
+    if (isNaN(page) || page < 1) page = 1;
+    if (isNaN(limit) || limit < 1) limit = 20;
 
     const skip = (page - 1) * limit;
     const where = {};
@@ -206,30 +201,10 @@ class BuildingService {
 
   // [NEW] READ - Lấy danh sách tòa nhà được gán cho Manager
   async getAssignedBuildings(userId) {
-    // Lấy danh sách các assignment còn hiệu lực
-    const assignments = await prisma.building_managers.findMany({
-      where: {
-        user_id: userId,
-      },
-      include: {
-        building: {
-          select: {
-            building_id: true,
-            name: true,
-            address: true,
-            is_active: true,
-          },
-        },
-      },
-    });
+    const assignments = await prisma.building_managers.findMany({ where: { user_id: userId }, include: { building: { select: { building_id: true, name: true, address: true, is_active: true, bill_closing_day: true } } } });
 
     // Map data để trả về format gọn gàng
-    return assignments.map((a) => ({
-      building_id: a.building_id,
-      name: a.building.name,
-      address: a.building.address,
-      is_building_active: a.building.is_active,
-    }));
+    return assignments.map((a) => ({ building_id: a.building_id, name: a.building.name, address: a.building.address, is_building_active: a.building.is_active, bill_closing_day: a.building.bill_closing_day }));
   }
 
   async updateBuilding(buildingId, data, senderId) {
@@ -242,7 +217,6 @@ class BuildingService {
       electric_unit_price,
       water_unit_price,
       service_fee,
-      bill_due_day,
       max_4_wheel_slot,
       max_2_wheel_slot,
     } = data;
@@ -367,23 +341,6 @@ class BuildingService {
       updateData.service_fee = newValue;
     }
 
-    // Bill due day
-    if (bill_due_day !== undefined) {
-      const newValue =
-        bill_due_day === "" || bill_due_day === null
-          ? null
-          : parseInt(bill_due_day);
-
-      if (newValue !== existingBuilding.bill_due_day) {
-        billingChanges.push(
-          `📅 Ngày thanh toán: ${existingBuilding.bill_due_day ?? "—"} → ${
-            newValue ?? "—"
-          }`,
-        );
-      }
-
-      updateData.bill_due_day = newValue;
-    }
 
     // ✅ MAX 4-WHEEL SLOT
     if (max_4_wheel_slot !== undefined) {
@@ -800,25 +757,17 @@ class BuildingService {
       number_of_floors: building.number_of_floors,
       total_area: building.total_area,
       is_active: building.is_active,
-
-      // 💰 Prices & fees
       electric_unit_price: building.electric_unit_price,
       water_unit_price: building.water_unit_price,
       service_fee: building.service_fee,
-      bill_due_day: building.bill_due_day,
-
-      // 🚗 Bãi xe (THÊM MỚI)
+      bill_closing_day: building.bill_closing_day,
       max_4_wheel_slot: building.max_4_wheel_slot,
       max_2_wheel_slot: building.max_2_wheel_slot,
-
-      managers:
-        building.building_managers?.map((m) => ({
-          user_id: m.user_id,
-          // [FIX] m.users -> m.user
-          full_name: m.user?.full_name || m.users?.full_name,
-          email: m.user?.email || m.users?.email,
-        })) || [],
-
+      managers: building.building_managers?.map((m) => ({
+        user_id: m.user_id,
+        full_name: m.user?.full_name || m.users?.full_name,
+        email: m.user?.email || m.users?.email,
+      })) || [],
       created_at: building.created_at,
       updated_at: building.updated_at,
     };
@@ -832,26 +781,18 @@ class BuildingService {
       number_of_floors: building.number_of_floors,
       total_area: building.total_area,
       is_active: building.is_active,
-
-      // ✅ ĐÃ CÓ
       electric_unit_price: building.electric_unit_price,
       water_unit_price: building.water_unit_price,
-
-      // ✅ THÊM 2 TRƯỜNG MỚI
       service_fee: building.service_fee,
-      bill_due_day: building.bill_due_day,
+      bill_closing_day: building.bill_closing_day,
 
       total_rooms: building._count?.rooms || 0,
       total_regulations: building._count?.regulations || 0,
       total_floor_plans: building._count?.floor_plans || 0,
-
-      managers:
-        building.building_managers?.map((m) => ({
-          user_id: m.user_id,
-          // [FIX] m.users -> m.user
-          full_name: m.user?.full_name || m.users?.full_name,
-        })) || [],
-
+      managers: building.building_managers?.map((m) => ({
+        user_id: m.user_id,
+        full_name: m.user?.full_name || m.users?.full_name,
+      })) || [],
       created_at: building.created_at,
       updated_at: building.updated_at,
     };
@@ -872,46 +813,35 @@ class BuildingService {
       electric_unit_price: building.electric_unit_price,
       water_unit_price: building.water_unit_price,
       service_fee: building.service_fee,
-      bill_due_day: building.bill_due_day,
-
-      // ✅ THÊM 2 FIELD BÃI XE (MỚI)
+      bill_closing_day: building.bill_closing_day,
       max_4_wheel_slot: building.max_4_wheel_slot,
       max_2_wheel_slot: building.max_2_wheel_slot,
-
-      managers:
-        building.building_managers?.map((m) => ({
-          user_id: m.user_id,
-          // [FIX] dùng m.user do query trên đã sửa thành include user
-          full_name: m.user?.full_name,
-          email: m.user?.email,
-          phone: m.user?.phone,
-          note: m.note,
-        })) || [],
-
-      rooms:
-        building.rooms?.map((r) => ({
-          room_id: r.room_id,
-          room_number: r.room_number,
-          floor: r.floor,
-          size: r.size,
-        })) || [],
-
-      regulations:
-        building.regulations?.map((r) => ({
-          regulation_id: r.regulation_id,
-          title: r.title,
-          effective_date: r.effective_date,
-          version: r.version,
-        })) || [],
-
-      floor_plans:
-        building.floor_plans?.map((f) => ({
-          plan_id: f.plan_id,
-          name: f.name,
-          floor_number: f.floor_number,
-        })) || [],
-    }; // [FIX] Đã đóng ngoặc return object
-  } // [FIX] Đã đóng ngoặc function formatBuildingDetailResponse
+      managers: building.building_managers?.map((m) => ({
+        user_id: m.user_id,
+        full_name: m.user?.full_name,
+        email: m.user?.email,
+        phone: m.user?.phone,
+        note: m.note,
+      })) || [],
+      rooms: building.rooms?.map((r) => ({
+        room_id: r.room_id,
+        room_number: r.room_number,
+        floor: r.floor,
+        size: r.size,
+      })) || [],
+      regulations: building.regulations?.map((r) => ({
+        regulation_id: r.regulation_id,
+        title: r.title,
+        effective_date: r.effective_date,
+        version: r.version,
+      })) || [],
+      floor_plans: building.floor_plans?.map((f) => ({
+        plan_id: f.plan_id,
+        name: f.name,
+        floor_number: f.floor_number,
+      })) || [],
+    };
+  }
 
   formatManagerResponse(manager) {
     return {
@@ -951,28 +881,8 @@ class BuildingService {
   async getMyBuildingDetails(tenantUserId) {
     // 1. Tìm tất cả hợp đồng ACTIVE của tenant này
     const activeContracts = await prisma.contracts.findMany({
-      where: {
-        tenant_user_id: tenantUserId,
-        status: "active", // Chỉ lấy hợp đồng đang hiệu lực
-        deleted_at: null,
-      },
-      include: {
-        room_history: {
-          // Relation defined in schema: contract -> room
-          include: {
-            building: {
-              select: {
-                building_id: true,
-                name: true,
-                electric_unit_price: true,
-                water_unit_price: true,
-                service_fee: true,
-                bill_due_day: true,
-              },
-            },
-          },
-        },
-      },
+      where: { tenant_user_id: tenantUserId, status: 'active', deleted_at: null },
+      include: { room_history: { include: { building: true } } }
     });
 
     // 2. Lọc ra danh sách tòa nhà duy nhất (tránh trùng lặp nếu thuê 2 phòng cùng tòa)
@@ -987,7 +897,7 @@ class BuildingService {
           electric_unit_price: building.electric_unit_price,
           water_unit_price: building.water_unit_price,
           service_fee: building.service_fee,
-          bill_due_day: building.bill_due_day,
+          bill_closing_day: building.bill_closing_day
         });
       }
     });

@@ -1,8 +1,8 @@
 // src/middlewares/utility.middleware.js
-// Created: 2026-01-01
+// Created: 2026-01-20
 
 const { z } = require('zod');
-const { validate } = require('./validation.middleware'); // Reuse your existing validate helper
+const { validate } = require('./validation.middleware');
 
 // Schema for Getting Previous Readings (Query Params)
 // GET /api/utility/readings?building_id=1&month=12&year=2025
@@ -21,22 +21,26 @@ const recordReadingsSchema = z.object({
     readings: z.array(
         z.object({
             room_id: z.number().positive(),
+            
             new_electric: z.number().nonnegative({ message: "Chỉ số điện không được âm" }),
             new_water: z.number().nonnegative({ message: "Chỉ số nước không được âm" }),
-            // Optional overrides if the manager spots a mistake in the "Old" number
+            
+            // Overrides & Flags
             old_electric_override: z.number().nonnegative().optional(),
-            old_water_override: z.number().nonnegative().optional()
+            old_water_override: z.number().nonnegative().optional(),
+            
+            is_electric_reset: z.boolean().optional().default(false),
+            is_water_reset: z.boolean().optional().default(false)
         })
     ).min(1, { message: "Danh sách nhập liệu không được trống" })
     .superRefine((items, ctx) => {
         // Validate Unique Rooms
         const roomIds = items.map(i => i.room_id);
         const uniqueRooms = new Set(roomIds);
-        
         if (uniqueRooms.size !== roomIds.length) {
             ctx.addIssue({
                 code: z.ZodIssueCode.custom,
-                message: "Duplicate room_id found in the list. Please send one entry per room."
+                message: "Duplicate room_id found in the list."
             });
         }
     })
@@ -52,5 +56,5 @@ module.exports = {
             return res.status(400).json({ success: false, message: err.errors?.[0]?.message || 'Invalid query params' });
         }
     },
-    validateRecordReadings: validate(recordReadingsSchema) // Use generic validator for Body
+    validateRecordReadings: validate(recordReadingsSchema)
 };
