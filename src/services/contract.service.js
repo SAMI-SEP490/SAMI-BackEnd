@@ -22,7 +22,8 @@ const CONTRACT_STATUS = {
   REQUESTED_TERMINATION: "requested_termination",
   EXPIRED: "expired",
 };
-
+const MAX_RETROACTIVE_MONTHS = 6;
+const MAX_DURATION_MONTHS = 60;
 // Base URL frontend của bạn (Lấy từ env hoặc hardcode)
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 
@@ -122,6 +123,40 @@ class ContractService {
     return unpaidBills.length > 0;
   }
 
+  validateDateLogic(startDate, durationMonths, checkPastDate = true) { // <--- Thêm tham số mặc định true
+    const start = new Date(startDate);
+    const duration = parseInt(durationMonths);
+    const today = new Date();
+
+    // 1. Kiểm tra ngày bắt đầu không được quá cũ
+    // CHỈ KIỂM TRA KHI checkPastDate = true
+    if (checkPastDate) {
+      const minDate = new Date();
+      minDate.setMonth(today.getMonth() - MAX_RETROACTIVE_MONTHS);
+      minDate.setHours(0, 0, 0, 0);
+      start.setHours(0, 0, 0, 0);
+
+      if (start < minDate) {
+        throw new Error(
+            `Start date cannot be older than ${MAX_RETROACTIVE_MONTHS} months from today.`
+        );
+      }
+    }
+
+    // 2. Kiểm tra thời hạn không quá lớn (Luôn kiểm tra)
+    if (duration > MAX_DURATION_MONTHS) {
+      throw new Error(
+          `Duration cannot exceed ${MAX_DURATION_MONTHS} months (5 years).`
+      );
+    }
+
+    // 3. Kiểm tra cơ bản
+    if (duration < 1) {
+      throw new Error("Duration must be at least 1 month");
+    }
+
+    return true;
+  }
   /**
    * Helper: Validate status transition
    */
@@ -272,7 +307,8 @@ class ContractService {
     const startDate = new Date(start_date);
     const duration = parseInt(duration_months);
 
-    if (duration < 1) throw new Error("Duration must be at least 1 month");
+    this.validateDateLogic(startDate, duration);
+
     const endDate = this.calculateEndDate(startDate, duration);
     if (startDate >= endDate) throw new Error("Calculated end date is invalid");
 
@@ -530,6 +566,7 @@ class ContractService {
       validRate = rate;
     }
 
+
     const targetRoomId = room_id ? parseInt(room_id) : existingContract.room_id;
     const targetStartDate = start_date
         ? new Date(start_date)
@@ -541,7 +578,10 @@ class ContractService {
         targetStartDate,
         targetDuration
     );
-
+    if (start_date || duration_months) {
+      const shouldCheckPast = !!start_date;
+      this.validateDateLogic(targetStartDate, targetDuration, shouldCheckPast);
+    }
     const conflicting = await this.checkContractConflict(
         targetRoomId,
         targetStartDate,
