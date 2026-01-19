@@ -49,7 +49,7 @@ module.exports = {
 
     rateLimit: {
         windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-        maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100
+        maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
     },
 
     tokens: {

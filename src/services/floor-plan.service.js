@@ -80,7 +80,7 @@ class FloorPlanService {
   _getBuildingPolygon(layoutObj) {
     const nodes = Array.isArray(layoutObj?.nodes) ? layoutObj.nodes : [];
     const building = nodes.find(
-      (n) => n?.type === "building" && Array.isArray(n?.data?.points)
+      (n) => n?.type === "building" && Array.isArray(n?.data?.points),
     );
     if (!building) return null;
 
@@ -102,7 +102,7 @@ class FloorPlanService {
   _getRoomRects(layoutObj) {
     const nodes = Array.isArray(layoutObj?.nodes) ? layoutObj.nodes : [];
     const roomNodes = nodes.filter(
-      (n) => n?.type === "block" && n?.data?.icon === "room"
+      (n) => n?.type === "block" && n?.data?.icon === "room",
     );
 
     return roomNodes.map((n) => {
@@ -132,7 +132,7 @@ class FloorPlanService {
     const buildingPoly = this._getBuildingPolygon(layoutObj);
     if (!buildingPoly) {
       throw new Error(
-        "Vui lòng tạo Tòa nhà (Building) trước khi lưu, vì phòng phải nằm trong tòa nhà."
+        "Vui lòng tạo Tòa nhà (Building) trước khi lưu, vì phòng phải nằm trong tòa nhà.",
       );
     }
 
@@ -140,7 +140,7 @@ class FloorPlanService {
     for (const r of rooms) {
       if (!r.w || !r.h) {
         throw new Error(
-          `Phòng ${r.roomNo || "(chưa có số phòng)"} thiếu kích thước (w/h).`
+          `Phòng ${r.roomNo || "(chưa có số phòng)"} thiếu kích thước (w/h).`,
         );
       }
 
@@ -156,7 +156,7 @@ class FloorPlanService {
         throw new Error(
           `Phòng ${
             r.roomNo || "(chưa có số phòng)"
-          } phải nằm hoàn toàn trong tòa nhà.`
+          } phải nằm hoàn toàn trong tòa nhà.`,
         );
       }
     }
@@ -170,7 +170,7 @@ class FloorPlanService {
           throw new Error(
             `Phòng ${a.roomNo || a.id} đang bị đè lên phòng ${
               b.roomNo || b.id
-            }. Vui lòng sắp xếp lại.`
+            }. Vui lòng sắp xếp lại.`,
           );
         }
       }
@@ -187,11 +187,11 @@ class FloorPlanService {
       .filter(
         (n) =>
           n?.type === "room" ||
-          (n?.type === "block" && n?.data?.icon === "room")
+          (n?.type === "block" && n?.data?.icon === "room"),
       )
       .map((node) => {
         const roomNumber = String(
-          node?.data?.room_number ?? node?.data?.label ?? ""
+          node?.data?.room_number ?? node?.data?.label ?? "",
         ).trim();
 
         if (!roomNumber) return null;
@@ -256,7 +256,7 @@ class FloorPlanService {
     const hasAccess = await this.checkBuildingAccess(userId, userRole, bId);
     if (!hasAccess) {
       throw new Error(
-        "Access denied: You do not have permission to access floor plans for this building"
+        "Access denied: You do not have permission to access floor plans for this building",
       );
     }
 
@@ -316,11 +316,11 @@ class FloorPlanService {
     const hasAccess = await this.checkBuildingAccess(
       createdBy,
       userRole,
-      buildingId
+      buildingId,
     );
     if (!hasAccess) {
       throw new Error(
-        "Access denied: You do not have permission to create floor plans for this building"
+        "Access denied: You do not have permission to create floor plans for this building",
       );
     }
 
@@ -358,7 +358,7 @@ class FloorPlanService {
 
     if (floorNum !== expectedNextFloor) {
       throw new Error(
-        `Phải tạo tầng liên tục. Tầng tiếp theo phải là tầng ${expectedNextFloor}.`
+        `Phải tạo tầng liên tục. Tầng tiếp theo phải là tầng ${expectedNextFloor}.`,
       );
     }
 
@@ -372,7 +372,7 @@ class FloorPlanService {
 
     if (existingPlan) {
       throw new Error(
-        `Floor plan already exists for building ${buildingId}, floor ${floorNum}`
+        `Floor plan already exists for building ${buildingId}, floor ${floorNum}`,
       );
     }
 
@@ -427,7 +427,7 @@ class FloorPlanService {
       const roomsToCreate = this.extractRoomsFromLayout(
         layoutObj,
         buildingId,
-        floorNum
+        floorNum,
       );
 
       // ===== PATCH: prevent duplicate room_number within same building (across all floors) =====
@@ -451,7 +451,7 @@ class FloorPlanService {
               .map((x) => `${x.room_number} (tầng ${x.floor ?? "?"})`)
               .join(", ");
             throw new Error(
-              `Số phòng đã tồn tại trong tòa nhà này: ${dupList}. Vui lòng đặt số phòng khác.`
+              `Số phòng đã tồn tại trong tòa nhà này: ${dupList}. Vui lòng đặt số phòng khác.`,
             );
           }
         }
@@ -460,7 +460,7 @@ class FloorPlanService {
       // 3️⃣ Tạo rooms (nếu có)
       if (roomsToCreate.length > 0) {
         const roomNumbers = Array.from(
-          new Set(roomsToCreate.map((r) => String(r.room_number).trim()))
+          new Set(roomsToCreate.map((r) => String(r.room_number).trim())),
         );
 
         const existed = await tx.rooms.findMany({
@@ -504,7 +504,7 @@ class FloorPlanService {
 
         // Map room_number -> room
         const roomByNumber = new Map(
-          createdRooms.map((r) => [String(r.room_number).trim(), r])
+          createdRooms.map((r) => [String(r.room_number).trim(), r]),
         );
 
         finalLayout = {
@@ -607,8 +607,36 @@ class FloorPlanService {
       select: { room_id: true, room_number: true, size: true },
     });
 
+    // ===== PATCH A5 START: compute locked_room_ids =====
+    const roomIds = rooms.map((r) => r.room_id);
+
+    let lockedRoomIds = [];
+    if (roomIds.length > 0) {
+      const [tenantRoomRows, contractRoomRows] = await Promise.all([
+        prisma.room_tenants.findMany({
+          where: { room_id: { in: roomIds }, is_current: true },
+          select: { room_id: true },
+        }),
+        prisma.contracts.findMany({
+          where: { room_id: { in: roomIds } },
+          select: { room_id: true },
+        }),
+      ]);
+
+      lockedRoomIds = Array.from(
+        new Set([
+          ...tenantRoomRows.map((x) => x.room_id),
+          ...contractRoomRows.map((x) => x.room_id),
+        ]),
+      );
+    }
+
+    // gắn vào floorPlan để formatter trả về FE
+    floorPlan.locked_room_ids = lockedRoomIds;
+    // ===== PATCH A5 END =====
+
     const mapByRoomNumber = new Map(
-      rooms.map((r) => [String(r.room_number).trim(), r])
+      rooms.map((r) => [String(r.room_number).trim(), r]),
     );
 
     const enrichedNodes = nodes.map((n) => {
@@ -774,7 +802,7 @@ class FloorPlanService {
       const hasAccess = await this.checkBuildingAccess(
         userId,
         userRole,
-        buildingId
+        buildingId,
       );
       if (!hasAccess) {
         throw new Error("Access denied");
@@ -858,7 +886,7 @@ class FloorPlanService {
     const hasAccess = await this.checkFloorPlanAccess(userId, userRole, planId);
     if (!hasAccess) {
       throw new Error(
-        "Access denied: You do not have permission to update this floor plan"
+        "Access denied: You do not have permission to update this floor plan",
       );
     }
 
@@ -959,7 +987,9 @@ class FloorPlanService {
             return {
               __nodeRef: n,
               room_id: n?.data?.room_id ? parseInt(n.data.room_id) : null,
-              room_number: String(n?.data?.room_number ?? "").trim(),
+              room_number: String(
+                n?.data?.room_number ?? n?.data?.label ?? "",
+              ).trim(),
               size: computedSize,
               floor: existingPlan.floor_number,
               building_id: existingPlan.building_id,
@@ -979,8 +1009,138 @@ class FloorPlanService {
 
         const dbById = new Map(dbRooms.map((r) => [r.room_id, r]));
         const dbByNumber = new Map(
-          dbRooms.map((r) => [String(r.room_number).trim(), r])
+          dbRooms.map((r) => [String(r.room_number).trim(), r]),
         );
+
+        const dbRoomIds = dbRooms.map((r) => r.room_id);
+
+        const [tenantRoomRows, contractRoomRows] = await Promise.all([
+          tx.room_tenants.findMany({
+            where: { room_id: { in: dbRoomIds }, is_current: true },
+            select: { room_id: true },
+          }),
+          tx.contracts.findMany({
+            where: {
+              room_id: { in: dbRoomIds },
+              ...(tx.contracts.fields?.deleted_at ? { deleted_at: null } : {}),
+            },
+            select: { room_id: true },
+          }),
+        ]);
+
+        const lockedRoomIdSet = new Set([
+          ...tenantRoomRows.map((x) => x.room_id),
+          ...contractRoomRows.map((x) => x.room_id),
+        ]);
+
+        const hasLockedRooms = lockedRoomIdSet.size > 0;
+
+        const oldLayoutObj = this.parseLayout(existingPlan.layout) || {};
+        const oldNodes = Array.isArray(oldLayoutObj.nodes)
+          ? oldLayoutObj.nodes
+          : [];
+        const newNodes = nodes; // nodes của layoutObj hiện tại
+
+        const isRoomNode = (n) =>
+          n?.type === "block" &&
+          n?.data?.icon === "room" &&
+          String(n?.data?.room_number ?? n?.data?.label ?? "").trim();
+
+        const isBuildingNode = (n) =>
+          n?.type === "building" || n?.id === "building";
+
+        // map room nodes
+        const oldRoomById = new Map();
+        const oldRoomByNumber = new Map();
+        for (const n of oldNodes.filter(isRoomNode)) {
+          const rn = String(n.data.room_number ?? n.data.label).trim();
+          const rid = n.data?.room_id ? parseInt(n.data.room_id) : null;
+          if (rid) oldRoomById.set(rid, n);
+          if (rn) oldRoomByNumber.set(rn, n);
+        }
+
+        const newRoomById = new Map();
+        const newRoomByNumber = new Map();
+        for (const n of newNodes.filter(isRoomNode)) {
+          const rn = String(n.data.room_number ?? n.data.label).trim();
+          const rid = n.data?.room_id ? parseInt(n.data.room_id) : null;
+          if (rid) newRoomById.set(rid, n);
+          if (rn) newRoomByNumber.set(rn, n);
+        }
+
+        // 1) khóa phòng: không cho đổi room_number, size, w/h, position
+        for (const db of dbRooms) {
+          if (!lockedRoomIdSet.has(db.room_id)) continue;
+
+          const oldNode =
+            oldRoomById.get(db.room_id) ||
+            oldRoomByNumber.get(String(db.room_number).trim());
+          const newNode =
+            newRoomById.get(db.room_id) ||
+            newRoomByNumber.get(String(db.room_number).trim());
+
+          if (!newNode) {
+            throw new Error(
+              `Phòng ${db.room_number} đang có hợp đồng/người ở nên không được xóa khỏi tầng.`,
+            );
+          }
+          if (!oldNode) continue; // nếu layout cũ thiếu node (hiếm), bỏ qua
+
+          const oldPos = oldNode.position || {};
+          const newPos = newNode.position || {};
+
+          const oldW = oldNode.data?.w ?? null;
+          const oldH = oldNode.data?.h ?? null;
+          const newW = newNode.data?.w ?? null;
+          const newH = newNode.data?.h ?? null;
+
+          const oldRn = String(
+            oldNode.data?.room_number ?? oldNode.data?.label ?? "",
+          ).trim();
+          const newRn = String(
+            newNode.data?.room_number ?? newNode.data?.label ?? "",
+          ).trim();
+
+          const moved =
+            Number(oldPos.x) !== Number(newPos.x) ||
+            Number(oldPos.y) !== Number(newPos.y);
+          const resized =
+            (oldW !== null && newW !== null && Number(oldW) !== Number(newW)) ||
+            (oldH !== null && newH !== null && Number(oldH) !== Number(newH));
+          const renamed = oldRn && newRn && oldRn !== newRn;
+
+          // size đổi sẽ bị bắt ở needUpdate, nhưng mình chặn luôn ở đây cho chắc
+          if (moved || resized || renamed) {
+            throw new Error(
+              `Phòng ${db.room_number} đang có hợp đồng/người ở nên không được chỉnh sửa hoặc di chuyển.`,
+            );
+          }
+        }
+
+        // 2) nếu có phòng bị khóa => khóa luôn building shape (không cho sửa layout tòa)
+        if (hasLockedRooms) {
+          const oldBuilding = oldNodes.find(isBuildingNode);
+          const newBuilding = newNodes.find(isBuildingNode);
+
+          if (oldBuilding && newBuilding) {
+            const oldPos = oldBuilding.position || {};
+            const newPos = newBuilding.position || {};
+            const posChanged =
+              Number(oldPos.x) !== Number(newPos.x) ||
+              Number(oldPos.y) !== Number(newPos.y);
+
+            const oldPts = oldBuilding.data?.points ?? null;
+            const newPts = newBuilding.data?.points ?? null;
+            const pointsChanged =
+              JSON.stringify(oldPts) !== JSON.stringify(newPts);
+
+            if (posChanged || pointsChanged) {
+              throw new Error(
+                "Tầng đang có phòng có hợp đồng/người ở nên không được chỉnh sửa layout tòa nhà.",
+              );
+            }
+          }
+        }
 
         // 3) UPSERT rooms
         for (const r of layoutRooms) {
@@ -1006,40 +1166,64 @@ class FloorPlanService {
             });
             r.room_id = created.room_id;
           } else {
-            // UPDATE (if changed) – must be vacant
-            const needUpdate =
-              String(found.room_number).trim() !== r.room_number ||
-              (found.size || null) !== (r.size || null);
+            const numberChanged =
+              String(found.room_number).trim() !== r.room_number;
+
+            // Convert Decimal -> number
+            const oldSizeNum =
+              found.size === null || found.size === undefined
+                ? null
+                : Number(found.size);
+
+            // computed from layout -> number
+            const newSizeNum =
+              r.size === null || r.size === undefined ? null : Number(r.size);
+
+            // CHỈ coi sizeChanged nếu FE có newSizeNum hợp lệ
+            let sizeChanged = false;
+            if (newSizeNum !== null && !Number.isNaN(newSizeNum)) {
+              if (oldSizeNum === null || Number.isNaN(oldSizeNum))
+                sizeChanged = true;
+              else sizeChanged = Math.abs(oldSizeNum - newSizeNum) > 0.01; // tolerance
+            }
+
+            const needUpdate = numberChanged || sizeChanged;
 
             if (needUpdate) {
-              const [tenantCount, activeContractCount] = await Promise.all([
+              // bạn muốn "có hợp đồng trỏ đến là tính" -> count any contract
+              const [tenantCount, contractCount] = await Promise.all([
                 tx.room_tenants.count({
                   where: { room_id: found.room_id, is_current: true },
                 }),
                 tx.contracts.count({
-                  where: {
-                    room_id: found.room_id,
-                    status: "active",
-                    deleted_at: null,
-                  },
+                  where: { room_id: found.room_id },
                 }),
               ]);
 
-              if (tenantCount > 0 || activeContractCount > 0) {
+              if (tenantCount > 0 || contractCount > 0) {
                 throw new Error(
-                  "Chỉ được sửa phòng khi phòng không có người ở."
+                  "Chỉ được sửa phòng khi phòng không có người ở.",
                 );
               }
+
+              const finalSizeNum =
+                newSizeNum !== null && !Number.isNaN(newSizeNum)
+                  ? newSizeNum
+                  : oldSizeNum;
 
               await tx.rooms.update({
                 where: { room_id: found.room_id },
                 data: {
                   room_number: r.room_number,
-                  size: r.size,
-                  max_tenants: calculateMaxTenants(r.size),
+                  size: finalSizeNum, // ✅ lưu theo số (Decimal nhận number)
+                  max_tenants: calculateMaxTenants(finalSizeNum), // ✅ nghiệp vụ theo size số
                   updated_at: new Date(),
                 },
               });
+
+              r.size = finalSizeNum; // sync lại layout
+            } else {
+              r.size = oldSizeNum; // sync lại để tránh save lần sau bị lệch
             }
 
             r.room_id = found.room_id;
@@ -1048,10 +1232,10 @@ class FloorPlanService {
 
         // 4) DELETE / DEACTIVATE removed rooms
         const layoutRoomIds = new Set(
-          layoutRooms.map((x) => x.room_id).filter(Boolean)
+          layoutRooms.map((x) => x.room_id).filter(Boolean),
         );
         const layoutRoomNumbers = new Set(
-          layoutRooms.map((x) => x.room_number)
+          layoutRooms.map((x) => x.room_number),
         );
 
         for (const db of dbRooms) {
@@ -1094,7 +1278,7 @@ class FloorPlanService {
 
         // 5) Build FINAL layout (gắn room_id ngược lại node)
         const roomByNumber = new Map(
-          layoutRooms.map((r) => [String(r.room_number), r])
+          layoutRooms.map((r) => [String(r.room_number), r]),
         );
 
         finalLayout = {
@@ -1162,7 +1346,7 @@ class FloorPlanService {
     const hasAccess = await this.checkFloorPlanAccess(userId, userRole, planId);
     if (!hasAccess) {
       throw new Error(
-        "Access denied: You do not have permission to publish this floor plan"
+        "Access denied: You do not have permission to publish this floor plan",
       );
     }
 
@@ -1209,7 +1393,7 @@ class FloorPlanService {
     const hasAccess = await this.checkFloorPlanAccess(userId, userRole, planId);
     if (!hasAccess) {
       throw new Error(
-        "Access denied: You do not have permission to unpublish this floor plan"
+        "Access denied: You do not have permission to unpublish this floor plan",
       );
     }
 
@@ -1256,7 +1440,7 @@ class FloorPlanService {
     const hasAccess = await this.checkFloorPlanAccess(userId, userRole, planId);
     if (!hasAccess) {
       throw new Error(
-        "Access denied: You do not have permission to delete this floor plan"
+        "Access denied: You do not have permission to delete this floor plan",
       );
     }
 
@@ -1267,7 +1451,7 @@ class FloorPlanService {
       // 3) Lấy tất cả phòng thuộc building + floor
       const rooms = await tx.rooms.findMany({
         where: {
-          building_id: bId,
+          building_id: buildingId,
           floor: floorNumber,
           is_active: true,
         },
@@ -1288,19 +1472,17 @@ class FloorPlanService {
           throw new Error("Không thể xóa tầng vì có phòng đang có người ở.");
         }
 
-        // 5) Chặn xóa nếu có hợp đồng active (tùy schema bạn)
-        // Nếu schema contracts của bạn dùng status = 'active' thì giữ như dưới.
-        // Nếu dùng field khác (is_active) thì đổi đúng tên field.
-        const activeContractCount = await tx.contracts.count({
+        // 5) Chặn xóa nếu có BẤT KỲ hợp đồng nào đang tham chiếu room (FK RESTRICT sẽ chặn)
+        // Nếu contracts có deleted_at thì bỏ qua hợp đồng đã xóa mềm
+        const anyContractCount = await tx.contracts.count({
           where: {
             room_id: { in: roomIds },
-            status: "active",
+            ...(tx.contracts.fields?.deleted_at ? { deleted_at: null } : {}), // nếu schema có deleted_at
           },
         });
-        if (activeContractCount > 0) {
-          throw new Error(
-            "Không thể xóa tầng vì có phòng đang có hợp đồng active."
-          );
+
+        if (anyContractCount > 0) {
+          throw new Error("Không thể xóa tầng vì có phòng đang có hợp đồng.");
         }
 
         // 6) Xóa các bảng phụ thuộc (nếu DB bạn chưa cascade đủ)
@@ -1327,14 +1509,14 @@ class FloorPlanService {
       // 9) (Tuỳ bạn) cập nhật number_of_floors nếu bạn đang dùng field này
       // Gợi ý: set = max floor_number còn lại, hoặc 0 nếu không còn.
       const agg = await tx.floor_plans.aggregate({
-        where: { building_id: bId },
+        where: { building_id: buildingId },
         _max: { floor_number: true },
       });
       const maxFloor = agg?._max?.floor_number ?? 0;
 
       // Nếu bảng buildings có number_of_floors
       await tx.buildings.update({
-        where: { building_id: bId },
+        where: { building_id: buildingId },
         data: { number_of_floors: maxFloor },
       });
 
@@ -1354,11 +1536,11 @@ class FloorPlanService {
     const hasAccess = await this.checkBuildingAccess(
       userId,
       normalizedRole,
-      bId
+      bId,
     );
     if (!hasAccess) {
       throw new Error(
-        "Access denied: You do not have permission to view statistics for this building"
+        "Access denied: You do not have permission to view statistics for this building",
       );
     }
 
@@ -1425,7 +1607,7 @@ class FloorPlanService {
     return this.checkBuildingAccess(
       userId,
       normalizedRole,
-      floorPlan.building_id
+      floorPlan.building_id,
     );
   }
 
@@ -1481,6 +1663,7 @@ class FloorPlanService {
       name: floorPlan.name,
       floor_number: floorPlan.floor_number,
       layout: floorPlan.layout,
+      locked_room_ids: floorPlan.locked_room_ids ?? [],
       file_url: floorPlan.file_url,
       is_published: floorPlan.is_published,
       created_by: {
