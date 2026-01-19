@@ -657,8 +657,13 @@ class RoomService {
     const room = await prisma.rooms.findUnique({
       where: { room_id: roomId },
       include: {
-        tenants: true,
-        contracts: {
+        // ✅ relation đúng theo schema mới
+        room_tenants: {
+          where: { is_current: true }, // chỉ tính người đang ở hiện tại
+        },
+
+        // ✅ active contracts theo relation đúng
+        contracts_history: {
           where: {
             status: "active",
             deleted_at: null,
@@ -677,11 +682,11 @@ class RoomService {
       throw new Error("Room is already inactive");
     }
 
-    if (room.tenants.length > 0) {
+    if (room.room_tenants.length > 0) {
       throw new Error("Cannot deactivate room with active tenants");
     }
 
-    if (room.contracts.length > 0) {
+    if (room.contracts_history.length > 0) {
       throw new Error("Cannot deactivate room with active contracts");
     }
 
@@ -708,7 +713,7 @@ class RoomService {
     const room = await prisma.rooms.findUnique({
       where: { room_id: roomId },
       include: {
-        buildings: true,
+        building: true,
       },
     });
 
@@ -722,9 +727,9 @@ class RoomService {
       throw new Error("Room is already active");
     }
 
-    if (!room.buildings.is_active) {
-      throw new Error("Cannot activate room in inactive building");
-    }
+    if (!room.building?.is_active) {
+  throw new Error("Cannot activate room in inactive building");
+}
 
     // Tính status động khi activate
     const dynamicStatus = await this.calculateRoomStatus(roomId);
@@ -737,7 +742,7 @@ class RoomService {
         updated_at: new Date(),
       },
       include: {
-        buildings: {
+        building: {
           select: {
             building_id: true,
             name: true,
