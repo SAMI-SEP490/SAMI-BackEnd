@@ -590,12 +590,12 @@ class TenantService {
         // [UPDATE] Xây dựng điều kiện Where cơ bản
         const whereCondition = {
             OR: [
-                { user: { phone: cleanId } }, // Schema relation là 'user' [cite: 15]
+                { user: { phone: cleanId } },
                 { id_number: cleanId }
             ]
         };
 
-        // [UPDATE] Nếu có buildingId, thêm điều kiện lọc
+
         if (buildingId) {
             whereCondition.building_id = parseInt(buildingId);
         }

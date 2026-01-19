@@ -166,6 +166,14 @@ class ContractService {
       }
     }
 
+    const maxFutureDate = new Date();
+    maxFutureDate.setMonth(today.getMonth() + 1);
+    maxFutureDate.setHours(0, 0, 0, 0);
+
+    if (start > maxFutureDate) {
+      throw new Error("Ngày bắt đầu không được vượt quá 1 tháng kể từ hiện tại.");
+    }
+
     // 2. Kiểm tra thời hạn không quá lớn (Luôn kiểm tra)
     if (duration > MAX_DURATION_MONTHS) {
       throw new Error(
