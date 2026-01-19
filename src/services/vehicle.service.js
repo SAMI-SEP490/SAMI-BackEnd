@@ -6,6 +6,73 @@ const prisma = require('../config/prisma');
 const NotificationService = require('./notification.service');
 
 class VehicleRegistrationService {
+    static async cleanupExpiredVehicles() {
+        const now = new Date();
+
+        return prisma.$transaction(async (tx) => {
+
+            // 1. Lấy danh sách xe đã hết hạn registration
+            const expiredVehicles = await tx.vehicles.findMany({
+                where: {
+                    registration: {
+                        end_date: {
+                            lt: now
+                        }
+                    }
+                },
+                select: {
+                    vehicle_id: true,
+                    slot_id: true,
+                    registration: {
+                        select: { registration_id: true }
+                    }
+                }
+            });
+
+            if (!expiredVehicles.length) {
+                return 0;
+            }
+
+            const vehicleIds = expiredVehicles.map(v => v.vehicle_id);
+            const slotIds = expiredVehicles
+                .filter(v => v.slot_id)
+                .map(v => v.slot_id);
+
+            const registrationIds = expiredVehicles
+                .filter(v => v.registration)
+                .map(v => v.registration.registration_id);
+
+            // 2. Nhả parking slots
+            if (slotIds.length) {
+                await tx.parking_slots.updateMany({
+                    where: {
+                        slot_id: { in: slotIds }
+                    },
+                    data: {
+                        is_available: true
+                    }
+                });
+            }
+
+            // 3. Xóa registrations
+            if (registrationIds.length) {
+                await tx.vehicle_registrations.deleteMany({
+                    where: {
+                        registration_id: { in: registrationIds }
+                    }
+                });
+            }
+
+            // 4. Xóa vehicles
+            const deleted = await tx.vehicles.deleteMany({
+                where: {
+                    vehicle_id: { in: vehicleIds }
+                }
+            });
+
+            return deleted.count;
+        });
+    }
     // Helper function to get manager's building IDs
     async getManagerBuildingIds(userId) {
         const managers = await prisma.building_managers.findMany({
@@ -118,9 +185,22 @@ class VehicleRegistrationService {
             throw new Error("Người thuê không thuộc tòa nhà nào");
         }
         // Validate active contract
-        const activeContracts = await prisma.contracts.findMany({
+        const roomTenant = await prisma.room_tenants.findFirst({
             where: {
                 tenant_user_id: tenantUserId,
+                is_current: true
+            },
+            select: {
+                room_id: true
+            }
+        });
+
+        if (!roomTenant) {
+            throw new Error("Người thuê hiện không ở phòng nào");
+        }
+        const activeContracts = await prisma.contracts.findMany({
+            where: {
+                room_id: roomTenant.room_id,
                 status: "active",
                 deleted_at: null
             },
@@ -131,7 +211,7 @@ class VehicleRegistrationService {
         });
 
         if (activeContracts.length === 0) {
-            throw new Error("Người thuê không có hợp đồng hoạt động nào");
+            throw new Error("Phòng hiện tại không có hợp đồng hoạt động");
         }
         // 2️⃣ Validate vehicle type
         if (!["two_wheeler", "four_wheeler"].includes(vehicle_type)) {
@@ -255,14 +335,13 @@ class VehicleRegistrationService {
 
     async getVehicleRegistrations(filters, userId, userRole) {
         console.log("🔥 VEHICLE REG ROLE:", userRole, "USER:", userId);
+
         const {
             status,
             requested_by,
             start_date_from,
             start_date_to,
-            building_id,     // 👈 thêm
-            page = 1,
-            limit = 10
+            building_id
         } = filters;
 
         const where = {};
@@ -281,17 +360,11 @@ class VehicleRegistrationService {
 
             if (!managerBuilding) {
                 return {
-                    registrations: [],
-                    pagination: {
-                        total: 0,
-                        page: Number(page),
-                        limit: Number(limit),
-                        totalPages: 0
-                    }
+                    registrations: []
                 };
             }
 
-            // 🔒 HARD LOCK
+            // 🔒 HARD LOCK THE BUILDING
             where.requester = {
                 room_tenants_history: {
                     some: {
@@ -303,6 +376,7 @@ class VehicleRegistrationService {
                 }
             };
         }
+
         /* ================= OWNER ================= */
         else if (userRole === "OWNER") {
             if (requested_by) {
@@ -321,57 +395,60 @@ class VehicleRegistrationService {
             where.status = status;
         }
 
-        const skip = (page - 1) * limit;
+        // 👉 OPTIONAL: filter theo start_date nếu sau này dùng
+        if (start_date_from || start_date_to) {
+            where.start_date = {};
 
-        const [registrations, total] = await Promise.all([
-            prisma.vehicle_registrations.findMany({
-                where,
-                skip,
-                take: Number(limit),
-                orderBy: { requested_at: "desc" },
-                include: {
-                    requester: {
-                        include: {
-                            user: {
-                                select: {
-                                    user_id: true,
-                                    full_name: true,
-                                    email: true,
-                                    phone: true
-                                }
-                            },
-                            building: {
-                                select: {
-                                    building_id: true,
-                                    name: true
-                                }
+            if (start_date_from) {
+                where.start_date.gte = new Date(start_date_from);
+            }
+
+            if (start_date_to) {
+                where.start_date.lte = new Date(start_date_to);
+            }
+        }
+
+        const registrations = await prisma.vehicle_registrations.findMany({
+            where,
+            orderBy: { requested_at: "desc" },
+            include: {
+                requester: {
+                    include: {
+                        user: {
+                            select: {
+                                user_id: true,
+                                full_name: true,
+                                email: true,
+                                phone: true
+                            }
+                        },
+                        building: {
+                            select: {
+                                building_id: true,
+                                name: true
                             }
                         }
-                    },
-                    vehicle: {
-                        include: {
-                            slot: {
-                                include: {
-                                    building: {
-                                        select: { building_id: true, name: true }
+                    }
+                },
+                vehicle: {
+                    include: {
+                        slot: {
+                            include: {
+                                building: {
+                                    select: {
+                                        building_id: true,
+                                        name: true
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }),
-            prisma.vehicle_registrations.count({ where })
-        ]);
+            }
+        });
 
         return {
-            registrations,
-            pagination: {
-                total,
-                page: Number(page),
-                limit: Number(limit),
-                totalPages: Math.ceil(total / limit)
-            }
+            registrations
         };
     }
 
@@ -385,9 +462,22 @@ class VehicleRegistrationService {
             end_date,
             note
         } = data;
-        const activeContracts = await prisma.contracts.findMany({
+        const roomTenant = await prisma.room_tenants.findFirst({
             where: {
                 tenant_user_id: tenantUserId,
+                is_current: true
+            },
+            select: {
+                room_id: true
+            }
+        });
+
+        if (!roomTenant) {
+            throw new Error("Người thuê hiện không ở phòng nào");
+        }
+        const activeContracts = await prisma.contracts.findMany({
+            where: {
+                room_id: roomTenant.room_id,
                 status: "active",
                 deleted_at: null
             },
@@ -398,7 +488,7 @@ class VehicleRegistrationService {
         });
 
         if (activeContracts.length === 0) {
-            throw new Error("Người thuê không có hợp đồng hoạt động nào");
+            throw new Error("Phòng hiện tại không có hợp đồng hoạt động");
         }
         const existing = await prisma.vehicle_registrations.findUnique({
             where: { registration_id: Number(registrationId) }
@@ -414,7 +504,7 @@ class VehicleRegistrationService {
 
         if (existing.status !== "requested") {
             throw new Error(
-                `Cannot update registration with status: ${existing.status}`
+                `Không thể cập nhật đăng ký xe có trạng thái: ${existing.status}`
             );
         }
         //  Validate vehicle type
@@ -482,7 +572,7 @@ class VehicleRegistrationService {
     }
 
     async approveVehicleRegistration(registrationId, approvedBy, userRole, slotId) {
-        if (!slotId) throw new Error("Parking slot required");
+        if (!slotId) throw new Error("Chỗ đậu xe là bắt buộc");
         // 1. Load registration + tenant + building
         const registration = await prisma.vehicle_registrations.findUnique({
             where: { registration_id: registrationId },
@@ -499,26 +589,23 @@ class VehicleRegistrationService {
                 }
             }
         });
-        if (!registration) throw new Error("Vehicle registration not found");
+        if (!registration) throw new Error("Không tìm thấy đăng ký xe");
         if (registration.status !== "requested") {
-            throw new Error(`Cannot approve status ${registration.status}`);
+            throw new Error(`Không thể phê duyệt trạng thái ${registration.status}`);
         }
         const buildingId = registration.requester.building_id;
-        if (!buildingId) throw new Error("Tenant building not found");
+        if (!buildingId) throw new Error("Không tìm thấy tòa nhà của người thuê");
         // 2. Authorization
         if (userRole === "MANAGER") {
             const allowed = await this.isRegistrationInManagerBuilding(
                 registrationId,
                 approvedBy
             );
-            if (!allowed) throw new Error("Unauthorized");
+            if (!allowed) throw new Error("Không có quyền phê duyệt");
         }
 
         return prisma.$transaction(async (tx) => {
-
-            // ===============================
-            // 1️⃣ Lock & validate slot
-            // ===============================
+            // Lock & validate slot
             const slot = await tx.parking_slots.findFirst({
                 where: {
                     slot_id: slotId,
@@ -528,11 +615,9 @@ class VehicleRegistrationService {
                 }
             });
 
-            if (!slot) throw new Error("Slot not available or invalid");
+            if (!slot) throw new Error("Chỗ đậu xe không hợp lệ hoặc không còn trống");
 
-            // ===============================
-            // 2️⃣ License plate uniqueness
-            // ===============================
+            // License plate uniqueness
             const existedVehicle = await tx.vehicles.findFirst({
                 where: {
                     registration: {
@@ -543,12 +628,10 @@ class VehicleRegistrationService {
             });
 
             if (existedVehicle) {
-                throw new Error("License plate already registered");
+                throw new Error("Biển số xe đã được đăng ký");
             }
 
-            // ===============================
-            // 3️⃣ Building quota
-            // ===============================
+            // Building quota
             const usedSlots = await tx.parking_slots.count({
                 where: {
                     building_id: buildingId,
@@ -567,12 +650,10 @@ class VehicleRegistrationService {
                     : building.max_4_wheel_slot;
 
             if (usedSlots >= max) {
-                throw new Error("Building capacity exceeded");
+                throw new Error("Đạt giới hạn chỗ đậu xe cho loại xe này trong tòa nhà");
             }
 
-            // ===============================
-            // 4️⃣ Approve registration
-            // ===============================
+            // Approve registration
             await tx.vehicle_registrations.update({
                 where: { registration_id: registrationId },
                 data: {
@@ -582,9 +663,8 @@ class VehicleRegistrationService {
                 }
             });
             console.log("🔥 USING PRISMA CLIENT AT", __filename);
-            // ===============================
-            // 5️⃣ Create vehicle (WITH relation)
-            // ===============================
+
+            // Create vehicle (WITH relation)
             const vehicle = await tx.vehicles.create({
                 data: {
                     status: "active",
@@ -611,9 +691,7 @@ class VehicleRegistrationService {
                 }
             });
 
-            // ===============================
-            // 6️⃣ Lock slot
-            // ===============================
+            // Lock slot
             await tx.parking_slots.update({
                 where: { slot_id: slotId },
                 data: { is_available: false }
@@ -645,11 +723,11 @@ class VehicleRegistrationService {
         });
 
         if (!registration) {
-            throw new Error('Vehicle registration not found');
+            throw new Error('Không tìm thấy đăng ký xe');
         }
 
         if (registration.status !== 'requested') {
-            throw new Error(`Cannot reject registration with status: ${registration.status}`);
+            throw new Error(`Không thể từ chối đăng ký với trạng thái: ${registration.status}`);
         }
 
         if (userRole === 'MANAGER') {
@@ -658,7 +736,7 @@ class VehicleRegistrationService {
                 rejectedBy
             );
             if (!allowed) {
-                throw new Error('Unauthorized to reject this registration');
+                throw new Error('Không có quyền từ chối đăng ký này');
             }
         }
 
@@ -726,106 +804,41 @@ class VehicleRegistrationService {
         return rejected;
     }
 
-    async cancelVehicleRegistration(registrationId, userId, userRole, cancellationReason) {
+    async cancelVehicleRegistration(registrationId, userId, userRole) {
+        // ===== ONLY TENANT =====
+        if (userRole !== 'TENANT') {
+            throw new Error('Chỉ người thuê mới có thể hủy đăng ký xe');
+        }
+
         const registration = await prisma.vehicle_registrations.findUnique({
-            where: { registration_id: registrationId },
-            include: {
-                vehicles: {
-                    where: { deactivated_at: null }
-                },
-                requester: {
-                    include: {
-                        rooms: {
-                            select: { building_id: true }
-                        }
-                    }
-                }
-            }
+            where: { registration_id: registrationId }
         });
 
         if (!registration) {
-            throw new Error('Vehicle registration not found');
+            throw new Error('Không tìm thấy đăng ký xe');
         }
 
-        // ===== AUTHORIZATION =====
-        if (userRole === 'TENANT') {
-            if (registration.requested_by !== userId) {
-                throw new Error('Unauthorized');
-            }
-            if (registration.status !== 'requested') {
-                throw new Error('Tenant can only cancel requested registrations');
-            }
+        // ===== OWNERSHIP =====
+        if (registration.requested_by !== userId) {
+            throw new Error('Không có quyền hủy đăng ký xe này');
         }
 
-        if (userRole === 'MANAGER') {
-            const allowed = await this.isRegistrationInManagerBuilding(registrationId, userId);
-            if (!allowed) throw new Error('Unauthorized');
+        // ===== STATUS CHECK =====
+        if (registration.status !== 'requested') {
+            throw new Error(
+                'Chỉ những đăng ký có trạng thái "requested" mới có thể bị hủy'
+            );
         }
 
-        if (registration.status === 'cancelled') {
-            throw new Error('Registration already cancelled');
-        }
-
-        // ===== TRANSACTION =====
-        return prisma.$transaction(async (tx) => {
-            // Cancel registration
-            await tx.vehicle_registrations.update({
-                where: { assignment_id: registrationId },
-                data: {
-                    status: 'cancelled',
-                    cancelled_by: userId,
-                    cancelled_at: new Date(),
-                    reason: cancellationReason
-                        ? `${registration.reason || ''}\nCancelled: ${cancellationReason}`
-                        : registration.reason
-                }
-            });
-
-            // If approved & active vehicle exists → deactivate & free slot
-            for (const vehicle of registration.vehicles) {
-                if (vehicle.slot_id) {
-                    await tx.parking_slots.update({
-                        where: { slot_id: vehicle.slot_id },
-                        data: { is_available: true }
-                    });
-                }
-
-                await tx.vehicles.update({
-                    where: { vehicle_id: vehicle.vehicle_id },
-                    data: {
-                        status: 'deactivated',
-                        deactivated_at: new Date(),
-                        deactivated_by: userId
-                    }
-                });
-            }
-
-            return tx.vehicle_registrations.findUnique({
-                where: { registration_id: registrationId },
-                include: {
-                    requester: {
-                        include: {
-                            users: {
-                                select: {
-                                    user_id: true,
-                                    full_name: true,
-                                    email: true,
-                                    phone: true
-                                }
-                            },
-                            rooms: {
-                                select: {
-                                    room_id: true,
-                                    room_number: true,
-                                    floor: true
-                                }
-                            }
-                        }
-                    },
-                    vehicles: true
-                }
-            });
+        // ===== DELETE HARD =====
+        await prisma.vehicle_registrations.delete({
+            where: { registration_id: registrationId }
         });
+
+        return {
+            success: true,
+            message: 'Hủy đăng ký xe thành công'
+        };
     }
 
     // Delete vehicle registration (only requested or rejected ones)
@@ -835,17 +848,17 @@ class VehicleRegistrationService {
         });
 
         if (!registration) {
-            throw new Error('Vehicle registration not found');
+            throw new Error('Không tìm thấy đăng ký xe');
         }
 
         // Authorization
         if (registration.requested_by !== tenantUserId) {
-            throw new Error('Unauthorized to delete this registration');
+            throw new Error('Không có quyền hủy đăng ký xe này');
         }
 
         // Only requested or rejected
         if (!['requested', 'rejected'].includes(registration.status)) {
-            throw new Error(`Cannot delete registration with status: ${registration.status}`);
+            throw new Error(`Không thể xóa đăng ký có trạng thái: ${registration.status}`);
         }
 
         await prisma.vehicle_registrations.delete({
@@ -939,7 +952,7 @@ class VehicleRegistrationService {
 
     async changeVehicleSlot(vehicleId, newSlotId, userId, userRole) {
         if (!['MANAGER', 'OWNER'].includes(userRole)) {
-            throw new Error('Permission denied');
+            throw new Error('Không có quyền thay đổi chỗ đậu xe');
         }
 
         return prisma.$transaction(async (tx) => {
@@ -961,9 +974,9 @@ class VehicleRegistrationService {
                 }
             });
 
-            if (!vehicle) throw new Error('Vehicle not found');
+            if (!vehicle) throw new Error('Không tìm thấy xe');
             if (vehicle.status !== 'active') {
-                throw new Error('Only active vehicle can change parking slot');
+                throw new Error('Chỉ có thể thay đổi chỗ đậu cho xe đang hoạt động');
             }
 
             const oldSlotId = vehicle.slot_id;
@@ -972,14 +985,14 @@ class VehicleRegistrationService {
                 where: { slot_id: newSlotId }
             });
 
-            if (!newSlot) throw new Error('New parking slot not found');
+            if (!newSlot) throw new Error('Không tìm thấy chỗ đậu xe mới');
             if (!newSlot.is_available) {
-                throw new Error('New parking slot is not available');
+                throw new Error('Chỗ đậu xe mới không khả dụng');
             }
 
-            // ✅ ĐÚNG vehicle type
+            // ĐÚNG vehicle type
             if (newSlot.slot_type !== vehicle.registration.vehicle_type) {
-                throw new Error('Slot type does not match vehicle type');
+                throw new Error('Chỗ đậu xe không phù hợp với loại xe');
             }
 
             const buildingId =
@@ -992,8 +1005,6 @@ class VehicleRegistrationService {
             if (newSlot.building_id !== buildingId) {
                 throw new Error('Slot is not in the same building as vehicle');
             }
-
-            // ===== UPDATE =====
 
             // free old slot
             if (oldSlotId) {
@@ -1013,10 +1024,10 @@ class VehicleRegistrationService {
             });
 
             if (locked.count === 0) {
-                throw new Error('New parking slot is no longer available');
+                throw new Error('Chôỗ đậu xe mới không khả dụng');
             }
 
-            // ✅ CHỈ UPDATE VEHICLE
+            // CHỈ UPDATE VEHICLE
             await tx.vehicles.update({
                 where: { vehicle_id: vehicleId },
                 data: { slot_id: newSlotId }
@@ -1032,84 +1043,50 @@ class VehicleRegistrationService {
             type,
             tenant_user_id,
             license_plate,
-            building_id,
-            page = 1,
-            limit = 10
+            building_id
         } = filters;
 
-        console.log("🚗 VEHICLE FILTER:", { userRole, userId, building_id });
-
         const where = {};
-        const tenantWhere = {};
 
-        // ===============================
-        // BASIC FILTER
-        // ===============================
+        /* ========= BASIC FILTER ========= */
         if (status) {
             where.status = status;
         }
 
-        // ===============================
-        // ROLE-BASED FILTERING
-        // ===============================
+        /* ========= ROLE BASED ========= */
 
-        // TENANT: chỉ thấy xe của mình
+        // TENANT
         if (userRole === "TENANT") {
             where.tenant_user_id = userId;
         }
 
-        // MANAGER: thấy xe của tenant thuộc building mình quản lý
+        // MANAGER
         if (userRole === "MANAGER") {
             const managerBuildingIds = await this.getManagerBuildingIds(userId);
 
-            if (!managerBuildingIds || managerBuildingIds.length === 0) {
-                return {
-                    vehicles: [],
-                    pagination: {
-                        total: 0,
-                        page: Number(page),
-                        limit: Number(limit),
-                        totalPages: 0
-                    }
-                };
+            if (!managerBuildingIds?.length) {
+                return { vehicles: [] };
             }
 
-            tenantWhere.room_tenants_history = {
-                some: {
-                    is_current: true,
-                    room: {
-                        building_id: { in: managerBuildingIds }
-                    }
-                }
+            where.tenant = {
+                building_id: { in: managerBuildingIds }
             };
         }
 
-        // OWNER: có thể filter theo tenant hoặc building
+        // OWNER
         if (userRole === "OWNER") {
             if (tenant_user_id) {
-                where.tenant_user_id = tenant_user_id;
+                where.tenant_user_id = Number(tenant_user_id);
             }
 
             if (building_id) {
-                tenantWhere.room_tenants_history = {
-                    some: {
-                        is_current: true,
-                        room: {
-                            building_id: Number(building_id)
-                        }
-                    }
+                where.tenant = {
+                    building_id: Number(building_id)
                 };
             }
         }
 
-        // GẮN TENANT FILTER 1 LẦN DUY NHẤT
-        if (Object.keys(tenantWhere).length > 0) {
-            where.tenant = tenantWhere;
-        }
-
-        // ===============================
-        // FILTER QUA REGISTRATION
-        // ===============================
+        /* ========= FILTER QUA REGISTRATION ========= */
         if (type || license_plate) {
             where.registration = {};
 
@@ -1125,72 +1102,47 @@ class VehicleRegistrationService {
             }
         }
 
-        // ===============================
-        // PAGINATION
-        // ===============================
-        const skip = (Number(page) - 1) * Number(limit);
-
-        // DEBUG (nếu cần)
-        // console.dir(where, { depth: null });
-
-        const [vehicles, total] = await Promise.all([
-            prisma.vehicles.findMany({
-                where,
-                skip,
-                take: Number(limit),
-                orderBy: { registered_at: "desc" },
-                include: {
-                    slot: {
-                        select: {
-                            slot_id: true,
-                            slot_number: true,
-                            slot_type: true,
-                            building_id: true,
-                            building: {
-                                select: {
-                                    name: true
-                                }
+        /* ========= QUERY ========= */
+        const vehicles = await prisma.vehicles.findMany({
+            where,
+            orderBy: { registered_at: "desc" },
+            include: {
+                slot: {
+                    select: {
+                        slot_id: true,
+                        slot_number: true,
+                        slot_type: true,
+                        building_id: true,
+                        building: { select: { name: true } }
+                    }
+                },
+                tenant: {
+                    select: {
+                        user_id: true,
+                        building_id: true,
+                        user: {
+                            select: {
+                                user_id: true,
+                                full_name: true,
+                                email: true,
+                                phone: true
                             }
-                        }
-                    },
-                    tenant: {
-                        include: {
-                            user: {
-                                select: {
-                                    user_id: true,
-                                    full_name: true,
-                                    email: true,
-                                    phone: true
-                                }
-                            }
-                        }
-                    },
-                    registration: {
-                        select: {
-                            registration_id: true,
-                            status: true,
-                            requested_at: true,
-                            approved_at: true,
-                            start_date: true,
-                            end_date: true,
-                            vehicle_type: true,
-                            license_plate: true
                         }
                     }
+                },
+                registration: {
+                    select: {
+                        registration_id: true,
+                        start_date: true,
+                        end_date: true,
+                        vehicle_type: true,
+                        license_plate: true
+                    }
                 }
-            }),
-            prisma.vehicles.count({ where })
-        ]);
-
-        return {
-            vehicles,
-            pagination: {
-                total,
-                page: Number(page),
-                limit: Number(limit),
-                totalPages: Math.ceil(total / Number(limit))
             }
-        };
+        });
+
+        return { vehicles };
     }
     // Get vehicle by ID
     async getVehicleById(vehicleId, userId, userRole) {
@@ -1235,27 +1187,27 @@ class VehicleRegistrationService {
         });
 
         if (!vehicle) {
-            throw new Error('Vehicle not found');
+            throw new Error('Không tìm thấy xe');
         }
 
         // ===============================
         // AUTHORIZATION
         // ===============================
         if (userRole === 'TENANT' && vehicle.tenant_user_id !== userId) {
-            throw new Error('Unauthorized to view this vehicle');
+            throw new Error('Không có quyền xem xe này');
         }
 
         if (userRole === 'MANAGER') {
             const managerBuildingIds = await this.getManagerBuildingIds(userId);
 
             if (!vehicle.slot) {
-                throw new Error('Vehicle is not assigned to any building');
+                throw new Error('Phương tiện không có chỗ đậu xe liên kết');
             }
 
             const slotBuildingId = vehicle.slot.building_id;
 
             if (!managerBuildingIds.includes(slotBuildingId)) {
-                throw new Error('Unauthorized to view this vehicle');
+                throw new Error('Không có quyền xem xe này');
             }
         }
 
@@ -1279,11 +1231,11 @@ class VehicleRegistrationService {
             });
 
             if (!vehicle) {
-                throw new Error('Vehicle not found');
+                throw new Error('Không tìm thấy xe');
             }
 
             if (vehicle.status !== 'active') {
-                throw new Error('Vehicle is not active');
+                throw new Error('Xe đang không hoạt động');
             }
 
             // ===============================
@@ -1295,7 +1247,17 @@ class VehicleRegistrationService {
                     data: { is_available: true }
                 });
             }
-
+            // ===============================
+            // CANCEL VEHICLE REGISTRATION
+            // ===============================
+            await tx.vehicle_registrations.update({
+                where: { registration_id: vehicle.registration_id },
+                data: {
+                    status: 'cancelled',
+                    cancelled_by: deactivatedBy,
+                    cancelled_at: new Date()
+                }
+            });
             // ===============================
             // DEACTIVATE VEHICLE
             // ===============================
@@ -1303,7 +1265,7 @@ class VehicleRegistrationService {
                 where: { vehicle_id: vehicleId },
                 data: {
                     status: 'deactivated',
-                    slot_id: null,                 // 👈 giờ hợp lệ
+                    slot_id: null,
                     deactivated_at: new Date(),
                     deactivated_by: deactivatedBy
                 }
@@ -1354,40 +1316,49 @@ class VehicleRegistrationService {
                 }
             });
 
-            if (!vehicle) throw new Error('Vehicle not found');
+            if (!vehicle) throw new Error('Không tìm thấy xe');
             if (vehicle.status !== 'deactivated') {
-                throw new Error('Only deactivated vehicles can be reactivated');
+                throw new Error('Chỉ có thể kích hoạt lại xe đã tắt hoạt động');
             }
 
             const buildingId =
                 vehicle.tenant?.room_tenants_history?.[0]?.room?.building_id;
 
             if (!buildingId) {
-                throw new Error('Tenant has no active room');
+                throw new Error('Người thuê không có phòng hoạt động');
             }
 
             if (!slotId) {
-                throw new Error('Parking slot is required');
+                throw new Error('Chỗ đậu xe là bắt buộc');
             }
 
             const slot = await tx.parking_slots.findUnique({
                 where: { slot_id: slotId }
             });
 
-            if (!slot) throw new Error('Parking slot not found');
-            if (!slot.is_available) throw new Error('Parking slot is not available');
+            if (!slot) throw new Error('Không tìm thấy chỗ đậu xe');
+            if (!slot.is_available) throw new Error('Chỗ đậu xe không khả dụng');
             if (slot.slot_type !== vehicle.registration.vehicle_type) {
-                throw new Error('Parking slot type does not match vehicle type');
+                throw new Error('Loại chỗ đậu xe không phù hợp với loại xe');
             }
             if (slot.building_id !== buildingId) {
-                throw new Error('Slot is not in tenant building');
+                throw new Error('Chỗ đậu xe không thuộc cùng tòa nhà với xe');
             }
 
             await tx.parking_slots.update({
                 where: { slot_id: slot.slot_id },
                 data: { is_available: false }
             });
-
+            await tx.vehicle_registrations.update({
+                where: { registration_id: vehicle.registration_id },
+                data: {
+                    status: 'approved',
+                    approved_by: reactivatedBy,
+                    approved_at: new Date(),
+                    cancelled_by: null,
+                    cancelled_at: null
+                }
+            });
             await tx.vehicles.update({
                 where: { vehicle_id: vehicleId },
                 data: {
@@ -1426,26 +1397,32 @@ class VehicleRegistrationService {
             }
         });
 
-        if (!tenant) throw new Error('Tenant not found');
-        if (tenant.user.status !== 'Active') throw new Error('Tenant account is not active');
-        if (tenant.room_tenants_history.length === 0) throw new Error('Tenant has no active room assignment');
+        if (!tenant) throw new Error('Không tìm thấy người thuê');
+        if (tenant.user.status !== 'Active') throw new Error('Tài khoản người thuê không hoạt động');
+        if (tenant.room_tenants_history.length === 0) throw new Error('Người thuê không có phòng hoạt động');
 
         // 2. Check License Plate Uniqueness (Active Vehicles)
         if (license_plate) {
-            const existing = await prisma.vehicles.findFirst({
+            const existingVehicle = await prisma.vehicles.findFirst({
                 where: {
                     license_plate,
                     status: 'active'
                 }
             });
-            if (existing) throw new Error('License plate already registered and active');
+            const existingRegistration = await prisma.vehicle_registrations.findFirst({
+                where: {
+                    license_plate,
+                    status: { not: 'rejected' }
+                }
+            });
+            if (existing) throw new Error('Biển số xe đã được đăng ký');
         }
 
         // 3. Prepare Bot Note
         const botNote = [
             note || '',
             `---`,
-            `🤖 Created by AI Assistant (${botInfo.name})`
+            `🤖 Được tạo bởi trợ lý ảo (${botInfo.name})`
         ].join('\n');
 
         // Before 4, if type is car or motorcycle we should convert it
@@ -1502,9 +1479,9 @@ class VehicleRegistrationService {
             where: { registration_id: registrationId }
         });
 
-        if (!existing) throw new Error('Registration not found');
-        if (existing.requested_by !== tenantUserId) throw new Error('Unauthorized access');
-        if (existing.status !== 'requested') throw new Error('Can only update pending requests');
+        if (!existing) throw new Error('Không tìm thấy đăng ký xe');
+        if (existing.requested_by !== tenantUserId) throw new Error('Không có quyền cập nhật đăng ký xe này');
+        if (existing.status !== 'requested') throw new Error('Chỉ có thể cập nhật đăng ký ở trạng thái "requested"');
 
         // 2. Prepare Update Data
         const updateData = { updated_at: new Date() };
@@ -1532,14 +1509,14 @@ class VehicleRegistrationService {
             where: { registration_id: registrationId }
         });
 
-        if (!existing) throw new Error('Registration not found');
-        if (existing.requested_by !== tenantUserId) throw new Error('Unauthorized access');
-        if (existing.status === 'cancelled') throw new Error('Already cancelled');
+        if (!existing) throw new Error('Không tìm thấy đăng ký xe');
+        if (existing.requested_by !== tenantUserId) throw new Error('Không có quyền cập nhật đăng ký xe này');
+        if (existing.status === 'cancelled') throw new Error('Xe đã bị hủy trước đó');
 
         // Note: Bot can cancel 'approved' ones too if needed, but safer to restrict to 'requested'
         // unless your business logic allows tenants to self-cancel active parking.
         // For now, let's allow cancelling 'requested' immediately.
-        if (existing.status !== 'requested') throw new Error('Bot can currently only cancel pending requests');
+        if (existing.status !== 'requested') throw new Error('Bot chỉ có thể hủy đăng ký ở trạng thái "requested"');
 
         const cancelled = await prisma.vehicle_registrations.update({
             where: { registration_id: registrationId },

@@ -7,7 +7,7 @@ class ParkingSlotService {
         const { building_id, slot_number, slot_type } = data;
 
         if (!building_id || !slot_number || !slot_type) {
-            throw new Error('Missing required fields');
+            throw new Error('Vui lòng cung cấp đầy đủ thông tin');
         }
 
         const building = await prisma.buildings.findUnique({
@@ -15,7 +15,7 @@ class ParkingSlotService {
         });
 
         if (!building) {
-            throw new Error('Building not found');
+            throw new Error('Không tìm thấy tòa nhà');
         }
 
         // 1. Check trùng slot_number trong building
@@ -27,7 +27,7 @@ class ParkingSlotService {
         });
 
         if (existedSlot) {
-            throw new Error('Slot number already exists in this building');
+            throw new Error('Mã số chỗ đậu xe đã tồn tại trong tòa nhà này');
         }
 
         // 2. Đếm số slot hiện tại theo loại
@@ -90,7 +90,7 @@ class ParkingSlotService {
         });
 
         if (!slot) {
-            throw new Error('Parking slot not found');
+            throw new Error('Không tìm thấy chỗ đậu xe');
         }
 
         return slot;
@@ -103,12 +103,12 @@ class ParkingSlotService {
         });
 
         if (!slot) {
-            throw new Error('Parking slot not found');
+            throw new Error('Không tìm thấy chỗ đậu xe');
         }
 
         // ❌ Không cho đổi loại xe
         if (data.slot_type && data.slot_type !== slot.slot_type) {
-            throw new Error('Cannot change parking slot type');
+            throw new Error('Không thể thay đổi loại chỗ đậu xe');
         }
 
         // Check trùng số slot trong building
@@ -122,7 +122,7 @@ class ParkingSlotService {
             });
 
             if (duplicated) {
-                throw new Error('Slot number already exists in this building');
+                throw new Error('Mã số chỗ đậu xe đã tồn tại trong tòa nhà này');
             }
         }
 
@@ -145,7 +145,7 @@ class ParkingSlotService {
             });
 
             if (!managerBuilding) {
-                throw new Error("Manager has no building assigned");
+                throw new Error("Quản lý chưa được phân công tòa nhà");
             }
 
             where.building_id = managerBuilding.building_id;
@@ -170,18 +170,18 @@ class ParkingSlotService {
         });
 
         if (!slot) {
-            throw new Error('Parking slot not found');
+            throw new Error('Không tìm thấy chỗ đậu xe');
         }
 
         if (slot.vehicles.length > 0) {
-            throw new Error('Cannot delete parking slot with assigned vehicles');
+            throw new Error('Không thể xóa chỗ đậu xe có phương tiện đang đỗ');
         }
 
         await prisma.parking_slots.delete({
             where: { slot_id: slotId }
         });
 
-        return { message: 'Parking slot deleted successfully' };
+        return { message: 'Đã xóa chỗ đậu xe thành công' };
     }
     async getAvailableSlotForRegistration(registrationId) {
   const registration = await prisma.vehicle_registrations.findUnique({
@@ -190,20 +190,20 @@ class ParkingSlotService {
       requester: {
         select: {
           user_id: true,
-          building_id: true   // ✅ CẦN THIẾT
+          building_id: true  
         }
       }
     }
   });
 
   if (!registration) {
-    throw new Error("Registration not found");
+    throw new Error("Không tìm thấy đăng ký xe");
   }
 
   const buildingId = registration.requester.building_id;
 
   if (!buildingId) {
-    throw new Error("Tenant building not found");
+    throw new Error("Không tìm thấy tòa nhà của người thuê");
   }
 
   return prisma.parking_slots.findMany({
@@ -223,18 +223,17 @@ async getAvailableSlotsForVehicle(vehicleId) {
       tenant: {
         select: {
           user_id: true,
-          building_id: true   // ✅ LOAD ĐÚNG
+          building_id: true   
         }
       }
     }
   });
 
-  if (!vehicle) throw new Error("Vehicle not found");
+  if (!vehicle) throw new Error("Không tìm thấy phương tiện");
 
   const buildingId = vehicle.tenant.building_id;
 
-  if (!buildingId) throw new Error("Tenant building not found");
-
+  if (!buildingId) throw new Error("Không tìm thấy tòa nhà của người thuê");
   return prisma.parking_slots.findMany({
     where: {
       building_id: buildingId,

@@ -10,16 +10,16 @@ const guestDetailSchema = Joi.object({
         .max(200)
         .required()
         .messages({
-            'string.empty': 'Guest full name is required',
-            'string.max': 'Guest full name cannot exceed 200 characters',
-            'any.required': 'Guest full name is required'
+            'string.empty': 'Họ và tên khách không được để trống',
+            'string.max': 'Họ và tên khách không được vượt quá 200 ký tự',
+            'any.required': 'Họ và tên khách là bắt buộc'
         }),
 
     id_type: Joi.string()
         .valid('national_id', 'passport', 'other')
         .default('national_id')
         .messages({
-            'any.only': 'ID type must be one of: national_id, passport, other'
+            'any.only': 'Loại ID phải là một trong các loại sau: national_id, passport, other'
         }),
 
     id_number: Joi.string()
@@ -27,7 +27,7 @@ const guestDetailSchema = Joi.object({
         .optional()
         .allow(null, '')
         .messages({
-            'string.max': 'ID number cannot exceed 100 characters'
+            'string.max': 'CCCD/Hộ chiếu không được vượt quá 100 ký tự'
         }),
 
     date_of_birth: Joi.date()
@@ -36,8 +36,8 @@ const guestDetailSchema = Joi.object({
         .allow(null)
         .max('now')
         .messages({
-            'date.format': 'Date of birth must be in ISO format (YYYY-MM-DD)',
-            'date.max': 'Date of birth cannot be in the future'
+            'date.format': 'Ngày sinh phải theo định dạng ISO (YYYY-MM-DD)',
+            'date.max': 'Ngày sinh không thể là ngày trong tương lai'
         }),
 
     nationality: Joi.string()
@@ -45,7 +45,7 @@ const guestDetailSchema = Joi.object({
         .optional()
         .allow(null, '')
         .messages({
-            'string.max': 'Nationality cannot exceed 100 characters'
+            'string.max': 'Quốc tịch không được vượt quá 100 ký tự'
         }),
 
     gender: Joi.string()
@@ -54,8 +54,8 @@ const guestDetailSchema = Joi.object({
         .optional()
         .allow(null, '')
         .messages({
-            'string.max': 'Gender cannot exceed 10 characters',
-            'any.only': 'Gender must be one of: Male, Female, Other'
+            'string.max': 'Giới tính không được vượt quá 10 ký tự',
+            'any.only': 'Giới tính phải là một trong các loại sau: Male, Female, Other'
         }),
 
     relationship: Joi.string()
@@ -71,27 +71,19 @@ const guestDetailSchema = Joi.object({
         .optional()
         .allow(null, '')
         .messages({
-            'string.max': 'Note cannot exceed 255 characters'
+            'string.max': 'Ghi chú không được vượt quá 255 ký tự'
         })
 });
 
 // Schema for creating guest registration
 const createGuestRegistrationSchema = Joi.object({
-    guest_count: Joi.number()
-        .integer()
-        .min(1)
-        .optional()
-        .messages({
-            'number.min': 'Guest count must be at least 1',
-            'number.integer': 'Guest count must be an integer'
-        }),
 
     room_id: Joi.number()
         .integer()
         .optional()
         .allow(null)
         .messages({
-            'number.integer': 'Room ID must be an integer'
+            'number.integer': 'Room ID phải là số nguyên'
         }),
 
     arrival_date: Joi.date()
@@ -117,7 +109,7 @@ const createGuestRegistrationSchema = Joi.object({
         .allow(null, '')
         .max(500)
         .messages({
-            'string.max': 'Note cannot exceed 500 characters'
+            'string.max': 'Ghi chú không được vượt quá 500 ký tự'
         }),
 
     guest_details: Joi.array()
@@ -125,9 +117,9 @@ const createGuestRegistrationSchema = Joi.object({
         .min(1)
         .required()
         .messages({
-            'array.min': 'At least one guest detail is required',
-            'any.required': 'Guest details are required',
-            'array.base': 'Guest details must be an array'
+            'array.min': 'Ít nhất một chi tiết khách là bắt buộc',
+            'any.required': 'Chi tiết khách là bắt buộc',
+            'array.base': 'Chi tiết khách phải là một mảng'
         })
 }).messages({
     'object.unknown': 'Unknown field: {{#label}}'
@@ -140,8 +132,8 @@ const updateGuestRegistrationSchema = Joi.object({
         .min(1)
         .optional()
         .messages({
-            'number.min': 'Guest count must be at least 1',
-            'number.integer': 'Guest count must be an integer'
+            'number.min': 'Số lượng khách phải ít nhất là 1',
+            'number.integer': 'Số lượng khách phải là số nguyên'
         }),
 
     room_id: Joi.number()
@@ -149,7 +141,7 @@ const updateGuestRegistrationSchema = Joi.object({
         .optional()
         .allow(null)
         .messages({
-            'number.integer': 'Room ID must be an integer'
+            'number.integer': 'Room ID phải là số nguyên'
         }),
 
     arrival_date: Joi.date()
@@ -173,7 +165,7 @@ const updateGuestRegistrationSchema = Joi.object({
         .allow(null, '')
         .max(500)
         .messages({
-            'string.max': 'Note cannot exceed 500 characters'
+            'string.max': 'Ghi chú không được vượt quá 500 ký tự'
         }),
 
     guest_details: Joi.array()
@@ -181,11 +173,11 @@ const updateGuestRegistrationSchema = Joi.object({
         .min(1)
         .optional()
         .messages({
-            'array.min': 'At least one guest detail is required if updating guest details',
-            'array.base': 'Guest details must be an array'
+            'array.min': 'Ít nhất một chi tiết khách là bắt buộc nếu cập nhật chi tiết khách',
+            'array.base': 'Chi tiết khách phải là một mảng'
         })
 }).min(1).messages({
-    'object.min': 'At least one field must be provided for update'
+    'object.min': 'Ít nhất một trường phải được cung cấp để cập nhật'
 });
 
 // Schema for cancelling guest registration
@@ -195,7 +187,7 @@ const cancelGuestRegistrationSchema = Joi.object({
         .optional()
         .allow(null, '')
         .messages({
-            'string.max': 'Cancellation reason cannot exceed 500 characters'
+            'string.max': 'Lý do hủy không được vượt quá 500 ký tự'
         })
 });
 
