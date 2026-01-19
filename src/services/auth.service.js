@@ -19,43 +19,82 @@ class AuthService {
     const { email, password, phone, full_name, gender, birthday } = data;
 
     /* =======================
-     VALIDATE INPUT
+     VALIDATE INPUT CƠ BẢN
   ======================= */
-
     if (!email) {
-      throw new Error("Email is required");
+      throw new Error("Email là bắt buộc");
     }
 
     if (!password) {
-      throw new Error("Password is required");
+      throw new Error("Mật khẩu là bắt buộc");
     }
 
     if (!birthday) {
-      throw new Error("Birthday is required");
+      throw new Error("Ngày sinh là bắt buộc");
     }
 
     /* =======================
-     PASSWORD VALIDATION
-     - >= 8 ký tự
-     - 1 chữ hoa
-     - 1 chữ thường
-     - 1 số
-     - 1 ký tự đặc biệt
+     NORMALIZE & VALIDATE FULL NAME
+     - Không chứa số
+     - Chuẩn hóa khoảng trắng
+     - Tự động viết hoa chữ cái đầu mỗi từ
+  ======================= */
+    let normalizedFullName = full_name;
+
+    if (full_name) {
+      // Không chứa số
+      if (/\d/.test(full_name)) {
+        throw new Error("Họ và tên không được chứa chữ số");
+      }
+
+      // Chuẩn hóa khoảng trắng
+      normalizedFullName = full_name.trim().replace(/\s+/g, " ");
+
+      // Viết hoa chữ cái đầu mỗi từ
+      normalizedFullName = normalizedFullName
+        .split(" ")
+        .map((word) => {
+          if (!word) return word;
+          return word.charAt(0).toUpperCase() + word.slice(1);
+        })
+        .join(" ");
+    }
+
+    /* =======================
+     VALIDATE PHONE
+     - 10 hoặc 11 số
+     - Bắt đầu bằng 0
+  ======================= */
+    if (phone) {
+      const phoneRegex = /^0\d{9,10}$/;
+      if (!phoneRegex.test(phone)) {
+        throw new Error(
+          "Số điện thoại phải bắt đầu bằng số 0 và có 10 hoặc 11 chữ số",
+        );
+      }
+    }
+
+    /* =======================
+     VALIDATE PASSWORD
   ======================= */
     const passwordRegex =
       /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
 
     if (!passwordRegex.test(password)) {
       throw new Error(
-        "Password must be at least 8 characters long and include uppercase, lowercase, number, and special character",
+        "Mật khẩu phải có ít nhất 8 ký tự, bao gồm chữ hoa, chữ thường, số và ký tự đặc biệt",
       );
     }
 
     /* =======================
-     AGE VALIDATION
+     VALIDATE TUỔI
   ======================= */
     const birthDate = new Date(birthday);
     const today = new Date();
+
+    if (birthDate > today) {
+      throw new Error("Ngày sinh không được vượt quá ngày hiện tại");
+    }
 
     let age = today.getFullYear() - birthDate.getFullYear();
     const monthDiff = today.getMonth() - birthDate.getMonth();
@@ -68,15 +107,15 @@ class AuthService {
     }
 
     if (age < 18) {
-      throw new Error("User must be at least 18 years old");
+      throw new Error("Người dùng phải đủ 18 tuổi trở lên");
     }
 
     if (age > 150) {
-      throw new Error("User age is too large");
+      throw new Error("Tuổi người dùng không hợp lệ");
     }
 
     /* =======================
-     CHECK EXISTING USER
+     CHECK USER ĐÃ TỒN TẠI
   ======================= */
     const existingUser = await prisma.users.findFirst({
       where: {
@@ -85,7 +124,7 @@ class AuthService {
     });
 
     if (existingUser) {
-      throw new Error("User with this email or phone already exists");
+      throw new Error("Email hoặc số điện thoại đã tồn tại");
     }
 
     /* =======================
@@ -98,7 +137,7 @@ class AuthService {
         email,
         password_hash: hashedPassword,
         phone,
-        full_name,
+        full_name: normalizedFullName,
         gender,
         birthday: birthDate,
         status: "Active",

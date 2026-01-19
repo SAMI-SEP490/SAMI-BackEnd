@@ -27,27 +27,27 @@ router.post("/resend-otp", validate(resendOTPSchema), authController.resendOTP);
 router.post(
   "/refresh-token",
   validate(refreshTokenSchema),
-  authController.refreshToken
+  authController.refreshToken,
 );
 router.post(
   "/forgot-password",
   validate(forgotPasswordSchema),
-  authController.forgotPassword
+  authController.forgotPassword,
 );
 router.post(
   "/verify-otp-forgot",
   validate(verifyOTPSchema),
-  authController.verifyPasswordResetOTP
+  authController.verifyPasswordResetOTP,
 );
 router.post(
   "/resend-otp-forgot",
   validate(resendOTPSchema),
-  authController.resendPasswordResetOTP
+  authController.resendPasswordResetOTP,
 );
 router.post(
   "/reset-password",
   validate(resetPasswordSchema),
-  authController.resetPassword
+  authController.resetPassword,
 );
 
 // Protected routes (require authentication)
@@ -56,14 +56,14 @@ router.use(authenticate);
 router.post(
   "/register",
   requireRole(["owner", "manager"]),
-  validate(registerSchema),
-  authController.register
+  // validate(registerSchema),
+  authController.register,
 );
 router.post("/logout", authController.logout);
 router.post(
   "/change-password",
   validate(changePasswordSchema),
-  authController.changePassword
+  authController.changePassword,
 );
 router.get("/profile", authController.getProfile);
 router.put(
@@ -71,7 +71,7 @@ router.put(
   upload.single("avatar"),
   validate(updateProfileSchema),
   handleMulterError,
-  authController.updateProfile
+  authController.updateProfile,
 );
 
 module.exports = router;
