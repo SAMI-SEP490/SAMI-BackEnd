@@ -28,12 +28,12 @@ const createVehicleRegistrationSchema = Joi.object({
 
     start_date: Joi.date()
         .iso()
+        .required()
         .default(() => new Date()),
 
     end_date: Joi.date()
         .iso()
-        .optional()
-        .allow(null)
+        .required()
         .greater(Joi.ref('start_date')),
 
     note: Joi.string()
@@ -46,68 +46,66 @@ const createVehicleRegistrationSchema = Joi.object({
     abortEarly: false,
     allowUnknown: false
 });
-
+    
 
 // Schema for updating vehicle registration
 const updateVehicleRegistrationSchema = Joi.object({
-    type: Joi.string()
-        .valid('car', 'motorcycle', 'truck', 'van', 'other')
-        .optional()
-        .messages({
-            'any.only': 'Vehicle type must be one of: car, motorcycle, truck, van, other'
-        }),
+    vehicle_type: Joi.string()
+        .valid('two_wheeler', 'four_wheeler')
+        .optional(),
 
     license_plate: Joi.string()
         .max(50)
         .optional()
-        .trim()
-        .messages({
-            'string.empty': 'License plate cannot be empty',
-            'string.max': 'License plate cannot exceed 50 characters'
-        }),
+        .trim(),
 
     brand: Joi.string()
         .max(100)
         .optional()
-        .allow(null, '')
-        .messages({
-            'string.max': 'Brand cannot exceed 100 characters'
-        }),
+        .allow(null, ''),
 
     color: Joi.string()
         .max(50)
         .optional()
-        .allow(null, '')
-        .messages({
-            'string.max': 'Color cannot exceed 50 characters'
-        }),
+        .allow(null, ''),
 
     start_date: Joi.date()
         .iso()
-        .optional()
-        .allow(null)
-        .messages({
-            'date.format': 'Start date must be in ISO format (YYYY-MM-DD)'
-        }),
+        .optional(),
 
     end_date: Joi.date()
         .iso()
-        .optional()
-        .allow(null)
+        .optional()   // 👈 KHÔNG required ở đây
         .messages({
-            'date.format': 'End date must be in ISO format (YYYY-MM-DD)'
+            'date.format': 'End date must be in ISO format'
         }),
 
     note: Joi.string()
         .optional()
         .allow(null, '')
         .max(500)
-        .messages({
-            'string.max': 'Note cannot exceed 500 characters'
-        })
-}).min(1).messages({
+})
+.min(1)
+.custom((value, helpers) => {
+    // Sau update, end_date PHẢI tồn tại
+
+    const hasEndDate =
+        value.end_date !== undefined ||
+        helpers.state.ancestors[0]?.end_date !== null;
+
+    if (!hasEndDate) {
+        return helpers.error('any.custom', {
+            message: 'End date is required for vehicle registration'
+        });
+    }
+
+    return value;
+})
+.messages({
+    'any.custom': '{{#message}}',
     'object.min': 'At least one field must be provided for update'
 });
+
 
 // Schema for cancelling vehicle registration
 const cancelVehicleRegistrationSchema = Joi.object({
@@ -162,7 +160,7 @@ const validate = (schema) => {
 
             return res.status(400).json({
                 success: false,
-                message: 'Validation failed',
+                message: 'Lỗi dữ liệu',
                 errors
             });
         }
