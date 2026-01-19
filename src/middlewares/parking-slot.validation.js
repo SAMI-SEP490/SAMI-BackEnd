@@ -6,21 +6,26 @@ const validateCreateParkingSlot = (req, res, next) => {
         if (!building_id) {
             return res.status(400).json({
                 success: false,
-                message: 'Missing required field: building_id'
+                message: 'Vui lòng chọn tòa nhà'
             });
         }
 
         if (!slot_number || slot_number.trim().length === 0) {
             return res.status(400).json({
                 success: false,
-                message: 'Missing required field: slot_number'
+                message: 'Vui lòng nhập mã chỗ đỗ'
             });
         }
-
+        if ( slot_number.trim().length >= 10) {
+            return res.status(400).json({
+                success: false,
+                message: 'Mã chỗ đỗ không được vượt quá 10 ký tự'
+            });
+        }
         if (!slot_type) {
             return res.status(400).json({
                 success: false,
-                message: 'Missing required field: slot_type'
+                message: 'Vui lòng chọn loại xe'
             });
         }
 
@@ -29,7 +34,7 @@ const validateCreateParkingSlot = (req, res, next) => {
         if (isNaN(buildingId) || buildingId <= 0) {
             return res.status(400).json({
                 success: false,
-                message: 'building_id must be a valid positive integer'
+                message: 'Tòa nhà không hợp lệ'
             });
         }
 
@@ -37,14 +42,7 @@ const validateCreateParkingSlot = (req, res, next) => {
         if (typeof slot_number !== 'string') {
             return res.status(400).json({
                 success: false,
-                message: 'slot_number must be a string'
-            });
-        }
-
-        if (slot_number.length > 50) {
-            return res.status(400).json({
-                success: false,
-                message: 'slot_number must not exceed 50 characters'
+                message: 'Mã chỗ đỗ phải là chuỗi ký tự'
             });
         }
 
@@ -53,7 +51,7 @@ const validateCreateParkingSlot = (req, res, next) => {
         if (!slotCodeRegex.test(slot_number)) {
             return res.status(400).json({
                 success: false,
-                message: 'slot_number contains invalid characters'
+                message: 'Mã chỗ đỗ chứa ký tự không hợp lệ'
             });
         }
 
@@ -62,7 +60,7 @@ const validateCreateParkingSlot = (req, res, next) => {
         if (!allowedTypes.includes(slot_type)) {
             return res.status(400).json({
                 success: false,
-                message: `slot_type must be one of: ${allowedTypes.join(', ')}`
+                message: `Kiểu chỗ đỗ phải là một trong các loại sau: ${allowedTypes.join(', ')}`
             });
         }
 
