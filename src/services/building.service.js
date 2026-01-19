@@ -7,54 +7,79 @@ const NotificationService = require("./notification.service");
 class BuildingService {
   // CREATE - Tạo tòa nhà mới
   async createBuilding(data) {
-    const { name, address, number_of_floors, total_area } = data;
+    const { name, address, number_of_floors, total_area, bill_due_day } = data;
 
-    // Validate required fields
-    if (!name) {
+    // ===== VALIDATE CƠ BẢN =====
+    if (!name || !name.trim()) {
       throw new Error("Missing required field: name");
     }
 
-    // Kiểm tra tên tòa nhà đã tồn tại chưa
-    const existingBuilding = await prisma.buildings.findFirst({
-      where: {
-        name: name.trim(),
-        is_active: true,
-      },
-    });
-
-    if (existingBuilding) {
-      throw new Error("Building with this name already exists");
+    if (bill_due_day === undefined || bill_due_day === null) {
+      throw new Error("Missing required field: bill_due_day");
     }
 
-    // Validate number_of_floors
-    if (number_of_floors !== undefined && number_of_floors !== null) {
-      const floors = parseInt(number_of_floors);
-      if (isNaN(floors) || floors <= 0) {
-        throw new Error("number_of_floors must be a positive number");
+    const parsedBillDueDay = parseInt(bill_due_day);
+    if (
+      isNaN(parsedBillDueDay) ||
+      parsedBillDueDay < 1 ||
+      parsedBillDueDay > 31
+    ) {
+      throw new Error("bill_due_day must be an integer between 1 and 31");
+    }
+
+    const normalizedName = name.trim();
+
+    return await prisma.$transaction(async (tx) => {
+      // ===== CHECK TRÙNG TÊN =====
+      const existingBuilding = await tx.buildings.findFirst({
+        where: {
+          is_active: true,
+          name: {
+            equals: normalizedName,
+            mode: "insensitive",
+          },
+        },
+      });
+
+      if (existingBuilding) {
+        throw new Error("Building with this name already exists");
       }
-    }
 
-    // Validate total_area
-    if (total_area !== undefined && total_area !== null) {
-      const area = parseFloat(total_area);
-      if (isNaN(area) || area <= 0) {
-        throw new Error("total_area must be a positive number");
+      // ===== VALIDATE number_of_floors =====
+      let parsedFloors = null;
+      if (number_of_floors !== undefined && number_of_floors !== null) {
+        parsedFloors = parseInt(number_of_floors);
+        if (isNaN(parsedFloors) || parsedFloors <= 0) {
+          throw new Error("number_of_floors must be a positive number");
+        }
       }
-    }
 
-    const building = await prisma.buildings.create({
-      data: {
-        name: name.trim(),
-        address: address?.trim() || null,
-        number_of_floors: number_of_floors ? parseInt(number_of_floors) : null,
-        total_area: total_area ? parseFloat(total_area) : null,
-        is_active: true,
-        created_at: new Date(),
-        updated_at: new Date(),
-      },
+      // ===== VALIDATE total_area =====
+      let parsedArea = null;
+      if (total_area !== undefined && total_area !== null) {
+        parsedArea = parseFloat(total_area);
+        if (isNaN(parsedArea) || parsedArea <= 0) {
+          throw new Error("total_area must be a positive number");
+        }
+      }
+
+      // ===== CREATE BUILDING =====
+      const building = await tx.buildings.create({
+        data: {
+          name: normalizedName,
+          address: address?.trim() || null,
+          number_of_floors: parsedFloors,
+          total_area: parsedArea,
+          bill_due_day: parsedBillDueDay, // ✅ ĐÃ THÊM
+          is_active: true,
+        },
+      });
+
+      // ===== FORMAT RESPONSE =====
+      return this.formatBuildingResponse
+        ? this.formatBuildingResponse(building)
+        : building;
     });
-
-    return this.formatBuildingResponse(building);
   }
 
   // READ - Lấy thông tin tòa nhà theo ID
@@ -299,7 +324,7 @@ class BuildingService {
         billingChanges.push(
           `💡 Tiền điện: ${existingBuilding.electric_unit_price ?? "—"} → ${
             newValue ?? "—"
-          }`
+          }`,
         );
       }
 
@@ -317,7 +342,7 @@ class BuildingService {
         billingChanges.push(
           `🚿 Tiền nước: ${existingBuilding.water_unit_price ?? "—"} → ${
             newValue ?? "—"
-          }`
+          }`,
         );
       }
 
@@ -335,7 +360,7 @@ class BuildingService {
         billingChanges.push(
           `🧾 Phí dịch vụ: ${existingBuilding.service_fee ?? "—"} → ${
             newValue ?? "—"
-          }`
+          }`,
         );
       }
 
@@ -353,7 +378,7 @@ class BuildingService {
         billingChanges.push(
           `📅 Ngày thanh toán: ${existingBuilding.bill_due_day ?? "—"} → ${
             newValue ?? "—"
-          }`
+          }`,
         );
       }
 
@@ -410,7 +435,7 @@ class BuildingService {
         {
           building_id: buildingId,
           type: "BUILDING_BILLING_UPDATE",
-        }
+        },
       );
     }
 
@@ -667,73 +692,73 @@ class BuildingService {
   }
 
   // UPDATE MANAGER ASSIGNMENT - Cập nhật thông tin assignment
- async updateManagerAssignment(buildingId, userId, data) {
-  const { note } = data;
+  async updateManagerAssignment(buildingId, userId, data) {
+    const { note } = data;
 
-  const userIdInt = Number(userId);
-  const buildingIdInt = Number(buildingId);
+    const userIdInt = Number(userId);
+    const buildingIdInt = Number(buildingId);
 
-  if (isNaN(userIdInt) || isNaN(buildingIdInt)) {
-    throw new Error("user_id and building_id must be valid numbers");
-  }
+    if (isNaN(userIdInt) || isNaN(buildingIdInt)) {
+      throw new Error("user_id and building_id must be valid numbers");
+    }
 
-  // 1️⃣ Find assignment by USER
-  const existingAssignment = await prisma.building_managers.findFirst({
-    where: { user_id: userIdInt },
-  });
+    // 1️⃣ Find assignment by USER
+    const existingAssignment = await prisma.building_managers.findFirst({
+      where: { user_id: userIdInt },
+    });
 
-  if (!existingAssignment) {
-    throw new Error("Manager assignment not found");
-  }
+    if (!existingAssignment) {
+      throw new Error("Manager assignment not found");
+    }
 
-  // 2️⃣ Verify building exists
-  const building = await prisma.buildings.findUnique({
-    where: { building_id: buildingIdInt },
-  });
+    // 2️⃣ Verify building exists
+    const building = await prisma.buildings.findUnique({
+      where: { building_id: buildingIdInt },
+    });
 
-  if (!building) {
-    throw new Error("Building not found");
-  }
+    if (!building) {
+      throw new Error("Building not found");
+    }
 
-  // 3️⃣ Prepare update
-  const updateData = {
-    building_id: buildingIdInt,
-  };
+    // 3️⃣ Prepare update
+    const updateData = {
+      building_id: buildingIdInt,
+    };
 
-  if (note !== undefined) {
-    updateData.note = note || null;
-  }
+    if (note !== undefined) {
+      updateData.note = note || null;
+    }
 
-  // 4️⃣ Update assignment
-  const updated = await prisma.building_managers.update({
-    where: {
-      manager_id: existingAssignment.manager_id,
-    },
-    data: updateData,
-    include: {
-      user: {
-        select: {
-          user_id: true,
-          full_name: true,
-          email: true,
-          phone: true,
-          avatar_url: true,
-          status: true,
-          role: true,
+    // 4️⃣ Update assignment
+    const updated = await prisma.building_managers.update({
+      where: {
+        manager_id: existingAssignment.manager_id,
+      },
+      data: updateData,
+      include: {
+        user: {
+          select: {
+            user_id: true,
+            full_name: true,
+            email: true,
+            phone: true,
+            avatar_url: true,
+            status: true,
+            role: true,
+          },
+        },
+        building: {
+          select: {
+            building_id: true,
+            name: true,
+            address: true,
+          },
         },
       },
-      building: {
-        select: {
-          building_id: true,
-          name: true,
-          address: true,
-        },
-      },
-    },
-  });
+    });
 
-  return this.formatManagerAssignmentResponse(updated);
-}
+    return this.formatManagerAssignmentResponse(updated);
+  }
 
   // REMOVE MANAGER - Xóa manager khỏi tòa nhà
   async removeManager(buildingId, userId) {
@@ -928,11 +953,12 @@ class BuildingService {
     const activeContracts = await prisma.contracts.findMany({
       where: {
         tenant_user_id: tenantUserId,
-        status: 'active', // Chỉ lấy hợp đồng đang hiệu lực
-        deleted_at: null
+        status: "active", // Chỉ lấy hợp đồng đang hiệu lực
+        deleted_at: null,
       },
       include: {
-        room_history: { // Relation defined in schema: contract -> room
+        room_history: {
+          // Relation defined in schema: contract -> room
           include: {
             building: {
               select: {
@@ -941,18 +967,18 @@ class BuildingService {
                 electric_unit_price: true,
                 water_unit_price: true,
                 service_fee: true,
-                bill_due_day: true
-              }
-            }
-          }
-        }
-      }
+                bill_due_day: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     // 2. Lọc ra danh sách tòa nhà duy nhất (tránh trùng lặp nếu thuê 2 phòng cùng tòa)
     const uniqueBuildingsMap = new Map();
 
-    activeContracts.forEach(contract => {
+    activeContracts.forEach((contract) => {
       const building = contract.room_history?.building;
       if (building && !uniqueBuildingsMap.has(building.building_id)) {
         uniqueBuildingsMap.set(building.building_id, {
@@ -961,7 +987,7 @@ class BuildingService {
           electric_unit_price: building.electric_unit_price,
           water_unit_price: building.water_unit_price,
           service_fee: building.service_fee,
-          bill_due_day: building.bill_due_day
+          bill_due_day: building.bill_due_day,
         });
       }
     });
@@ -975,25 +1001,25 @@ class BuildingService {
     const activeContracts = await prisma.contracts.findMany({
       where: {
         tenant_user_id: tenantUserId,
-        status: 'active',
-        deleted_at: null
+        status: "active",
+        deleted_at: null,
       },
       include: {
         room_history: {
           include: {
             building: {
-              select: { building_id: true, name: true }
-            }
-          }
-        }
-      }
+              select: { building_id: true, name: true },
+            },
+          },
+        },
+      },
     });
 
     // Lấy danh sách ID tòa nhà duy nhất
     const uniqueBuildingIds = new Set();
     const buildingsMap = new Map(); // Để lưu tên tòa nhà
 
-    activeContracts.forEach(c => {
+    activeContracts.forEach((c) => {
       const b = c.room_history?.building;
       if (b) {
         uniqueBuildingIds.add(b.building_id);
@@ -1004,9 +1030,9 @@ class BuildingService {
     // 2. Lấy thông tin Owner (Global - Lấy tất cả user có role OWNER)
     const owners = await prisma.users.findMany({
       where: {
-        role: 'OWNER',
-        status: 'Active',
-        deleted_at: null
+        role: "OWNER",
+        status: "Active",
+        deleted_at: null,
       },
       select: {
         user_id: true,
@@ -1014,13 +1040,13 @@ class BuildingService {
         gender: true,
         phone: true,
         email: true,
-        avatar_url: true
-      }
+        avatar_url: true,
+      },
     });
 
-    const formattedOwners = owners.map(o => ({
+    const formattedOwners = owners.map((o) => ({
       ...o,
-      role: 'OWNER' // Gán nhãn để FE hiển thị
+      role: "OWNER", // Gán nhãn để FE hiển thị
     }));
 
     // 3. Loop qua từng tòa nhà để lấy Manager cụ thể
@@ -1038,32 +1064,31 @@ class BuildingService {
               gender: true,
               phone: true,
               email: true,
-              avatar_url: true
-            }
-          }
-        }
+              avatar_url: true,
+            },
+          },
+        },
       });
 
-      const formattedManagers = managers.map(m => ({
+      const formattedManagers = managers.map((m) => ({
         user_id: m.user.user_id,
         full_name: m.user.full_name,
         gender: m.user.gender,
         phone: m.user.phone,
         email: m.user.email,
         avatar_url: m.user.avatar_url,
-        role: 'MANAGER'
+        role: "MANAGER",
       }));
 
       results.push({
         building_id: buildingId,
         building_name: buildingsMap.get(buildingId),
-        contacts: [...formattedOwners, ...formattedManagers] // Gộp Owner + Manager
+        contacts: [...formattedOwners, ...formattedManagers], // Gộp Owner + Manager
       });
     }
 
     return results;
   }
-
 } // [FIX] Đã đóng ngoặc Class
 
 module.exports = new BuildingService();
