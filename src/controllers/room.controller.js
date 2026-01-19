@@ -269,6 +269,42 @@ class RoomController {
       next(err);
     }
   }
+
+  // [NEW] Xóa tenant ở phụ khỏi phòng
+async removeSecondaryTenantFromRoom(req, res, next) {
+  try {
+    const roomId = Number(req.params.id);
+    const tenantUserId = Number(req.params.tenantUserId);
+
+    if (!roomId || isNaN(roomId)) {
+      return res.status(400).json({ success: false, message: "Invalid room id" });
+    }
+    if (!tenantUserId || isNaN(tenantUserId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid tenant user id" });
+    }
+
+    const role = req.user.role;
+    const userId = req.user.user_id;
+
+    const result = await roomService.removeSecondaryTenantFromRoom(
+      roomId,
+      tenantUserId,
+      role,
+      userId
+    );
+
+    return res.json({
+      success: true,
+      message: "Removed secondary tenant successfully",
+      data: result,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 }
 
 module.exports = new RoomController();
