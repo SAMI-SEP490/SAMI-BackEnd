@@ -204,9 +204,17 @@ class AuthService {
         }
       });
 
-      // 2. Nếu KHÔNG tìm thấy hợp đồng hợp lệ nào, ta mới chặn và báo lỗi chi tiết
-      // Dựa trên hợp đồng mới nhất để User biết lý do chính xác
-      if (!validContract) {
+      const validSecondary = await prisma.room_tenants.findFirst({
+        where: {
+          tenant_user_id: user.user_id,
+          tenant_type: "secondary",
+          is_current: true,
+        },
+      });
+
+      // 3. Nếu KHÔNG CÓ hợp đồng hợp lệ VÀ KHÔNG PHẢI secondary tenant đang ở
+      // -> Chặn đăng nhập và báo lỗi chi tiết
+      if (!validContract && !validSecondary) {
 
         // Lấy hợp đồng mới nhất để check lỗi
         const latestContract = await prisma.contracts.findFirst({
