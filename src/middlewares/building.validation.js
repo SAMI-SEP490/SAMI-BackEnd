@@ -21,6 +21,17 @@ const validateCreateBuilding = (req, res, next) => {
             });
         }
 
+        // Validate Closing Day
+        if (bill_closing_day !== undefined && bill_closing_day !== null && bill_closing_day !== '') {
+            const day = parseInt(bill_closing_day);
+            if (isNaN(day) || day < 1 || day > 28) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'bill_closing_day must be an integer between 1 and 28'
+                });
+            }
+        }
+
         // Validate address if provided
         if (address !== undefined && address !== null) {
             if (typeof address !== 'string') {

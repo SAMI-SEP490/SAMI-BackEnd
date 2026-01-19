@@ -106,6 +106,7 @@ app.get('/health', async (req, res) => {
 // ==========================================
 // 🕒 CRON JOBS (Scheduled Tasks)
 // ==========================================
+// Schedule: Runs at 00:00:00 every day
 cron.schedule('0 0 0 * * *', async () => {
     console.log('🧹 [CRON] Cleaning expired vehicles...');
     try {
@@ -118,9 +119,10 @@ cron.schedule('0 0 0 * * *', async () => {
     scheduled: true,
     timezone: "Asia/Ho_Chi_Minh"
 });
-// Schedule: Runs at 00:00:00 every day
+
+// Schedule: Runs at 23:30:00 every day
 // Format: Seconds(optional) Minutes Hours DayOfMonth Month DayOfWeek
-cron.schedule('0 0 0 * * *', async () => {
+cron.schedule('0 30 23 * * *', async () => {
     console.log('🌙 [CRON] Starting daily billing tasks...');
     try {
         // 1. Scan for Overdue Bills
