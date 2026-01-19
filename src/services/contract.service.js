@@ -23,7 +23,7 @@ const CONTRACT_STATUS = {
   EXPIRED: "expired",
 };
 const MAX_RETROACTIVE_MONTHS = 6;
-const MAX_DURATION_MONTHS = 60;
+const MAX_DURATION_MONTHS = 120;
 // Base URL frontend của bạn (Lấy từ env hoặc hardcode)
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 
@@ -122,7 +122,30 @@ class ContractService {
 
     return unpaidBills.length > 0;
   }
+  validateFinancials(rentAmount, depositAmount) {
+    // 1. Validate RENT (Tiền thuê)
+    // - Phải là số và > 0
+    if (isNaN(rentAmount) || rentAmount <= 0) {
+      throw new Error("Tiền thuê phải là số dương lớn hơn 0.");
+    }
+    // - Chặn số quá lớn
+    if (rentAmount > 1000000000) {
+      throw new Error("Tiền thuê quá lớn bất thường (giới hạn 1 tỷ). Vui lòng kiểm tra lại.");
+    }
 
+    // 2. Validate DEPOSIT (Tiền cọc)
+    // - Phải là số và >= 0
+    if (isNaN(depositAmount) || depositAmount < 0) {
+      throw new Error("Tiền cọc không được là số âm.");
+    }
+
+    // - [Logic Chéo] Cọc không được vượt quá 12 tháng tiền nhà
+    if (depositAmount > rentAmount * 12) {
+      throw new Error("Tiền cọc có vẻ quá cao (vượt quá 1 năm tiền nhà). Vui lòng xác minh lại.");
+    }
+
+    return true;
+  }
   validateDateLogic(startDate, durationMonths, checkPastDate = true) { // <--- Thêm tham số mặc định true
     const start = new Date(startDate);
     const duration = parseInt(durationMonths);
@@ -294,14 +317,14 @@ class ContractService {
 
     // Validation Basics
     if (!room_id || !tenant_user_id || !start_date || !duration_months || !rent_amount) {
-      throw new Error("Missing required fields: room_id, tenant_user_id, start_date, duration_months, rent_amount");
+      throw new Error("Thiếu thông tin bắt buộc: phòng, người thuê, ngày bắt đầu, thời hạn hoặc tiền thuê.");
     }
 
     let validPenalty = 0;
     if (penalty_rate) {
       const rate = parseFloat(penalty_rate);
       if (isNaN(rate) || rate < 0.01 || rate > 1) {
-        throw new Error("Penalty rate must be between 0.01% and 1%");
+        throw new Error("Tỉ lệ phạt phải từ 0.01% đến 1% (0.01 - 1).");
       }
       validPenalty = rate;
     }
@@ -310,12 +333,15 @@ class ContractService {
     const tenantUserId = parseInt(tenant_user_id);
     const startDate = new Date(start_date);
     const duration = parseInt(duration_months);
+    const rent = parseFloat(rent_amount);
+    const deposit = deposit_amount ? parseFloat(deposit_amount) : 0;
 
+    this.validateFinancials(rent, deposit);
     // Validate logic ngày bắt đầu (không quá cũ, duration hợp lệ)
     this.validateDateLogic(startDate, duration);
 
     const endDate = this.calculateEndDate(startDate, duration);
-    if (startDate >= endDate) throw new Error("Calculated end date is invalid");
+    if (startDate >= endDate) throw new Error("Ngày kết thúc tính toán không hợp lệ (trùng hoặc trước ngày bắt đầu).");
 
     // --- [NEW] 2. Validate Ngày kết thúc phải sau hiện tại ---
     // (Ngăn chặn tạo hợp đồng đã hết hạn ngay lập tức)
@@ -344,7 +370,7 @@ class ContractService {
     }
 
     const conflictingContract = await this.checkContractConflict(roomId, startDate, endDate);
-    if (conflictingContract) throw new Error(`Room conflict: Contract #${conflictingContract.contract_id}`);
+    if (conflictingContract) throw new Error(`Phòng đang có Hợp đồng #${conflictingContract.contract_number} trùng thời gian.`);
 
     // 3. FILE PROCESSING (Luôn chạy vì đã validate ở bước 1)
     let fileData = {};
@@ -590,6 +616,13 @@ class ContractService {
         targetStartDate,
         targetDuration
     );
+    const targetRent = rent_amount !== undefined
+        ? parseFloat(rent_amount)
+        : existingContract.rent_amount;
+    const targetDeposit = deposit_amount !== undefined
+        ? parseFloat(deposit_amount)
+        : existingContract.deposit_amount;
+    this.validateFinancials(targetRent, targetDeposit);
     if (start_date || duration_months) {
       const shouldCheckPast = !!start_date;
       this.validateDateLogic(targetStartDate, targetDuration, shouldCheckPast);
