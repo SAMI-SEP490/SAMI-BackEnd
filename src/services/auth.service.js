@@ -178,50 +178,38 @@ class AuthService {
     // Verify password
     const isValidPassword = await comparePassword(password, user.password_hash);
 
-    if (!isValidPassword) {
-      throw new Error("Invalid credentials");
-    }
-    if (user.role === "TENANT" || user.role === "USER") {
-      // 1. Ưu tiên: Kiểm tra xem có đang ở ghép (Secondary) không?
-      // Nếu đang ở ghép hợp lệ -> Cho qua luôn, không cần check hợp đồng chính.
-      const isSecondary = await prisma.room_tenants.findFirst({
+    if (!isSecondary) {
+      // --- [LOGIC MỚI: HỖ TRỢ ĐA HỢP ĐỒNG] ---
+
+      // Định nghĩa các trạng thái "ĐƯỢC PHÉP VÀO APP"
+      // (Bao gồm cả Pending để user còn vào ký hợp đồng)
+      const allowedStatuses = [
+        "active",
+        "pending",
+        "pending_transaction",
+        "requested_termination"
+      ];
+
+      // Tìm xem user có BẤT KỲ hợp đồng nào đang "sống" không?
+      const hasValidContract = await prisma.contracts.findFirst({
         where: {
           tenant_user_id: user.user_id,
-          tenant_type: "secondary",
-          is_current: true, // Chỉ tính khi đang ở
+          status: { in: allowedStatuses }, // Chỉ cần 1 cái nằm trong nhóm này là OK
+          deleted_at: null,
         },
       });
 
-      if (!isSecondary) {
-        // 2. Nếu không phải ở ghép, kiểm tra hợp đồng chính chủ mới nhất
-        const latestContract = await prisma.contracts.findFirst({
-          where: {
-            tenant_user_id: user.user_id,
-            deleted_at: null,
-          },
-          orderBy: {
-            created_at: "desc", // Lấy cái mới tạo nhất
-          },
+      if (!hasValidContract) {
+        // Nếu không có hợp đồng hợp lệ, kiểm tra xem có hợp đồng nào không (để báo lỗi chính xác)
+        const anyContract = await prisma.contracts.findFirst({
+          where: { tenant_user_id: user.user_id, deleted_at: null },
         });
 
-
-
-        if (!latestContract) {
-          // Thêm dòng này nếu muốn chặn
+        if (!anyContract) {
           throw new Error("Bạn chưa có hợp đồng thuê phòng nào.");
-        }
-
-        // Case B: Có hợp đồng, kiểm tra trạng thái xấu
-        else {
-          // Những trạng thái chắc chắn cấm vào
-          const bannedStatuses = ["rejected", "terminated"];
-
-
-          if (bannedStatuses.includes(latestContract.status)) {
-            throw new Error("Hợp đồng của bạn đã bị chấm dứt hoặc từ chối. Vui lòng liên hệ quản lý.");
-          }
-
-
+        } else {
+          // Có hợp đồng nhưng toàn là Rejected/Terminated/Expired
+          throw new Error("Tất cả hợp đồng của bạn đã kết thúc hoặc bị từ chối. Vui lòng liên hệ quản lý.");
         }
       }
     }
