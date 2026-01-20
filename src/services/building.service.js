@@ -966,37 +966,44 @@ class BuildingService {
   }
 
   async getMyBuildingDetails(tenantUserId) {
-    // 1. Tìm tất cả hợp đồng ACTIVE của tenant này
-    const activeContracts = await prisma.contracts.findMany({
+    const contracts = await prisma.contracts.findMany({
       where: {
         tenant_user_id: tenantUserId,
         status: "active",
         deleted_at: null,
       },
-      include: { room_history: { include: { building: true } } },
+      select: {
+        contract_id: true,
+        room_history: {
+          select: {
+            building: {
+              select: {
+                building_id: true,
+                name: true,
+                electric_unit_price: true,
+                water_unit_price: true,
+                service_fee: true,
+                bill_closing_day: true,
+              },
+            },
+          },
+        },
+      },
     });
 
-    // 2. Lọc ra danh sách tòa nhà duy nhất (tránh trùng lặp nếu thuê 2 phòng cùng tòa)
     const uniqueBuildingsMap = new Map();
 
-    activeContracts.forEach((contract) => {
+    for (const contract of contracts) {
       const building = contract.room_history?.building;
-      if (building && !uniqueBuildingsMap.has(building.building_id)) {
-        uniqueBuildingsMap.set(building.building_id, {
-          building_id: building.building_id,
-          building_name: building.name,
-          electric_unit_price: building.electric_unit_price,
-          water_unit_price: building.water_unit_price,
-          service_fee: building.service_fee,
-          bill_closing_day: building.bill_closing_day,
-        });
-      }
-    });
+      if (!building) continue;
 
-    // 3. Convert Map values to Array
+      if (!uniqueBuildingsMap.has(building.building_id)) {
+        uniqueBuildingsMap.set(building.building_id, building);
+      }
+    }
+
     return Array.from(uniqueBuildingsMap.values());
   }
-
   async getBuildingContactsForTenant(tenantUserId) {
     // 1. Tìm các tòa nhà mà tenant đang có hợp đồng Active
     const activeContracts = await prisma.contracts.findMany({
