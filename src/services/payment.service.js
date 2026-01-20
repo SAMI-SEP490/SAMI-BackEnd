@@ -37,27 +37,24 @@ async function _completePayment(paymentId, transactionId, onlineType) {
         for (const detail of payment.payment_details) {
             const bill = await tx.bills.findUnique({ where: { bill_id: detail.bill_id } });
 
-            // Calculate new paid amount (Old paid + Current payment)
-            // Ideally, 'amount' in detail is what was paid for THIS bill
+            // Calculate new paid amount
+            // 'detail.amount' is what was allocated to this bill in this payment
             const newPaidAmount = Number(bill.paid_amount || 0) + Number(detail.amount);
 
             // Determine status
             const totalDue = Number(bill.total_amount) + Number(bill.penalty_amount || 0);
-            const newStatus = newPaidAmount >= totalDue ? 'paid' : 'partially_paid';
+            
+            // Allow small float errors (epsilon check)
+            const isFullyPaid = newPaidAmount >= (totalDue - 100); // 100 VND buffer
+            const newStatus = isFullyPaid ? 'paid' : 'partially_paid';
 
+            // DO NOT re-create payment_details here. They already exist.
+            // Just update the Bill's status and paid_amount totals.
             await tx.bills.update({
                 where: { bill_id: detail.bill_id },
                 data: {
                     status: newStatus,
-                    paid_amount: newPaidAmount,
-                    // Link payment_id for reference (showing last payment)
-                    // Note: If multiple payments exist, this shows the latest one.
-                    payment_details: {
-                        create: {
-                            payment_id: paymentId,
-                            amount: detail.amount
-                        }
-                    }
+                    paid_amount: newPaidAmount
                 }
             });
         }
@@ -175,7 +172,11 @@ class PaymentService {
             where: { reference: dbRef }
         });
 
-        if (!payment || payment.status === 'completed') return;
+        // Idempotency Check: If already completed, ignore
+        if (!payment || payment.status === 'completed') {
+            console.log(`[Webhook] Ignoring duplicate/invalid payment ${dbRef}`);
+            return;
+        }
 
         if (code === '00') {
             await _completePayment(payment.payment_id, reference, 'PAYOS');
