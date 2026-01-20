@@ -7,9 +7,10 @@ const NotificationService = require("./notification.service");
 class BuildingService {
   // CREATE - Tạo tòa nhà mới
   async createBuilding(data) {
-    const { name, address, number_of_floors, total_area, bill_closing_day } = data;
+    const { name, address, number_of_floors, total_area, bill_closing_day } =
+      data;
 
-    // ===== VALIDATE CƠ BẢN =====
+    // ===== VALIDATE NAME =====
     if (!name || !name.trim()) {
       throw new Error("Missing required field: name");
     }
@@ -17,7 +18,7 @@ class BuildingService {
     const normalizedName = name.trim();
 
     return await prisma.$transaction(async (tx) => {
-      // ===== CHECK TRÙNG TÊN =====
+      // ===== CHECK TRÙNG TÊN (BUILDING ĐANG ACTIVE) =====
       const existingBuilding = await tx.buildings.findFirst({
         where: {
           is_active: true,
@@ -26,6 +27,7 @@ class BuildingService {
             mode: "insensitive",
           },
         },
+        select: { building_id: true },
       });
 
       if (existingBuilding) {
@@ -35,18 +37,31 @@ class BuildingService {
       // ===== VALIDATE number_of_floors =====
       let parsedFloors = null;
       if (number_of_floors !== undefined && number_of_floors !== null) {
-        parsedFloors = parseInt(number_of_floors);
-        if (isNaN(parsedFloors) || parsedFloors <= 0) {
-          throw new Error("number_of_floors must be a positive number");
+        parsedFloors = Number.parseInt(number_of_floors, 10);
+        if (!Number.isInteger(parsedFloors) || parsedFloors <= 0) {
+          throw new Error("number_of_floors must be a positive integer");
         }
       }
 
       // ===== VALIDATE total_area =====
       let parsedArea = null;
       if (total_area !== undefined && total_area !== null) {
-        parsedArea = parseFloat(total_area);
-        if (isNaN(parsedArea) || parsedArea <= 0) {
+        parsedArea = Number.parseFloat(total_area);
+        if (Number.isNaN(parsedArea) || parsedArea <= 0) {
           throw new Error("total_area must be a positive number");
+        }
+      }
+
+      // ===== VALIDATE bill_closing_day (1–28) =====
+      let parsedClosingDay = null;
+      if (bill_closing_day !== undefined && bill_closing_day !== null) {
+        parsedClosingDay = Number.parseInt(bill_closing_day, 10);
+        if (
+          !Number.isInteger(parsedClosingDay) ||
+          parsedClosingDay < 1 ||
+          parsedClosingDay > 28
+        ) {
+          throw new Error("bill_closing_day must be between 1 and 28");
         }
       }
 
@@ -57,7 +72,12 @@ class BuildingService {
           address: address?.trim() || null,
           number_of_floors: parsedFloors,
           total_area: parsedArea,
-          bill_closing_day: bill_closing_day ? parseInt(bill_closing_day) : null,
+          bill_closing_day: parsedClosingDay,
+
+          // 👇 SET MẶC ĐỊNH SLOT XE
+          max_2_wheel_slot: 0,
+          max_4_wheel_slot: 0,
+
           is_active: true,
         },
       });
@@ -127,40 +147,48 @@ class BuildingService {
 
   // READ - Lấy danh sách tòa nhà (có phân trang và filter)
   async getBuildings(filters = {}) {
-    let { name, address, is_active, page, limit } = filters;
+    let { name, address, is_active, page = 1, limit = 20 } = filters;
 
-    // Ensure page and limit are integers
-    // Parse strings to int, default to 1 and 20 if invalid/missing
-    page = parseInt(page);
-    limit = parseInt(limit);
+    // Chuẩn hóa page & limit
+    page = Number.parseInt(page, 10);
+    limit = Number.parseInt(limit, 10);
 
-    if (isNaN(page) || page < 1) page = 1;
-    if (isNaN(limit) || limit < 1) limit = 20;
+    if (!Number.isInteger(page) || page < 1) page = 1;
+    if (!Number.isInteger(limit) || limit < 1) limit = 20;
 
     const skip = (page - 1) * limit;
+
+    // Build điều kiện where
     const where = {};
 
-    if (name) {
+    if (name?.trim()) {
       where.name = {
-        contains: name,
+        contains: name.trim(),
         mode: "insensitive",
       };
     }
 
-    if (address) {
+    if (address?.trim()) {
       where.address = {
-        contains: address,
+        contains: address.trim(),
         mode: "insensitive",
       };
     }
 
     if (is_active !== undefined) {
-      where.is_active = is_active === "true" || is_active === true;
+      where.is_active =
+        is_active === true || is_active === "true" ? true : false;
     }
 
+    // Query song song
     const [buildings, total] = await Promise.all([
       prisma.buildings.findMany({
         where,
+        skip,
+        take: limit,
+        orderBy: {
+          created_at: "desc",
+        },
         include: {
           building_managers: {
             include: {
@@ -175,21 +203,23 @@ class BuildingService {
           },
           _count: {
             select: {
-              rooms: { where: { is_active: true } },
+              rooms: {
+                where: { is_active: true },
+              },
               regulations: true,
               floor_plans: true,
             },
           },
         },
-        skip,
-        take: limit,
-        orderBy: { created_at: "desc" },
       }),
+
       prisma.buildings.count({ where }),
     ]);
 
     return {
-      data: buildings.map((b) => this.formatBuildingListResponse(b)),
+      data: buildings.map((building) =>
+        this.formatBuildingListResponse(building),
+      ),
       pagination: {
         total,
         page,
@@ -201,10 +231,29 @@ class BuildingService {
 
   // [NEW] READ - Lấy danh sách tòa nhà được gán cho Manager
   async getAssignedBuildings(userId) {
-    const assignments = await prisma.building_managers.findMany({ where: { user_id: userId }, include: { building: { select: { building_id: true, name: true, address: true, is_active: true, bill_closing_day: true } } } });
+    const assignments = await prisma.building_managers.findMany({
+      where: { user_id: userId },
+      include: {
+        building: {
+          select: {
+            building_id: true,
+            name: true,
+            address: true,
+            is_active: true,
+            bill_closing_day: true,
+          },
+        },
+      },
+    });
 
     // Map data để trả về format gọn gàng
-    return assignments.map((a) => ({ building_id: a.building_id, name: a.building.name, address: a.building.address, is_building_active: a.building.is_active, bill_closing_day: a.building.bill_closing_day }));
+    return assignments.map((a) => ({
+      building_id: a.building_id,
+      name: a.building.name,
+      address: a.building.address,
+      is_building_active: a.building.is_active,
+      bill_closing_day: a.building.bill_closing_day,
+    }));
   }
 
   async updateBuilding(buildingId, data, senderId) {
@@ -340,7 +389,6 @@ class BuildingService {
 
       updateData.service_fee = newValue;
     }
-
 
     // ✅ MAX 4-WHEEL SLOT
     if (max_4_wheel_slot !== undefined) {
@@ -763,11 +811,12 @@ class BuildingService {
       bill_closing_day: building.bill_closing_day,
       max_4_wheel_slot: building.max_4_wheel_slot,
       max_2_wheel_slot: building.max_2_wheel_slot,
-      managers: building.building_managers?.map((m) => ({
-        user_id: m.user_id,
-        full_name: m.user?.full_name || m.users?.full_name,
-        email: m.user?.email || m.users?.email,
-      })) || [],
+      managers:
+        building.building_managers?.map((m) => ({
+          user_id: m.user_id,
+          full_name: m.user?.full_name || m.users?.full_name,
+          email: m.user?.email || m.users?.email,
+        })) || [],
       created_at: building.created_at,
       updated_at: building.updated_at,
     };
@@ -789,10 +838,11 @@ class BuildingService {
       total_rooms: building._count?.rooms || 0,
       total_regulations: building._count?.regulations || 0,
       total_floor_plans: building._count?.floor_plans || 0,
-      managers: building.building_managers?.map((m) => ({
-        user_id: m.user_id,
-        full_name: m.user?.full_name || m.users?.full_name,
-      })) || [],
+      managers:
+        building.building_managers?.map((m) => ({
+          user_id: m.user_id,
+          full_name: m.user?.full_name || m.users?.full_name,
+        })) || [],
       created_at: building.created_at,
       updated_at: building.updated_at,
     };
@@ -816,30 +866,34 @@ class BuildingService {
       bill_closing_day: building.bill_closing_day,
       max_4_wheel_slot: building.max_4_wheel_slot,
       max_2_wheel_slot: building.max_2_wheel_slot,
-      managers: building.building_managers?.map((m) => ({
-        user_id: m.user_id,
-        full_name: m.user?.full_name,
-        email: m.user?.email,
-        phone: m.user?.phone,
-        note: m.note,
-      })) || [],
-      rooms: building.rooms?.map((r) => ({
-        room_id: r.room_id,
-        room_number: r.room_number,
-        floor: r.floor,
-        size: r.size,
-      })) || [],
-      regulations: building.regulations?.map((r) => ({
-        regulation_id: r.regulation_id,
-        title: r.title,
-        effective_date: r.effective_date,
-        version: r.version,
-      })) || [],
-      floor_plans: building.floor_plans?.map((f) => ({
-        plan_id: f.plan_id,
-        name: f.name,
-        floor_number: f.floor_number,
-      })) || [],
+      managers:
+        building.building_managers?.map((m) => ({
+          user_id: m.user_id,
+          full_name: m.user?.full_name,
+          email: m.user?.email,
+          phone: m.user?.phone,
+          note: m.note,
+        })) || [],
+      rooms:
+        building.rooms?.map((r) => ({
+          room_id: r.room_id,
+          room_number: r.room_number,
+          floor: r.floor,
+          size: r.size,
+        })) || [],
+      regulations:
+        building.regulations?.map((r) => ({
+          regulation_id: r.regulation_id,
+          title: r.title,
+          effective_date: r.effective_date,
+          version: r.version,
+        })) || [],
+      floor_plans:
+        building.floor_plans?.map((f) => ({
+          plan_id: f.plan_id,
+          name: f.name,
+          floor_number: f.floor_number,
+        })) || [],
     };
   }
 
@@ -881,8 +935,12 @@ class BuildingService {
   async getMyBuildingDetails(tenantUserId) {
     // 1. Tìm tất cả hợp đồng ACTIVE của tenant này
     const activeContracts = await prisma.contracts.findMany({
-      where: { tenant_user_id: tenantUserId, status: 'active', deleted_at: null },
-      include: { room_history: { include: { building: true } } }
+      where: {
+        tenant_user_id: tenantUserId,
+        status: "active",
+        deleted_at: null,
+      },
+      include: { room_history: { include: { building: true } } },
     });
 
     // 2. Lọc ra danh sách tòa nhà duy nhất (tránh trùng lặp nếu thuê 2 phòng cùng tòa)
@@ -897,7 +955,7 @@ class BuildingService {
           electric_unit_price: building.electric_unit_price,
           water_unit_price: building.water_unit_price,
           service_fee: building.service_fee,
-          bill_closing_day: building.bill_closing_day
+          bill_closing_day: building.bill_closing_day,
         });
       }
     });
