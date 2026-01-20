@@ -262,7 +262,11 @@ class ContractAddendumService {
                 creator: { select: { user_id: true, full_name: true, email: true } },
                 contract: {
                     include: {
-                        room_history: true,
+                        room_history: {
+                            include: {
+                                building: true   
+                            }
+                        },
                         tenant: { include: { user: true } }
                     }
                 }
@@ -356,12 +360,12 @@ class ContractAddendumService {
         // We will stick to the provided file logic which manually mapped fields.
 
         // Re-construct logic to grab previous state properly
-        if(changesData.rent_amount !== undefined) previousState.rent_amount = addendum.contract.rent_amount;
-        if(changesData.deposit_amount !== undefined) previousState.deposit_amount = addendum.contract.deposit_amount;
-        if(changesData.end_date !== undefined) previousState.end_date = addendum.contract.end_date;
-        if(changesData.penalty_rate !== undefined) previousState.penalty_rate = addendum.contract.penalty_rate;
-        if(changesData.payment_cycle_months !== undefined) previousState.payment_cycle_months = addendum.contract.payment_cycle_months;
-        if(changesData.start_date !== undefined) previousState.start_date = addendum.contract.start_date;
+        if (changesData.rent_amount !== undefined) previousState.rent_amount = addendum.contract.rent_amount;
+        if (changesData.deposit_amount !== undefined) previousState.deposit_amount = addendum.contract.deposit_amount;
+        if (changesData.end_date !== undefined) previousState.end_date = addendum.contract.end_date;
+        if (changesData.penalty_rate !== undefined) previousState.penalty_rate = addendum.contract.penalty_rate;
+        if (changesData.payment_cycle_months !== undefined) previousState.payment_cycle_months = addendum.contract.payment_cycle_months;
+        if (changesData.start_date !== undefined) previousState.start_date = addendum.contract.start_date;
 
 
         // Update Contract Data Prep
@@ -830,7 +834,7 @@ class ContractAddendumService {
             if (isDateOverlap) {
                 let existingChanges = existing.changes_snapshot;
                 if (typeof existingChanges === 'string') {
-                    try { existingChanges = JSON.parse(existingChanges); } catch (e) {}
+                    try { existingChanges = JSON.parse(existingChanges); } catch (e) { }
                 }
                 const existingKeys = Object.keys(existingChanges || {});
                 const conflictKeys = newKeys.filter(key => existingKeys.includes(key));
