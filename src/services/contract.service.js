@@ -1661,6 +1661,8 @@ class ContractService {
       tenant_name: user?.full_name || null,
       tenant_email: user?.email || null,
       tenant_phone: user?.phone || null,
+      tenant_id_number: tenant?.id_number || null,
+      id_number: tenant?.id_number || null,
       start_date: contract.start_date,
       end_date: contract.end_date,
       duration_months: contract.duration_months,
