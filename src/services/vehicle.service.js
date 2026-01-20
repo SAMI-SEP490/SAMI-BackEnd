@@ -1419,7 +1419,7 @@ class VehicleRegistrationService {
         if (tenant.user.status !== 'Active') throw new Error('Tài khoản người thuê không hoạt động');
         if (tenant.room_tenants_history.length === 0) throw new Error('Người thuê không có phòng hoạt động');
 
-        // 2. Check License Plate Uniqueness (Active Vehicles)
+        // 2. Check License Plate Uniqueness
         if (license_plate) {
             const existingVehicle = await prisma.vehicles.findFirst({
                 where: {
@@ -1433,7 +1433,10 @@ class VehicleRegistrationService {
                     status: { not: 'rejected' }
                 }
             });
-            if (existing) throw new Error('Biển số xe đã được đăng ký');
+
+            if (existingVehicle || existingRegistration) {
+                throw new Error('Biển số xe đã được đăng ký');
+            }
         }
 
         // 3. Prepare Bot Note
@@ -1478,7 +1481,7 @@ class VehicleRegistrationService {
                 `Chatbot đã tạo yêu cầu đăng ký xe ${brand} (${license_plate}) cho bạn.`,
                 {
                     type: 'vehicle_bot_created',
-                    registration_id: registration.registration_id
+                    registration_id: String(registration.registration_id)
                 }
             );
         } catch (e) { console.error("[Bot] Failed to notify:", e.message); }
