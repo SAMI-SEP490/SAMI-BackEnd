@@ -204,10 +204,8 @@ class AuthService {
           },
         });
 
-        // --- CÁC TRƯỜNG HỢP XỬ LÝ ---
 
-        // Case A: Tài khoản mới tinh (Chưa có hợp đồng nào)
-        // -> CHO PHÉP (để họ còn vào App xem phòng hoặc ký hợp đồng online)
+
         if (!latestContract) {
           // Thêm dòng này nếu muốn chặn
           throw new Error("Bạn chưa có hợp đồng thuê phòng nào.");

@@ -22,7 +22,7 @@ const CONTRACT_STATUS = {
   REQUESTED_TERMINATION: "requested_termination",
   EXPIRED: "expired",
 };
-const MAX_RETROACTIVE_MONTHS = 6;
+const MAX_RETROACTIVE_DAYS = 14;
 const MAX_DURATION_MONTHS = 60;
 // Base URL frontend của bạn (Lấy từ env hoặc hardcode)
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
@@ -146,22 +146,21 @@ class ContractService {
 
     return true;
   }
-  validateDateLogic(startDate, durationMonths, checkPastDate = true) { // <--- Thêm tham số mặc định true
+  validateDateLogic(startDate, durationMonths, checkPastDate = true) {
     const start = new Date(startDate);
     const duration = parseInt(durationMonths);
     const today = new Date();
 
     // 1. Kiểm tra ngày bắt đầu không được quá cũ
-    // CHỈ KIỂM TRA KHI checkPastDate = true
     if (checkPastDate) {
       const minDate = new Date();
-      minDate.setMonth(today.getMonth() - MAX_RETROACTIVE_MONTHS);
+      minDate.setDate(today.getDate() - MAX_RETROACTIVE_DAYS);
       minDate.setHours(0, 0, 0, 0);
       start.setHours(0, 0, 0, 0);
 
       if (start < minDate) {
         throw new Error(
-            `Start date cannot be older than ${MAX_RETROACTIVE_MONTHS} months from today.`
+            `Ngày bắt đầu không được cũ hơn ${MAX_RETROACTIVE_DAYS} ngày so với hiện tại.`
         );
       }
     }
@@ -331,8 +330,9 @@ class ContractService {
     let validPenalty = 0;
     if (penalty_rate) {
       const rate = parseFloat(penalty_rate);
-      if (isNaN(rate) || rate < 0.01 || rate > 1) {
-        throw new Error("Tỉ lệ phạt phải từ 0.01% đến 1% (0.01 - 1).");
+      // Cho phép nhỏ hơn 0.01 nhưng không được quá 0.055
+      if (isNaN(rate) || rate < 0 || rate > 0.055) {
+        throw new Error("Tỉ lệ phạt vi phạm không được quá 0.055%/ngày (theo luật lãi suất chậm trả).");
       }
       validPenalty = rate;
     }
@@ -341,6 +341,13 @@ class ContractService {
     const tenantUserId = parseInt(tenant_user_id);
     const startDate = new Date(start_date);
     const duration = parseInt(duration_months);
+
+    const paymentCycle = payment_cycle_months ? parseInt(payment_cycle_months) : 1;
+    if (paymentCycle > duration) {
+      throw new Error(`Chu kỳ thanh toán (${paymentCycle} tháng) không được lớn hơn thời hạn hợp đồng (${duration} tháng).`);
+    }
+
+
     const rent = parseFloat(rent_amount);
     const deposit = deposit_amount ? parseFloat(deposit_amount) : 0;
 
@@ -607,8 +614,8 @@ class ContractService {
     let validRate = undefined;
     if (penalty_rate !== undefined) {
       const rate = parseFloat(penalty_rate);
-      if (isNaN(rate) || rate < 0.01 || rate > 1)
-        throw new Error("Invalid penalty rate");
+      if (isNaN(rate) || rate < 0 || rate > 0.055)
+        throw new Error("Tỉ lệ phạt vi phạm không được quá 0.055%/ngày.");
       validRate = rate;
     }
 
@@ -620,6 +627,15 @@ class ContractService {
     const targetDuration = duration_months
         ? parseInt(duration_months)
         : existingContract.duration_months;
+
+    const targetPaymentCycle = payment_cycle_months
+        ? parseInt(payment_cycle_months)
+        : existingContract.payment_cycle_months;
+
+    if (targetPaymentCycle > targetDuration) {
+      throw new Error(`Chu kỳ thanh toán (${targetPaymentCycle} tháng) không được lớn hơn thời hạn hợp đồng (${targetDuration} tháng).`);
+    }
+
     const targetEndDate = this.calculateEndDate(
         targetStartDate,
         targetDuration
