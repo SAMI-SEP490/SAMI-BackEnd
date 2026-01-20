@@ -68,6 +68,7 @@ class UtilityService {
       return {
         room_id: room.room_id,
         room_number: room.room_number,
+        recorded_date: currRecord ? currRecord.recorded_date : null,
 
         old_electric: displayOldElectric,
         old_water: displayOldWater,
