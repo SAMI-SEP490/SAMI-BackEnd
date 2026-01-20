@@ -209,24 +209,21 @@ class AuthService {
         // Case A: Tài khoản mới tinh (Chưa có hợp đồng nào)
         // -> CHO PHÉP (để họ còn vào App xem phòng hoặc ký hợp đồng online)
         if (!latestContract) {
-          // Logic cũ chặn ở đây -> Đã bỏ chặn.
+          // Thêm dòng này nếu muốn chặn
+          throw new Error("Bạn chưa có hợp đồng thuê phòng nào.");
         }
 
         // Case B: Có hợp đồng, kiểm tra trạng thái xấu
         else {
           // Những trạng thái chắc chắn cấm vào
           const bannedStatuses = ["rejected", "terminated"];
-          // rejected: Bị chủ nhà từ chối
-          // terminated: Bị chấm dứt sớm (có thể do vi phạm)
-          // expired: Hết hạn (Thường nên cho vào xem lịch sử, nếu muốn cấm thì thêm vào mảng này)
+
 
           if (bannedStatuses.includes(latestContract.status)) {
-            // Kiểm tra kỹ hơn: Nếu bị từ chối cái cũ, nhưng chưa có cái mới -> CHẶN
             throw new Error("Hợp đồng của bạn đã bị chấm dứt hoặc từ chối. Vui lòng liên hệ quản lý.");
           }
 
-          // Case C: Hợp đồng tương lai (Ngày bắt đầu > Hôm nay)
-          // -> CHO PHÉP (Logic cũ chặn -> Đã bỏ chặn để họ vào xem thông tin trước khi dọn vào)
+
         }
       }
     }
