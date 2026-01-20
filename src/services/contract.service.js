@@ -996,7 +996,7 @@ class ContractService {
 
     // Chỉ xóa được EXPIRED hoặc TERMINATED
     if (
-        ![CONTRACT_STATUS.EXPIRED, CONTRACT_STATUS.TERMINATED].includes(
+        ![CONTRACT_STATUS.EXPIRED, CONTRACT_STATUS.TERMINATED, CONTRACT_STATUS.REJECTED].includes(
             contract.status
         )
     ) {
