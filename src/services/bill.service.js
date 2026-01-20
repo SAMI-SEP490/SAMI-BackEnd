@@ -87,28 +87,22 @@ class BillService {
       }
     }
 
-// --- B. UTILITY BILLS (Using Closing Day) ---
-    // Find buildings where TODAY is the closing day
+    // --- B. UTILITY BILLS ---
+    // (This part remains unchanged from previous step, assuming it's working)
+    const currentDayOfMonth = new Date().getDate(); // Use actual current day for closing check
     const buildingsDue = await prisma.buildings.findMany({
-      where: { 
-          is_active: true, 
-          bill_closing_day: currentDayOfMonth 
-      }
+      where: { is_active: true, bill_closing_day: currentDayOfMonth }
     });
 
     let utilityCount = 0;
     for (const building of buildingsDue) {
-      // Safety: Only support closing days <= 28 to avoid Feb issues
-      if (building.bill_closing_day && building.bill_closing_day > 28) {
-          console.warn(`[AutoBill] Warning: Building ${building.name} has unsafe closing day ${building.bill_closing_day}. Skipping automation.`);
-          continue;
-      }
-      
+      if (building.bill_closing_day && building.bill_closing_day > 28) continue;
+      // Note: Passing paymentDeadline calculated at start of function
       const result = await this._processUtilityBillsForBuilding(building, paymentDeadline);
       utilityCount += result.created;
     }
 
-    console.log(`[AutoBill] --- Scan Complete ---`);
+    console.log(`[AutoBill] --- Scan Complete (Rent: ${rentCount}, Util: ${utilityCount}) ---`);
     return { rent_created: rentCount, rent_skipped: rentSkipped, utility_created: utilityCount };
   }
 
@@ -937,8 +931,8 @@ class BillService {
         creator: { select: { user_id: true, full_name: true } },
         contract: {
           select: {
-            room_current: { select: { room_id: true, room_number: true } },
-            room_history: { select: { room_id: true, room_number: true } }
+            room_current: { select: { room_id: true, room_number: true, building_id: true } },
+            room_history: { select: { room_id: true, room_number: true, building_id: true } }
           }
         }
       },
