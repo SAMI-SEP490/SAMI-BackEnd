@@ -937,8 +937,8 @@ class BillService {
         creator: { select: { user_id: true, full_name: true } },
         contract: {
           select: {
-            room_current: { select: { room_id: true, room_number: true } },
-            room_history: { select: { room_id: true, room_number: true } }
+            room_current: { select: { room_id: true, room_number: true, building_id: true } },
+            room_history: { select: { room_id: true, room_number: true, building_id: true } }
           }
         }
       },
