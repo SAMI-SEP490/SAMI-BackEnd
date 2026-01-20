@@ -63,25 +63,60 @@ class ParkingSlotService {
     }
 
     // Lấy danh sách parking slot
-    async getParkingSlots(query) {
-        const { building_id, is_available } = query;
-        const where = {};
+    async getParkingSlots(query, user) {
+  const { building_id, is_available } = query;
+  const where = {};
 
-        if (building_id) {
-            where.building_id = parseInt(building_id);
-        }
+  if (!user) {
+    throw new Error("Unauthenticated");
+  }
 
-        if (is_available !== undefined) {
-            where.is_available = is_available === 'true';
-        }
+  // ================= TENANT =================
+  if (user.role === "TENANT") {
+    throw new Error("Bạn không có quyền xem parking slot");
+  }
 
-        return prisma.parking_slots.findMany({
-            where,
-            orderBy: {
-                slot_number: 'asc'
-            }
-        });
+  // ================= MANAGER =================
+  if (user.role === "MANAGER") {
+    // Lấy building được phân công
+    const managerBuilding = await prisma.building_managers.findFirst({
+      where: {
+        user_id: user.user_id,
+      },
+      select: {
+        building_id: true,
+      },
+    });
+
+    if (!managerBuilding) {
+      throw new Error("Manager chưa được phân công tòa nhà");
     }
+
+    // 🔒 BẮT BUỘC khóa building
+    where.building_id = managerBuilding.building_id;
+  }
+
+  // ================= OWNER =================
+  if (user.role === "OWNER") {
+    // Owner được phép filter nếu truyền
+    if (building_id) {
+      where.building_id = parseInt(building_id);
+    }
+    // Không truyền => xem tất cả
+  }
+
+  // ================= FILTER =================
+  if (is_available !== undefined) {
+    where.is_available = is_available === "true";
+  }
+
+  return prisma.parking_slots.findMany({
+    where,
+    orderBy: {
+      slot_number: "asc",
+    },
+  });
+}
 
     // Lấy parking slot theo ID
     async getParkingSlotById(slotId) {
@@ -184,65 +219,65 @@ class ParkingSlotService {
         return { message: 'Đã xóa chỗ đậu xe thành công' };
     }
     async getAvailableSlotForRegistration(registrationId) {
-  const registration = await prisma.vehicle_registrations.findUnique({
-    where: { registration_id: Number(registrationId) },
-    include: {
-      requester: {
-        select: {
-          user_id: true,
-          building_id: true  
+        const registration = await prisma.vehicle_registrations.findUnique({
+            where: { registration_id: Number(registrationId) },
+            include: {
+                requester: {
+                    select: {
+                        user_id: true,
+                        building_id: true
+                    }
+                }
+            }
+        });
+
+        if (!registration) {
+            throw new Error("Không tìm thấy đăng ký xe");
         }
-      }
-    }
-  });
 
-  if (!registration) {
-    throw new Error("Không tìm thấy đăng ký xe");
-  }
+        const buildingId = registration.requester.building_id;
 
-  const buildingId = registration.requester.building_id;
-
-  if (!buildingId) {
-    throw new Error("Không tìm thấy tòa nhà của người thuê");
-  }
-
-  return prisma.parking_slots.findMany({
-    where: {
-      building_id: buildingId,
-      slot_type: registration.vehicle_type,
-      is_available: true
-    },
-    orderBy: { slot_number: "asc" }
-  });
-}
-async getAvailableSlotsForVehicle(vehicleId) {
-  const vehicle = await prisma.vehicles.findUnique({
-    where: { vehicle_id: Number(vehicleId) },
-    include: {
-      registration: true,
-      tenant: {
-        select: {
-          user_id: true,
-          building_id: true   
+        if (!buildingId) {
+            throw new Error("Không tìm thấy tòa nhà của người thuê");
         }
-      }
+
+        return prisma.parking_slots.findMany({
+            where: {
+                building_id: buildingId,
+                slot_type: registration.vehicle_type,
+                is_available: true
+            },
+            orderBy: { slot_number: "asc" }
+        });
     }
-  });
+    async getAvailableSlotsForVehicle(vehicleId) {
+        const vehicle = await prisma.vehicles.findUnique({
+            where: { vehicle_id: Number(vehicleId) },
+            include: {
+                registration: true,
+                tenant: {
+                    select: {
+                        user_id: true,
+                        building_id: true
+                    }
+                }
+            }
+        });
 
-  if (!vehicle) throw new Error("Không tìm thấy phương tiện");
+        if (!vehicle) throw new Error("Không tìm thấy phương tiện");
 
-  const buildingId = vehicle.tenant.building_id;
+        const buildingId = vehicle.tenant.building_id;
 
-  if (!buildingId) throw new Error("Không tìm thấy tòa nhà của người thuê");
-  return prisma.parking_slots.findMany({
-    where: {
-      building_id: buildingId,
-      slot_type: vehicle.registration.vehicle_type,
-      is_available: true
-    },
-    orderBy: { slot_number: "asc" }
-  });
-}
+        if (!buildingId) throw new Error("Không tìm thấy tòa nhà của người thuê");
+        return prisma.parking_slots.findMany({
+            where: {
+                building_id: buildingId,
+                slot_type: vehicle.registration.vehicle_type,
+                is_available: true
+            },
+            orderBy: { slot_number: "asc" }
+        });
+    }
 
 }
 

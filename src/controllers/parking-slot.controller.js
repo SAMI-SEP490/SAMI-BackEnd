@@ -24,7 +24,10 @@ class ParkingSlotController {
     // =========================
     async getParkingSlots(req, res, next) {
         try {
-            const slots = await parkingSlotService.getParkingSlots(req.query);
+            const slots = await parkingSlotService.getParkingSlots(
+                req.query,
+                req.user
+            );
 
             res.json({
                 success: true,
@@ -35,66 +38,66 @@ class ParkingSlotController {
         }
     }
 
-  // GET buildings for parking slot page
-  async getBuildingsForParking(req, res, next) {
-    try {
-      const buildings = await parkingSlotService.getBuildingsForParking(req.user);
+    // GET buildings for parking slot page
+    async getBuildingsForParking(req, res, next) {
+        try {
+            const buildings = await parkingSlotService.getBuildingsForParking(req.user);
 
-      res.json({
-        success: true,
-        data: buildings
-      });
-    } catch (err) {
-        console.log("REQ USER:", req.user);
-      next(err);
+            res.json({
+                success: true,
+                data: buildings
+            });
+        } catch (err) {
+            console.log("REQ USER:", req.user);
+            next(err);
+        }
     }
-  }
 
     // =========================
     // READ - AVAILABLE
     // =========================
     async getAvailableParkingSlotForRegistration(req, res, next) {
-    try {
-        const { registration_id } = req.query;
+        try {
+            const { registration_id } = req.query;
 
-        if (!registration_id) {
-            throw new Error("registration_id is required");
+            if (!registration_id) {
+                throw new Error("registration_id is required");
+            }
+
+            const slots = await parkingSlotService.getAvailableSlotForRegistration(
+                registration_id
+            );
+
+            res.json({
+                success: true,
+                data: { slots }
+            });
+        } catch (err) {
+            next(err);
         }
-
-        const slots = await parkingSlotService.getAvailableSlotForRegistration(
-            registration_id
-        );
-
-        res.json({
-            success: true,
-            data: { slots }
-        });
-    } catch (err) {
-        next(err);
     }
-}
-async getAvailableSlotsForVehicle(req, res, next) {
-    try {
-        const { vehicle_id } = req.query;
+    async getAvailableSlotsForVehicle(req, res, next) {
+        try {
+            const { vehicle_id } = req.query;
 
-        if (!vehicle_id) {
-            throw new Error("vehicle_id is required");
+            if (!vehicle_id) {
+                throw new Error("vehicle_id is required");
+            }
+
+            const slots = await parkingSlotService.getAvailableSlotsForVehicle(
+                Number(vehicle_id),
+                req.user.user_id,
+                req.user.role
+            );
+
+            res.json({
+                success: true,
+                data: { slots }
+            });
+        } catch (err) {
+            next(err);
         }
-
-        const slots = await parkingSlotService.getAvailableSlotsForVehicle(
-            Number(vehicle_id),
-            req.user.user_id,
-            req.user.role
-        );
-
-        res.json({
-            success: true,
-            data: { slots }
-        });
-    } catch (err) {
-        next(err);
     }
-}
     // =========================
     // READ - BY ID
     // =========================
