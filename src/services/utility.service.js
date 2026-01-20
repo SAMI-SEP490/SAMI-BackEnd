@@ -2,6 +2,7 @@
 // Updated: 2026-01-20
 
 const prisma = require("../config/prisma");
+const { getVietnamDay } = require('../utils/datevn');
 
 class UtilityService {
   /**
@@ -91,7 +92,7 @@ class UtilityService {
     const { building_id, billing_month, billing_year, readings } = data;
 
     // DATE VALIDATION CHECKS
-    const today = new Date();
+    const today = getVietnamDay();
     const currentMonth = today.getMonth() + 1; // 1-12
     const currentYear = today.getFullYear();
 
@@ -104,7 +105,7 @@ class UtilityService {
     // 2. Prevent Ancient History (Optional - e.g., > 3 months ago)
     // This prevents accidental edits to closed accounting periods
     const recordDate = new Date(billing_year, billing_month - 1);
-    const threeMonthsAgo = new Date();
+    const threeMonthsAgo = new Date(today);
     threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
     if (recordDate < threeMonthsAgo) {
@@ -199,13 +200,13 @@ class UtilityService {
             electric_price: electricPrice,
             water_price: waterPrice,
             created_by: userId,
-            recorded_date: new Date(),
+            recorded_date: getVietnamDay(),
           },
           create: {
             room_id: item.room_id,
             billing_month,
             billing_year,
-            recorded_date: new Date(),
+            recorded_date: getVietnamDay(),
             prev_electric: prevElectric,
             curr_electric: item.new_electric,
             prev_water: prevWater,

@@ -5,6 +5,7 @@
 const prisma = require('../config/prisma');
 const crypto = require('crypto');
 const NotificationService = require('./notification.service');
+const { getVietnamDay } = require('../utils/datevn');
 
 // Helper: Generate unique bill number (e.g., B-RNT-202601-1234AB)
 function generateBillNumber(year, month, type) {
@@ -26,7 +27,7 @@ class BillService {
    * Checks for bills that need to be created 10 days from now.
    */
   async autoCreateMonthlyBills() {
-    const today = new Date();
+    const today = getVietnamDay();
     // Normalize today to start of day for comparison
     today.setHours(0, 0, 0, 0);
 
@@ -89,7 +90,7 @@ class BillService {
 
     // --- B. UTILITY BILLS ---
     // (This part remains unchanged from previous step, assuming it's working)
-    const currentDayOfMonth = new Date().getDate(); // Use actual current day for closing check
+    const currentDayOfMonth = getVietnamDay().getDate(); // Use actual current day for closing check
     const buildingsDue = await prisma.buildings.findMany({
       where: { is_active: true, bill_closing_day: currentDayOfMonth }
     });
@@ -135,7 +136,7 @@ class BillService {
     // 2. Check if this date is "Due" (i.e., today or in the past)
     // We allow generating bills up to 3 days early if needed, or strictly on/after date.
     // User said "refresh bill on 1/2 is still possible" -> implies we catch up on past dates.
-    const today = new Date();
+    const today = getVietnamDay();
     today.setHours(23, 59, 59, 999); // Compare against end of today
 
     if (nextStart <= today) {
@@ -151,7 +152,7 @@ class BillService {
   async _processUtilityBillsForBuilding(building, dueDate) {
     // Current "Period" logic:
     // If today is the Closing Day (e.g. Jan 25), we are billing for Jan.
-    const today = new Date();
+    const today = getVietnamDay();
     const billingMonth = today.getMonth() + 1; // 1-12
     const billingYear = today.getFullYear();
 
@@ -414,8 +415,8 @@ class BillService {
     }
 
     const billNumber = generateBillNumber(
-      new Date().getFullYear(),
-      new Date().getMonth() + 1,
+      getVietnamDay().getFullYear(),
+      getVietnamDay().getMonth() + 1,
       data.bill_type
     );
 
@@ -477,7 +478,7 @@ class BillService {
 
     // --- CASE B: STANDARD UPDATE/PUBLISH (Other) ---
     const { service_charges, ...mainData } = data;
-    let updateData = { ...mainData, updated_at: new Date() };
+    let updateData = { ...mainData, updated_at: getVietnamDay() };
 
     if (data.status === "issued") {
       const finalData = { ...originalDraft, ...data };
@@ -668,8 +669,8 @@ class BillService {
       // Calculate total once
       const totalAmount = service_charges.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
 
-      const periodStart = new Date(); // Use current time as reference
-      const periodEnd = new Date();
+      const periodStart = getVietnamDay(); // Use current time as reference
+      const periodEnd = getVietnamDay();
 
       for (const room of rooms) {
         try {
@@ -714,7 +715,7 @@ class BillService {
   // ==========================================
 
   async scanAndMarkOverdueBills() {
-    const today = new Date();
+    const today = getVietnamDay();
     today.setHours(0, 0, 0, 0);
 
     const result = await prisma.bills.updateMany({
@@ -725,7 +726,7 @@ class BillService {
       },
       data: {
         status: 'overdue',
-        updated_at: new Date()
+        updated_at: getVietnamDay()
       }
     });
     return result.count;
@@ -759,7 +760,7 @@ class BillService {
         penalty_amount: currentPenalty + additionalPenalty,
         // Add note about extension to description
         description: `${bill.description || ''} (Gia hạn ${DAYS_TO_ADD} ngày)`.trim(),
-        updated_at: new Date()
+        updated_at: getVietnamDay()
       }
     });
   }
@@ -1074,12 +1075,12 @@ class BillService {
 
     if (bill.status === "draft") {
       // Soft delete draft
-      return prisma.bills.update({ where: { bill_id: billId }, data: { deleted_at: new Date() } });
+      return prisma.bills.update({ where: { bill_id: billId }, data: { deleted_at: getVietnamDay() } });
     } else if (["issued", "overdue"].includes(bill.status)) {
       // Soft cancel issued
       return prisma.bills.update({
         where: { bill_id: billId },
-        data: { status: "cancelled", updated_at: new Date(), deleted_at: new Date() },
+        data: { status: "cancelled", updated_at: getVietnamDay(), deleted_at: getVietnamDay() },
       });
     } else {
       throw new Error(`Cannot delete/cancel bill with status: ${bill.status}`);
@@ -1128,9 +1129,9 @@ class BillService {
      * Scans for bills due in 1 or 2 days and sends push reminders.
      */
   async scanAndSendReminders() {
-    console.log(`[BillReminder] Starting scan at ${new Date().toISOString()}...`);
+    console.log(`[BillReminder] Starting scan at ${getVietnamDay().toISOString()}...`);
 
-    const today = new Date();
+    const today = getVietnamDay();
 
     // Define the window: Tomorrow (1 day out) and Day After (2 days out)
     const tomorrow = new Date(today);
