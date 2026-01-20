@@ -1047,7 +1047,6 @@ class BuildingService {
         full_name: true,
         gender: true,
         phone: true,
-        email: true,
         avatar_url: true,
       },
     });
@@ -1071,7 +1070,6 @@ class BuildingService {
               full_name: true,
               gender: true,
               phone: true,
-              email: true,
               avatar_url: true,
             },
           },
@@ -1083,7 +1081,6 @@ class BuildingService {
         full_name: m.user.full_name,
         gender: m.user.gender,
         phone: m.user.phone,
-        email: m.user.email,
         avatar_url: m.user.avatar_url,
         role: "MANAGER",
       }));
