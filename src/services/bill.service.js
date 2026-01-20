@@ -984,6 +984,29 @@ class BillService {
     }));
   }
 
+  async calculatePenalty(billId) {
+    const bill = await prisma.bills.findUnique({
+      where: { bill_id: billId },
+      include: { contract: true }
+    });
+
+    if (!bill) throw new Error("Bill not found");
+
+    // Get rate from contract (e.g., 5.00 for 5%)
+    const penaltyRate = Number(bill.contract?.penalty_rate || 0);
+    const totalAmount = Number(bill.total_amount);
+
+    // Formula: Amount * (Rate / 100)
+    const penaltyAmount = totalAmount * (penaltyRate / 100);
+
+    return {
+      bill_id: bill.bill_id,
+      total_amount: totalAmount,
+      penalty_rate_percent: penaltyRate,
+      calculated_penalty: penaltyAmount
+    };
+  }
+
   async deleteOrCancelBill(billId) {
     const bill = await prisma.bills.findUnique({
       where: { bill_id: billId },
