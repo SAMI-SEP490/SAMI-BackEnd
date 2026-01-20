@@ -9,25 +9,31 @@ class UserService {
    * SYNCHRONOUS helper to get the correct note from a user object
    */
   _determineNoteFromUserObject(user) {
-    if (!user) return null;
-    if (user.building_owner) return user.building_owner.notes;
-    if (user.building_managers) return user.building_managers.note;
-    if (user.tenants) return user.tenants.note;
-    return null;
+  if (!user) return null;
+
+  // OWNER (nếu có)
+  if (user.building_owner) return user.building_owner.notes ?? null;
+
+  // MANAGER: building_managers có thể là array
+  if (Array.isArray(user.building_managers)) {
+    if (user.building_managers.length > 0) {
+      return user.building_managers[0]?.note ?? null;
+    }
+  } else if (user.building_managers) {
+    return user.building_managers.note ?? null;
   }
 
-  /**
-   * ASYNC helper to get a user's role string by ID.
-   */
-  async _getUserRole(userId) {
-    const user = await prisma.users.findUnique({
-      where: { user_id: userId },
-      select: { role: true },
-    });
-    if (!user) return null;
-    return user.role;
+  // TENANT: tenants có thể là object hoặc array tùy schema
+  if (Array.isArray(user.tenants)) {
+    if (user.tenants.length > 0) {
+      return user.tenants[0]?.note ?? null;
+    }
+  } else if (user.tenants) {
+    return user.tenants.note ?? null;
   }
 
+  return null;
+}
   /**
    * Retrieves a list of all users (excluding OWNER).
    */
