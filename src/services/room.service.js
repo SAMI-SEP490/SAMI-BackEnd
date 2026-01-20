@@ -728,8 +728,8 @@ class RoomService {
     }
 
     if (!room.building?.is_active) {
-  throw new Error("Cannot activate room in inactive building");
-}
+      throw new Error("Cannot activate room in inactive building");
+    }
 
     // Tính status động khi activate
     const dynamicStatus = await this.calculateRoomStatus(roomId);
@@ -1006,21 +1006,15 @@ class RoomService {
     const moveInDay = toStartOfDay(moveInDate);
     const startDay = toStartOfDay(contractStart);
 
-    // endMinus1Month = end_date - 1 tháng (giữ ngày tương đối)
-    const endMinus1Month = new Date(contractEnd);
-    endMinus1Month.setMonth(endMinus1Month.getMonth() - 1);
-    const endMinus1MonthDay = toStartOfDay(endMinus1Month);
+    const endDay = toStartOfDay(contractEnd);
 
-    // Điều kiện: moved_in_at phải SAU ngày bắt đầu HĐ (strict >)
-    if (moveInDay <= startDay) {
-      throw new Error("Ngày đến phải sau ngày bắt đầu hợp đồng");
+    // ✅ moved_in_at phải nằm trong [start_date, end_date]
+    if (moveInDay < startDay) {
+      throw new Error("Ngày đến phải từ ngày bắt đầu hợp đồng trở đi");
     }
 
-    // Điều kiện: moved_in_at phải TRƯỚC ngày kết thúc hợp đồng ít nhất 1 tháng
-    if (moveInDay > endMinus1MonthDay) {
-      throw new Error(
-        "Ngày đến phải trước ngày kết thúc hợp đồng ít nhất 1 tháng",
-      );
+    if (moveInDay > endDay) {
+      throw new Error("Ngày đến không được sau ngày kết thúc hợp đồng");
     }
 
     // 3️⃣ Kiểm tra tenant tồn tại
