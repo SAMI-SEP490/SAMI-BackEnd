@@ -307,7 +307,7 @@ model buildings {
   electric_unit_price Decimal?  @db.Decimal(12, 2)
   water_unit_price    Decimal?  @db.Decimal(12, 2)
   service_fee         Decimal?  @db.Decimal(12, 2)
-  bill_closing_day    Int?      // The cut-off date (1-28)
+  bill_closing_day    Int? // The cut-off date (1-28)
   max_4_wheel_slot    Int? // số xe 4 bánh tối đa
   max_2_wheel_slot    Int? // số xe 2 bánh tối đa
   is_active           Boolean?  @default(true)
@@ -385,7 +385,6 @@ model room_tenants {
   @@index([room_id], map: "idx_room_tenants_room")
   @@index([tenant_user_id], map: "idx_room_tenants_tenant")
   @@index([room_id, tenant_type, is_current], map: "idx_room_tenants_type_current")
-  @@unique([tenant_user_id, tenant_type, is_current], map: "uniq_tenant_type_current")
 }
 
 // ============================================
@@ -907,14 +906,14 @@ model utility_readings {
   billing_month Int
   billing_year  Int
 
-  prev_electric  Int // Chỉ số điện cũ
-  curr_electric  Int // Chỉ số điện mới
-  electric_price Decimal @db.Decimal(12, 2) // Giá điện áp dụng tại lúc chốt
+  prev_electric     Int // Chỉ số điện cũ
+  curr_electric     Int // Chỉ số điện mới
+  electric_price    Decimal @db.Decimal(12, 2) // Giá điện áp dụng tại lúc chốt
   is_electric_reset Boolean @default(false) // Reset nếu thay công tơ
 
-  prev_water  Int // Chỉ số nước cũ
-  curr_water  Int // Chỉ số nước mới
-  water_price Decimal @db.Decimal(12, 2) // Giá nước áp dụng tại lúc chốt
+  prev_water     Int // Chỉ số nước cũ
+  curr_water     Int // Chỉ số nước mới
+  water_price    Decimal @db.Decimal(12, 2) // Giá nước áp dụng tại lúc chốt
   is_water_reset Boolean @default(false) // Reset nếu thay công tơ
 
   created_by Int? // Người ghi số (quản lý)

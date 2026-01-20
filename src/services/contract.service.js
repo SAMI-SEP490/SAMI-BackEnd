@@ -529,7 +529,7 @@ class ContractService {
         // Close previous tenant history
         await tx.room_tenants.updateMany({
           where: {
-            room_id: contract.room_id,
+            room_id: contract.room_id,      // <--- BẮT BUỘC THÊM DÒNG NÀY
             tenant_user_id: contract.tenant_user_id,
             is_current: true,
           },
