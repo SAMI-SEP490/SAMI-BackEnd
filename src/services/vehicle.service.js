@@ -411,9 +411,21 @@ class VehicleRegistrationService {
         const registrations = await prisma.vehicle_registrations.findMany({
             where,
             orderBy: { requested_at: "desc" },
-            include: {
+            select: {
+                registration_id: true,
+                vehicle_type: true,
+                license_plate: true,
+                brand: true,
+                color: true,
+                start_date: true,
+                end_date: true,
+                status: true,
+                requested_at: true,
+                reason: true,
+                note: true, // ✅ note của registration
+
                 requester: {
-                    include: {
+                    select: {
                         user: {
                             select: {
                                 user_id: true,
@@ -430,10 +442,17 @@ class VehicleRegistrationService {
                         }
                     }
                 },
+
                 vehicle: {
-                    include: {
+                    select: {
+                        vehicle_id: true,
+                        status: true,
+                        note: true, // ✅ note của vehicle
                         slot: {
-                            include: {
+                            select: {
+                                slot_id: true,
+                                slot_number: true,
+                                slot_type: true,
                                 building: {
                                     select: {
                                         building_id: true,
@@ -446,7 +465,6 @@ class VehicleRegistrationService {
                 }
             }
         });
-
         return {
             registrations
         };
