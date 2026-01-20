@@ -158,7 +158,7 @@ class AuthService {
   }
 
   async login(email, password) {
-    // Find user by email or phone
+    // 1. Tìm user
     const user = await prisma.users.findFirst({
       where: {
         OR: [{ email }],
@@ -178,41 +178,65 @@ class AuthService {
     // Verify password
     const isValidPassword = await comparePassword(password, user.password_hash);
 
-    if (!isSecondary) {
-      // --- [LOGIC MỚI: HỖ TRỢ ĐA HỢP ĐỒNG] ---
+    if (!isValidPassword) {
+      throw new Error("Invalid credentials");
+    }
 
-      // Định nghĩa các trạng thái "ĐƯỢC PHÉP VÀO APP"
-      // (Bao gồm cả Pending để user còn vào ký hợp đồng)
-      const allowedStatuses = [
-        "active",
-        "pending",
-        "pending_transaction",
-        "requested_termination"
-      ];
-
-      // Tìm xem user có BẤT KỲ hợp đồng nào đang "sống" không?
-      const hasValidContract = await prisma.contracts.findFirst({
+    // ============================================================
+    // LOGIC KIỂM TRA QUYỀN TRUY CẬP (Hỗ trợ nhiều hợp đồng)
+    // ============================================================
+    if (user.role === "TENANT" || user.role === "USER") {
+      // 1. Kiểm tra xem có đang ở ghép (Secondary) không?
+      // (Khai báo biến isSecondary TẠI ĐÂY để tránh lỗi ReferenceError)
+      const isSecondary = await prisma.room_tenants.findFirst({
         where: {
           tenant_user_id: user.user_id,
-          status: { in: allowedStatuses }, // Chỉ cần 1 cái nằm trong nhóm này là OK
-          deleted_at: null,
+          tenant_type: "secondary",
+          is_current: true, // Chỉ tính khi đang ở
         },
       });
 
-      if (!hasValidContract) {
-        // Nếu không có hợp đồng hợp lệ, kiểm tra xem có hợp đồng nào không (để báo lỗi chính xác)
-        const anyContract = await prisma.contracts.findFirst({
-          where: { tenant_user_id: user.user_id, deleted_at: null },
+      // 2. Nếu không phải ở ghép, kiểm tra danh sách hợp đồng chính chủ
+      if (!isSecondary) {
+        // Các trạng thái được coi là "Hợp lệ" để vào App
+        // - active: Đang ở
+        // - pending: Cần vào để ký hợp đồng
+        // - pending_transaction: Đang nợ tiền/chờ xử lý
+        // - requested_termination: Đang chờ hủy
+        const allowedStatuses = [
+          "active",
+          "pending",
+          "pending_transaction",
+          "requested_termination"
+        ];
+
+        // Kiểm tra xem user có ÍT NHẤT MỘT hợp đồng nằm trong nhóm trên không
+        const hasValidContract = await prisma.contracts.findFirst({
+          where: {
+            tenant_user_id: user.user_id,
+            status: { in: allowedStatuses },
+            deleted_at: null,
+          },
         });
 
-        if (!anyContract) {
-          throw new Error("Bạn chưa có hợp đồng thuê phòng nào.");
-        } else {
-          // Có hợp đồng nhưng toàn là Rejected/Terminated/Expired
-          throw new Error("Tất cả hợp đồng của bạn đã kết thúc hoặc bị từ chối. Vui lòng liên hệ quản lý.");
+        // Nếu KHÔNG có bất kỳ hợp đồng hợp lệ nào -> Chặn đăng nhập
+        if (!hasValidContract) {
+          // Kiểm tra xem có hợp đồng nào trong quá khứ không (để báo lỗi chính xác)
+          const anyContract = await prisma.contracts.findFirst({
+            where: { tenant_user_id: user.user_id, deleted_at: null },
+          });
+
+          if (!anyContract) {
+            throw new Error("Bạn chưa có hợp đồng thuê phòng nào.");
+          } else {
+            // Có hợp đồng nhưng toàn là Rejected/Terminated/Expired
+            throw new Error("Tất cả hợp đồng của bạn đã kết thúc hoặc bị từ chối. Vui lòng liên hệ quản lý.");
+          }
         }
       }
     }
+    // ============================================================
+
     if (!user.is_verified) {
       // Generate OTP
       const otp = this.generateOTP();
@@ -235,7 +259,6 @@ class AuthService {
     // User is already verified, proceed with normal login
     return this.generateLoginResponse(user);
   }
-
   async verifyOTP(userId, otp) {
     // Get OTP from Redis
     const otpKey = `otp:${userId}`;
