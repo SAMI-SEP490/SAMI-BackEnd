@@ -198,6 +198,18 @@ class BillController {
             next(err);
         }
     }
+
+    // GET /api/bills/:id/penalty-calc
+    async getPenaltyCalculation(req, res, next) {
+        try {
+            const billId = parseInt(req.params.id, 10);
+            if (isNaN(billId)) return res.status(400).json({ success: false, message: "Invalid Bill ID" });
+
+            const data = await BillService.calculatePenalty(billId);
+            res.status(200).json({ success: true, data });
+        } catch (err) { next(err); }
+    }
+
 }
 
 module.exports = new BillController();

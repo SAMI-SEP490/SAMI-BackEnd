@@ -57,6 +57,9 @@ router.get('/detail/:id', billController.getBillById);
 // Query: ?period_start=2026-01-01
 router.get('/unbilled-rooms', billController.getUnbilledRooms);
 
+// Calculate penalty before extending (Frontend calls this to show preview)
+router.get('/penalty-calc/:id', billController.getPenaltyCalculation);
+
 // --- TẠO MỚI (CREATE) ---
 
 // Tạo hóa đơn Nháp (Chưa gửi cho khách, có thể sửa thoải mái)

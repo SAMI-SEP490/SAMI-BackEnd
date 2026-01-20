@@ -27,17 +27,17 @@ class BillService {
    */
   async autoCreateMonthlyBills() {
     const today = new Date();
-    const currentDayOfMonth = today.getDate();
+    // Normalize today to start of day for comparison
+    today.setHours(0, 0, 0, 0);
 
-    // PAYMENT DEADLINE LOGIC:
-    // Created Today -> Due in 10 Days (Configurable)
+    // Default Deadline: 10 days from creation
     const paymentDeadline = new Date(today);
     paymentDeadline.setDate(today.getDate() + 10);
 
-    console.log(`[AutoBill] --- Starting Scan for Day ${currentDayOfMonth} ---`);
+    console.log(`[AutoBill] --- Starting Scan for ${today.toLocaleDateString('vi-VN')} ---`);
 
-    // A. RENT BILLS (Based on Contract Start Day)
-    // Only fetch ACTIVE contracts
+    // --- A. RENT BILLS ---
+    // Fetch active contracts with ALL necessary fields
     const activeContracts = await prisma.contracts.findMany({
       where: {
         status: 'active',
@@ -50,30 +50,39 @@ class BillService {
     let rentSkipped = 0;
 
     for (const contract of activeContracts) {
-      if (this._shouldCreateRentBill(contract, today)) {
-        try {
-          // Attempt to create bill
-          await this.createRentBill({
-            contract_id: contract.contract_id,
-            tenant_user_id: contract.tenant_user_id,
-            amount: contract.rent_amount,
-            periodStart: today,
-            dueDate: paymentDeadline,
-            cycleMonths: contract.payment_cycle_months
-          });
-          
-          console.log(`[AutoBill] ✅ Created Rent Bill for Contract ${contract.contract_number}`);
-          rentCount++;
+      try {
+        // [LOGIC] Determine the next billing period start date
+        // This ensures we stick to the contract's timeline (e.g. 31st), not the "run date" (1st)
+        const targetDate = await this._calculateNextRentDate(contract);
 
-        } catch (error) {
-          // [LOGGING] Check if it's our specific "Overlap" error
-          if (error.statusCode === 409) {
-            console.log(`[AutoBill] ⏭️ SKIPPED Rent for Contract ${contract.contract_number}: Manual bill already exists for this period.`);
-            rentSkipped++;
-          } else {
-            // Real error, log it but don't stop the loop
-            console.error(`[AutoBill] ❌ ERROR creating Rent for Contract ${contract.contract_number}:`, error.message);
-          }
+        // If no target date found (e.g., future) or contract expired, skip
+        if (!targetDate) continue;
+
+        const contractEnd = new Date(contract.end_date);
+        if (targetDate > contractEnd) {
+          console.log(`[AutoBill] 🛑 Contract ${contract.contract_number} expired. Stopping rent bills.`);
+          continue;
+        }
+
+        // Create the bill
+        await this.createRentBill({
+          contract_id: contract.contract_id,
+          tenant_user_id: contract.tenant_user_id,
+          amount: contract.rent_amount,
+          periodStart: targetDate,
+          dueDate: paymentDeadline,
+          cycleMonths: contract.payment_cycle_months || 1 // [DEBUG] Fallback Logged inside
+        });
+
+        console.log(`[AutoBill] ✅ Created Rent Bill for Contract ${contract.contract_number} (Start: ${targetDate.toLocaleDateString()})`);
+        rentCount++;
+
+      } catch (error) {
+        if (error.statusCode === 409) {
+          // Not an error, just means we are up to date
+          rentSkipped++;
+        } else {
+          console.error(`[AutoBill] ❌ ERROR Rent for Contract ${contract.contract_number}:`, error.message);
         }
       }
     }
@@ -104,26 +113,42 @@ class BillService {
   }
 
   /**
-   * Helper: Logic to check if Rent should be generated TODAY
+   * Helper: Logic to find the correct "Anniversary Date"
    */
-  _shouldCreateRentBill(contract, today) {
-    const start = new Date(contract.start_date);
+  async _calculateNextRentDate(contract) {
+    // 1. Find the latest rent bill created for this contract
+    const lastBill = await prisma.bills.findFirst({
+      where: {
+        contract_id: contract.contract_id,
+        bill_type: 'monthly_rent',
+        status: { not: 'cancelled' }
+      },
+      orderBy: { billing_period_end: 'desc' }
+    });
 
-    // 1. Day Match: Contract starts on 5th, Today is 5th?
-    if (start.getDate() !== today.getDate()) return false;
+    let nextStart;
 
-    // 2. Cycle Match: Handle quarterly/yearly payment cycles
-    const monthsPassed =
-      (today.getFullYear() - start.getFullYear()) * 12 +
-      (today.getMonth() - start.getMonth());
+    if (lastBill) {
+      // If bill exists, next period starts the day after the last one ended
+      const lastEnd = new Date(lastBill.billing_period_end);
+      nextStart = new Date(lastEnd);
+      nextStart.setDate(nextStart.getDate() + 1);
+    } else {
+      // First bill: Start on Contract Start Date
+      nextStart = new Date(contract.start_date);
+    }
 
-    const cycle = contract.payment_cycle_months || 1;
+    // 2. Check if this date is "Due" (i.e., today or in the past)
+    // We allow generating bills up to 3 days early if needed, or strictly on/after date.
+    // User said "refresh bill on 1/2 is still possible" -> implies we catch up on past dates.
+    const today = new Date();
+    today.setHours(23, 59, 59, 999); // Compare against end of today
 
-    // Example: Started Jan 1st. Cycle = 3 months.
-    // Jan 1st (0 months) -> True
-    // Feb 1st (1 month) -> False
-    // Apr 1st (3 months) -> True
-    return monthsPassed >= 0 && monthsPassed % cycle === 0;
+    if (nextStart <= today) {
+      return nextStart;
+    }
+
+    return null; // Not due yet
   }
 
   /**
@@ -161,9 +186,11 @@ class BillService {
         }
 
         try {
-          await this.createUtilityBill(room, building, reading, dueDate);
-          console.log(`[AutoBill] ✅ Created Utility Bill for Room ${room.room_number}`);
-          created++;
+          const bill = await this.createUtilityBill(room, building, reading, dueDate);
+          if (bill) { // Check if bill was actually created
+            console.log(`[AutoBill] ✅ Created Utility Bill for Room ${room.room_number}`);
+            created++;
+          }
         } catch (error) {
           if (error.statusCode === 409) {
             console.log(`[AutoBill] ⏭️ SKIPPED Utility for Room ${room.room_number}: Bill exists.`);
@@ -181,21 +208,35 @@ class BillService {
   // ==========================================
 
   // Used by Cron
-  async createRentBill({ contract_id, tenant_user_id, amount, periodStart, dueDate, cycleMonths = 1 }) {
-    const contract = await prisma.contracts.findUnique({ where: { contract_id }, select: { rent_amount: true, room_id: true } });
-
-    // Rent Cap Check
-    if (Number(amount) > Number(contract.rent_amount)) throw new Error(`Bill amount exceeds contract rent`);
-
-    // Validation 2: Date Check [NEW]
-    if (new Date(periodStart) < new Date(contract.start_date)) {
-      throw new Error(`Cannot create bill before contract start date (${contract.start_date.toISOString().split('T')[0]})`);
+  async createRentBill({ contract_id, tenant_user_id, amount, periodStart, dueDate, cycleMonths }) {
+    // [DEBUG] Check cycle
+    if (!cycleMonths) {
+      console.warn(`[BillService] ⚠️ Warning: cycleMonths missing for Contract ${contract_id}, defaulting to 1.`);
+      cycleMonths = 1;
     }
 
+    const contract = await prisma.contracts.findUnique({ where: { contract_id } });
+
+    // Amount Check
+    if (Number(amount) > Number(contract.rent_amount)) throw new Error(`Bill amount exceeds contract rent`);
+
+    // Date Logic: periodStart is passed in from _calculateNextRentDate, so it is trusted.
+    // Just ensure it's not before contract start (safety net)
+    if (new Date(periodStart) < new Date(contract.start_date)) {
+      // This might happen if DB is messy, fix it to start_date
+      console.warn("[BillService] Adjusted periodStart to contract start date");
+      periodStart = new Date(contract.start_date);
+    }
+
+    // Calculate End Date: Start + Cycle Months
     const periodEnd = new Date(periodStart);
     periodEnd.setMonth(periodEnd.getMonth() + cycleMonths);
+    // Standardize: If start is Jan 31, +1 month -> Feb 28/29.
+    // Subtract 1 day to make it disjoint? Usually "Jan 1 to Jan 31".
+    // So if Start is Jan 1, +1 Month is Feb 1. End should be Jan 31.
+    periodEnd.setDate(periodEnd.getDate() - 1);
 
-    // [IMPORTANT] Overlap Check
+    // Overlap Check
     await this._checkBillOverlap(contract.room_id, periodStart, periodEnd, null, 'monthly_rent');
 
     const billNumber = generateBillNumber(periodStart.getFullYear(), periodStart.getMonth() + 1, 'monthly_rent');
@@ -208,10 +249,10 @@ class BillService {
         bill_type: 'monthly_rent',
         billing_period_start: periodStart,
         billing_period_end: periodEnd,
-        due_date: dueDate, // Now passed in (Today + 10 days)
+        due_date: dueDate,
         total_amount: amount,
         status: 'issued',
-        description: `Tiền thuê phòng ${cycleMonths} tháng (Từ ${periodStart.toLocaleDateString('vi-VN')})`,
+        description: `Tiền thuê phòng ${cycleMonths} tháng (Từ ${periodStart.toLocaleDateString('vi-VN')} đến ${periodEnd.toLocaleDateString('vi-VN')})`,
         service_charges: {
           create: [{
             service_type: 'Tiền thuê phòng',
@@ -252,28 +293,46 @@ class BillService {
 
     if (contractStart && contractStart > periodStart && contractStart <= periodEnd) {
       periodStart = contractStart;
-      console.log(`[BillLogic] Adjusted Start: ${periodStartCalc.toISOString().split('T')[0]} -> ${periodStart.toISOString().split('T')[0]}`);
+      console.log(`[BillLogic] Adjusted Start for Room ${room.room_number}: ${periodStartCalc.toISOString().split('T')[0]} -> ${periodStart.toISOString().split('T')[0]}`);
     }
 
-    // Costs
-    // Handle Reset Logic for Costs:
-    // If reset, logic is: New Reading - 0 (or overridden prev).
-    // If normal, logic is: New Reading - Old Reading.
-    // The DB already stores the correct 'prev' value based on the logic in utility.service.js, so we just subtract.
+    // --- FAIR BILLING LOGIC ---
 
+    // 1. Calculate Duration (Days)
+    const diffTime = Math.abs(periodEnd - periodStart);
+    const billableDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // Include start day
+
+    // 2. Determine Service Fee
+    // Rule: Only charge service fee if stay is >= 20 days
+    let serviceFee = Number(building.service_fee || 0);
+
+    if (billableDays < 20) {
+      console.log(`[BillLogic] Waiving Service Fee for Room ${room.room_number} (Only ${billableDays} days).`);
+      serviceFee = 0;
+    }
+
+    // 3. Calculate Utility Usage
     const electricUsed = reading.curr_electric - reading.prev_electric;
     const waterUsed = reading.curr_water - reading.prev_water;
 
-    // Safety check again (should be caught before calling this, but safe)
+    // Safety check again
     if (electricUsed < 0 || waterUsed < 0) {
       throw new Error(`Negative usage detected (E: ${electricUsed}, W: ${waterUsed}). Check meter readings.`);
     }
 
+    // 4. Zero Bill Skip Logic
+    // If no utilities used AND no service fee -> Skip creating bill
+    if (electricUsed === 0 && waterUsed === 0 && serviceFee === 0) {
+      console.log(`[BillLogic] Skipping Zero Bill for Room ${room.room_number} (No usage, No service fee).`);
+      return null; // Return null to indicate no bill created
+    }
+
+    // 5. Calculate Final Costs
     const electricCost = electricUsed * Number(reading.electric_price);
     const waterCost = waterUsed * Number(reading.water_price);
-    const serviceFee = Number(building.service_fee || 0);
     const totalAmount = electricCost + waterCost + serviceFee;
 
+    // 6. Overlap Check
     await this._checkBillOverlap(room.room_id, periodStart, periodEnd, null, 'utilities');
 
     const billNumber = generateBillNumber(reading.billing_year, reading.billing_month, 'utilities');
@@ -290,13 +349,14 @@ class BillService {
           due_date: due_date,
           total_amount: totalAmount,
           status: 'issued',
-          description: `Điện nước kỳ ${reading.billing_month}/${reading.billing_year}`,
+          description: `Điện nước kỳ ${reading.billing_month}/${reading.billing_year} (${billableDays} ngày)`,
           created_by: created_by || null,
           service_charges: {
             create: [
               { service_type: 'Điện', quantity: electricUsed, unit_price: reading.electric_price, amount: electricCost, description: `${reading.prev_electric} - ${reading.curr_electric}` },
               { service_type: 'Nước', quantity: waterUsed, unit_price: reading.water_price, amount: waterCost, description: `${reading.prev_water} - ${reading.curr_water}` },
-              { service_type: 'Dịch vụ chung', quantity: 1, unit_price: serviceFee, amount: serviceFee, description: 'Vệ sinh, thang máy, rác' }
+              // Only add service fee line item if it's > 0
+              ...(serviceFee > 0 ? [{ service_type: 'Dịch vụ chung', quantity: 1, unit_price: serviceFee, amount: serviceFee, description: 'Vệ sinh, thang máy, rác' }] : [])
             ]
           },
           utilityReadings: {
@@ -589,10 +649,12 @@ class BillService {
           // We need to fetch the building config for service_fee
           const building = await prisma.buildings.findUnique({ where: { building_id: buildingId } });
 
-          await this.createUtilityBill(room, building, reading, new Date(due_date), createdByUserId);
-
-          results.success++;
-          results.details.push({ room: room.room_number, status: 'created' });
+          if (bill) {
+            results.success++;
+            results.details.push({ room: room.room_number, status: 'created' });
+          } else {
+            results.details.push({ room: room.room_number, status: 'skipped', reason: 'Zero usage & short stay' });
+          }
 
         } catch (err) {
           console.error(`Bulk Utility Error Room ${room.room_number}:`, err);
@@ -982,6 +1044,29 @@ class BillService {
       floor: r.floor,
       tenant_name: r.current_contract?.tenant?.user?.full_name || "Unknown"
     }));
+  }
+
+  async calculatePenalty(billId) {
+    const bill = await prisma.bills.findUnique({
+      where: { bill_id: billId },
+      include: { contract: true }
+    });
+
+    if (!bill) throw new Error("Bill not found");
+
+    // Get rate from contract (e.g., 5.00 for 5%)
+    const penaltyRate = Number(bill.contract?.penalty_rate || 0);
+    const totalAmount = Number(bill.total_amount);
+
+    // Formula: Amount * (Rate / 100)
+    const penaltyAmount = totalAmount * (penaltyRate / 100);
+
+    return {
+      bill_id: bill.bill_id,
+      total_amount: totalAmount,
+      penalty_rate_percent: penaltyRate,
+      calculated_penalty: penaltyAmount
+    };
   }
 
   async deleteOrCancelBill(billId) {
