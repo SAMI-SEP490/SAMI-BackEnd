@@ -276,7 +276,22 @@ class BuildingService {
     const existingBuilding = await prisma.buildings.findUnique({
       where: { building_id: buildingId },
     });
+    const slotCounts = await prisma.parking_slots.groupBy({
+      by: ["slot_type"],
+      where: {
+        building_id: buildingId,
+      },
+      _count: {
+        slot_id: true,
+      },
+    });
 
+    // Helper
+    const countByType = (type) =>
+      slotCounts.find(s => s.slot_type === type)?._count.slot_id || 0;
+
+    const current2WheelSlots = countByType("two_wheeler");
+    const current4WheelSlots = countByType("four_wheeler");
     if (!existingBuilding) {
       throw new Error("Building not found");
     }
@@ -345,8 +360,7 @@ class BuildingService {
 
       if (newValue !== existingBuilding.electric_unit_price) {
         billingChanges.push(
-          `💡 Tiền điện: ${existingBuilding.electric_unit_price ?? "—"} → ${
-            newValue ?? "—"
+          `💡 Tiền điện: ${existingBuilding.electric_unit_price ?? "—"} → ${newValue ?? "—"
           }`,
         );
       }
@@ -363,8 +377,7 @@ class BuildingService {
 
       if (newValue !== existingBuilding.water_unit_price) {
         billingChanges.push(
-          `🚿 Tiền nước: ${existingBuilding.water_unit_price ?? "—"} → ${
-            newValue ?? "—"
+          `🚿 Tiền nước: ${existingBuilding.water_unit_price ?? "—"} → ${newValue ?? "—"
           }`,
         );
       }
@@ -381,8 +394,7 @@ class BuildingService {
 
       if (newValue !== existingBuilding.service_fee) {
         billingChanges.push(
-          `🧾 Phí dịch vụ: ${existingBuilding.service_fee ?? "—"} → ${
-            newValue ?? "—"
+          `🧾 Phí dịch vụ: ${existingBuilding.service_fee ?? "—"} → ${newValue ?? "—"
           }`,
         );
       }
@@ -390,28 +402,49 @@ class BuildingService {
       updateData.service_fee = newValue;
     }
 
-    // ✅ MAX 4-WHEEL SLOT
     if (max_4_wheel_slot !== undefined) {
       if (max_4_wheel_slot === "" || max_4_wheel_slot === null) {
-        updateData.max_4_wheel_slot = null;
+        if (current4WheelSlots > 0) {
+          throw new Error(
+            `Không thể đặt số slot xe 4 bánh < ${current4WheelSlots} (đã tồn tại)`
+          );
+        }
+        updateData.max_4_wheel_slot = 0;
       } else {
         const value = parseInt(max_4_wheel_slot);
         if (isNaN(value) || value < 0) {
           throw new Error("max_4_wheel_slot must be a non-negative integer");
         }
+
+        if (value < current4WheelSlots) {
+          throw new Error(
+            `Số slot xe 4 bánh tối đa (${value}) không được nhỏ hơn số slot hiện có (${current4WheelSlots})`
+          );
+        }
+
         updateData.max_4_wheel_slot = value;
       }
     }
-
-    // ✅ MAX 2-WHEEL SLOT
     if (max_2_wheel_slot !== undefined) {
       if (max_2_wheel_slot === "" || max_2_wheel_slot === null) {
-        updateData.max_2_wheel_slot = null;
+        if (current2WheelSlots > 0) {
+          throw new Error(
+            `Không thể đặt số slot xe 2 bánh < ${current2WheelSlots} (đã tồn tại)`
+          );
+        }
+        updateData.max_2_wheel_slot = 0;
       } else {
         const value = parseInt(max_2_wheel_slot);
         if (isNaN(value) || value < 0) {
           throw new Error("max_2_wheel_slot must be a non-negative integer");
         }
+
+        if (value < current2WheelSlots) {
+          throw new Error(
+            `Số slot xe 2 bánh tối đa (${value}) không được nhỏ hơn số slot hiện có (${current2WheelSlots})`
+          );
+        }
+
         updateData.max_2_wheel_slot = value;
       }
     }
