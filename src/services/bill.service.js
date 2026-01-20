@@ -161,9 +161,11 @@ class BillService {
         }
 
         try {
-          await this.createUtilityBill(room, building, reading, dueDate);
-          console.log(`[AutoBill] ✅ Created Utility Bill for Room ${room.room_number}`);
-          created++;
+          const bill = await this.createUtilityBill(room, building, reading, dueDate);
+          if (bill) { // Check if bill was actually created
+            console.log(`[AutoBill] ✅ Created Utility Bill for Room ${room.room_number}`);
+            created++;
+          }
         } catch (error) {
           if (error.statusCode === 409) {
             console.log(`[AutoBill] ⏭️ SKIPPED Utility for Room ${room.room_number}: Bill exists.`);
@@ -252,28 +254,46 @@ class BillService {
 
     if (contractStart && contractStart > periodStart && contractStart <= periodEnd) {
       periodStart = contractStart;
-      console.log(`[BillLogic] Adjusted Start: ${periodStartCalc.toISOString().split('T')[0]} -> ${periodStart.toISOString().split('T')[0]}`);
+      console.log(`[BillLogic] Adjusted Start for Room ${room.room_number}: ${periodStartCalc.toISOString().split('T')[0]} -> ${periodStart.toISOString().split('T')[0]}`);
     }
 
-    // Costs
-    // Handle Reset Logic for Costs:
-    // If reset, logic is: New Reading - 0 (or overridden prev).
-    // If normal, logic is: New Reading - Old Reading.
-    // The DB already stores the correct 'prev' value based on the logic in utility.service.js, so we just subtract.
+    // --- FAIR BILLING LOGIC ---
 
+    // 1. Calculate Duration (Days)
+    const diffTime = Math.abs(periodEnd - periodStart);
+    const billableDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // Include start day
+
+    // 2. Determine Service Fee
+    // Rule: Only charge service fee if stay is >= 20 days
+    let serviceFee = Number(building.service_fee || 0);
+
+    if (billableDays < 20) {
+      console.log(`[BillLogic] Waiving Service Fee for Room ${room.room_number} (Only ${billableDays} days).`);
+      serviceFee = 0;
+    }
+
+    // 3. Calculate Utility Usage
     const electricUsed = reading.curr_electric - reading.prev_electric;
     const waterUsed = reading.curr_water - reading.prev_water;
 
-    // Safety check again (should be caught before calling this, but safe)
+    // Safety check again
     if (electricUsed < 0 || waterUsed < 0) {
       throw new Error(`Negative usage detected (E: ${electricUsed}, W: ${waterUsed}). Check meter readings.`);
     }
 
+    // 4. Zero Bill Skip Logic
+    // If no utilities used AND no service fee -> Skip creating bill
+    if (electricUsed === 0 && waterUsed === 0 && serviceFee === 0) {
+      console.log(`[BillLogic] Skipping Zero Bill for Room ${room.room_number} (No usage, No service fee).`);
+      return null; // Return null to indicate no bill created
+    }
+
+    // 5. Calculate Final Costs
     const electricCost = electricUsed * Number(reading.electric_price);
     const waterCost = waterUsed * Number(reading.water_price);
-    const serviceFee = Number(building.service_fee || 0);
     const totalAmount = electricCost + waterCost + serviceFee;
 
+    // 6. Overlap Check
     await this._checkBillOverlap(room.room_id, periodStart, periodEnd, null, 'utilities');
 
     const billNumber = generateBillNumber(reading.billing_year, reading.billing_month, 'utilities');
@@ -290,13 +310,14 @@ class BillService {
           due_date: due_date,
           total_amount: totalAmount,
           status: 'issued',
-          description: `Điện nước kỳ ${reading.billing_month}/${reading.billing_year}`,
+          description: `Điện nước kỳ ${reading.billing_month}/${reading.billing_year} (${billableDays} ngày)`,
           created_by: created_by || null,
           service_charges: {
             create: [
               { service_type: 'Điện', quantity: electricUsed, unit_price: reading.electric_price, amount: electricCost, description: `${reading.prev_electric} - ${reading.curr_electric}` },
               { service_type: 'Nước', quantity: waterUsed, unit_price: reading.water_price, amount: waterCost, description: `${reading.prev_water} - ${reading.curr_water}` },
-              { service_type: 'Dịch vụ chung', quantity: 1, unit_price: serviceFee, amount: serviceFee, description: 'Vệ sinh, thang máy, rác' }
+              // Only add service fee line item if it's > 0
+              ...(serviceFee > 0 ? [{ service_type: 'Dịch vụ chung', quantity: 1, unit_price: serviceFee, amount: serviceFee, description: 'Vệ sinh, thang máy, rác' }] : [])
             ]
           },
           utilityReadings: {
@@ -589,10 +610,12 @@ class BillService {
           // We need to fetch the building config for service_fee
           const building = await prisma.buildings.findUnique({ where: { building_id: buildingId } });
 
-          await this.createUtilityBill(room, building, reading, new Date(due_date), createdByUserId);
-
-          results.success++;
-          results.details.push({ room: room.room_number, status: 'created' });
+          if (bill) {
+            results.success++;
+            results.details.push({ room: room.room_number, status: 'created' });
+          } else {
+            results.details.push({ room: room.room_number, status: 'skipped', reason: 'Zero usage & short stay' });
+          }
 
         } catch (err) {
           console.error(`Bulk Utility Error Room ${room.room_number}:`, err);
