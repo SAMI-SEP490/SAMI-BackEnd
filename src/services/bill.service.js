@@ -1106,6 +1106,10 @@ class BillService {
   }
 
   async _checkBillOverlap(roomId, startDate, endDate, excludeBillId = null, billType = null) {
+    // Relax requirement: 'other' bills can overlap freely.
+    // Multiple repair bills or ad-hoc fees in the same month are allowed.
+    if (billType === 'other') return;
+
     const contracts = await prisma.contracts.findMany({ where: { room_id: roomId }, select: { contract_id: true } });
     const contractIds = contracts.map(c => c.contract_id);
     if (contractIds.length === 0) return;
