@@ -1453,7 +1453,6 @@ class FloorPlanService {
         where: {
           building_id: buildingId,
           floor: floorNumber,
-          is_active: true,
         },
         select: { room_id: true },
       });
@@ -1461,6 +1460,16 @@ class FloorPlanService {
       const roomIds = rooms.map((r) => r.room_id);
 
       if (roomIds.length > 0) {
+        // ✅ Chặn xóa nếu có phòng đang bảo trì (status = 'maintenance')
+        const maintenanceRooms = rooms.filter(
+          (r) => r.status === "maintenance",
+        );
+        if (maintenanceRooms.length > 0) {
+          const list = maintenanceRooms.map((r) => r.room_number).join(", ");
+          throw new Error(
+            `Không thể xóa tầng vì có phòng đang bảo trì: ${list}`,
+          );
+        }
         // 4) Chặn xóa nếu có người đang ở (room_tenants.is_current = true)
         const livingCount = await tx.room_tenants.count({
           where: {
