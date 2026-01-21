@@ -52,7 +52,7 @@ class MaintenanceService {
 
     if (!room) {
       throw new Error(
-        "You are not allowed to create maintenance request for this room"
+        "You are not allowed to create maintenance request for this room",
       );
     }
 
@@ -169,14 +169,14 @@ class MaintenanceService {
       maintenanceRequest.tenant_user_id !== currentUser.user_id
     ) {
       throw new Error(
-        "You do not have permission to view this maintenance request"
+        "You do not have permission to view this maintenance request",
       );
     }
 
     return this.formatMaintenanceResponse(maintenanceRequest);
   }
 
-  // READ - Lấy danh sách yêu cầu bảo trì (có phân trang và filter)
+  // READ - Lấy danh sách yêu cầu bảo trì (phân trang + filter)
   async getMaintenanceRequests(filters = {}, currentUser) {
     const {
       room_id,
@@ -190,35 +190,44 @@ class MaintenanceService {
     } = filters;
 
     const skip = (page - 1) * limit;
+
     const where = {};
 
-    // ===== PHÂN QUYỀN =====
+    /* ======================
+     PHÂN QUYỀN
+  ====================== */
     if (currentUser.role === "TENANT") {
       // Tenant chỉ xem request của chính mình
       where.tenant_user_id = currentUser.user_id;
     } else {
-      // OWNER / MANAGER có thể filter theo tenant
+      // OWNER / MANAGER filter theo tenant
       if (tenant_user_id) {
-        where.tenant_user_id = parseInt(tenant_user_id);
+        where.tenant_user_id = Number(tenant_user_id);
       }
     }
 
-    // ===== FILTER =====
-    if (room_id) where.room_id = parseInt(room_id);
+    /* ======================
+     FILTER
+  ====================== */
+    if (room_id) where.room_id = Number(room_id);
     if (category) where.category = category;
     if (priority) where.priority = priority;
     if (status) where.status = status;
-    if (approved_by) where.approved_by = parseInt(approved_by);
+    if (approved_by) where.approved_by = Number(approved_by);
 
     const [requests, total] = await Promise.all([
       prisma.maintenance_requests.findMany({
         where,
+        skip,
+        take: limit,
+        orderBy: { created_at: "desc" },
+
         include: {
           // ===== PHÒNG =====
           room: {
             select: {
+              room_id: true,
               room_number: true,
-              building_id: true,
               building: {
                 select: {
                   name: true,
@@ -227,11 +236,12 @@ class MaintenanceService {
             },
           },
 
-          // ===== NGƯỜI TẠO REQUEST (TENANT) =====
+          // ===== TENANT =====
           tenant: {
-            include: {
+            select: {
               user: {
                 select: {
+                  user_id: true,
                   full_name: true,
                   email: true,
                   phone: true,
@@ -243,23 +253,20 @@ class MaintenanceService {
           // ===== NGƯỜI DUYỆT =====
           approver: {
             select: {
+              user_id: true,
               full_name: true,
               email: true,
             },
           },
 
-          // ===== NGƯỜI ĐƯỢC GIAO XỬ LÝ =====
+          // ===== NGƯỜI ĐƯỢC GIAO =====
           assignee: {
             select: {
+              user_id: true,
               full_name: true,
               email: true,
             },
           },
-        },
-        skip,
-        take: limit,
-        orderBy: {
-          created_at: "desc",
         },
       }),
 
@@ -295,7 +302,7 @@ class MaintenanceService {
       // Tenant chỉ có thể cập nhật yêu cầu của mình và chỉ một số trường
       if (existingRequest.tenant_user_id !== currentUser.user_id) {
         throw new Error(
-          "You do not have permission to update this maintenance request"
+          "You do not have permission to update this maintenance request",
         );
       }
 
@@ -386,7 +393,7 @@ class MaintenanceService {
     if (currentUser.role === "TENANT") {
       if (maintenanceRequest.tenant_user_id !== currentUser.user_id) {
         throw new Error(
-          "You do not have permission to delete this maintenance request"
+          "You do not have permission to delete this maintenance request",
         );
       }
 
@@ -410,7 +417,7 @@ class MaintenanceService {
     // ===== CHECK ROLE =====
     if (!["MANAGER", "OWNER"].includes(currentUser.role)) {
       throw new Error(
-        "Only managers and owners can approve maintenance requests"
+        "Only managers and owners can approve maintenance requests",
       );
     }
 
@@ -450,7 +457,7 @@ class MaintenanceService {
     // ===== CHECK ROLE =====
     if (!["MANAGER", "OWNER"].includes(currentUser.role)) {
       throw new Error(
-        "Only managers and owners can reject maintenance requests"
+        "Only managers and owners can reject maintenance requests",
       );
     }
 
@@ -537,7 +544,7 @@ class MaintenanceService {
           request_id: id,
           reason,
           link: `/maintenance/${id}`,
-        }
+        },
       );
     } catch (err) {
       console.error("Error sending rejection notification:", err);
@@ -551,7 +558,7 @@ class MaintenanceService {
     // ===== CHECK ROLE =====
     if (!["MANAGER", "OWNER"].includes(currentUser.role)) {
       throw new Error(
-        "Only managers and owners can resolve maintenance requests"
+        "Only managers and owners can resolve maintenance requests",
       );
     }
 
@@ -581,13 +588,13 @@ class MaintenanceService {
 
     if (maintenanceRequest.status === "pending") {
       throw new Error(
-        "Cannot resolve a pending request. Please approve it first"
+        "Cannot resolve a pending request. Please approve it first",
       );
     }
 
     if (!["in_progress", "on_hold"].includes(maintenanceRequest.status)) {
       throw new Error(
-        "Maintenance request cannot be resolved in its current status"
+        "Maintenance request cannot be resolved in its current status",
       );
     }
 
@@ -641,7 +648,7 @@ class MaintenanceService {
           type: "maintenance_resolved",
           request_id: id,
           link: `/maintenance/${id}`,
-        }
+        },
       );
     } catch (error) {
       console.error("Error sending resolve notification:", error);
@@ -655,7 +662,7 @@ class MaintenanceService {
     // Only manager/owner can complete
     if (currentUser.role !== "MANAGER" && currentUser.role !== "OWNER") {
       throw new Error(
-        "Only managers and owners can complete maintenance requests"
+        "Only managers and owners can complete maintenance requests",
       );
     }
 
@@ -946,12 +953,13 @@ class MaintenanceService {
     const tenant = await prisma.tenants.findUnique({
       where: { user_id: tenantUserId },
       include: {
-        user: { select: { status: true, full_name: true } }
-      }
+        user: { select: { status: true, full_name: true } },
+      },
     });
 
     if (!tenant) throw new Error("Tenant not found");
-    if (tenant.user.status !== "Active") throw new Error("Tenant account is not active");
+    if (tenant.user.status !== "Active")
+      throw new Error("Tenant account is not active");
 
     // 2. Resolve Room ID
     // If bot didn't send room_id, try to find the tenant's current active room
@@ -960,10 +968,11 @@ class MaintenanceService {
     if (!targetRoomId) {
       // Find where they currently live
       const currentLiving = await prisma.room_tenants.findFirst({
-        where: { tenant_user_id: tenantUserId, is_current: true }
+        where: { tenant_user_id: tenantUserId, is_current: true },
       });
 
-      if (!currentLiving) throw new Error("Tenant is not currently assigned to any room");
+      if (!currentLiving)
+        throw new Error("Tenant is not currently assigned to any room");
       targetRoomId = currentLiving.room_id;
     } else {
       // Validate provided room_id against tenant's access
@@ -971,18 +980,19 @@ class MaintenanceService {
         where: {
           room_id: targetRoomId,
           tenant_user_id: tenantUserId,
-          is_current: true
-        }
+          is_current: true,
+        },
       });
 
-      if (!isAuthorized) throw new Error("Tenant does not have access to this room");
+      if (!isAuthorized)
+        throw new Error("Tenant does not have access to this room");
     }
 
     // 3. Prepare Data
     const botDescription = [
       description || "",
       `---`,
-      `🤖 Created by AI Assistant (${botInfo.name || 'SAMI Bot'})`
+      `🤖 Created by AI Assistant (${botInfo.name || "SAMI Bot"})`,
     ].join("\n");
 
     // 4. Create Request
@@ -997,19 +1007,19 @@ class MaintenanceService {
         status: "pending",
         note: note || "Created via Chatbot Interface",
         created_at: new Date(),
-        updated_at: new Date()
+        updated_at: new Date(),
       },
       include: {
         room: {
           select: {
             room_number: true,
-            building: { select: { name: true } }
-          }
+            building: { select: { name: true } },
+          },
         },
         tenant: {
-          select: { user: { select: { full_name: true } } }
-        }
-      }
+          select: { user: { select: { full_name: true } } },
+        },
+      },
     });
 
     // 5. Notify Tenant (Confirmation)
@@ -1023,8 +1033,8 @@ class MaintenanceService {
         {
           type: "maintenance_bot_created",
           request_id: request.request_id,
-          link: `/maintenance/${request.request_id}`
-        }
+          link: `/maintenance/${request.request_id}`,
+        },
       );
     } catch (e) {
       console.error("[Bot] Failed to send notification:", e.message);
@@ -1041,12 +1051,14 @@ class MaintenanceService {
 
     // 1. Verify Ownership & Status
     const existing = await prisma.maintenance_requests.findUnique({
-      where: { request_id: requestId }
+      where: { request_id: requestId },
     });
 
     if (!existing) throw new Error("Request not found");
-    if (existing.tenant_user_id !== tenantUserId) throw new Error("Unauthorized access");
-    if (existing.status !== "pending") throw new Error("Can only update pending requests");
+    if (existing.tenant_user_id !== tenantUserId)
+      throw new Error("Unauthorized access");
+    if (existing.status !== "pending")
+      throw new Error("Can only update pending requests");
 
     // 2. Prepare Update
     const updateData = { updated_at: new Date() };
@@ -1061,7 +1073,7 @@ class MaintenanceService {
     const updated = await prisma.maintenance_requests.update({
       where: { request_id: requestId },
       data: updateData,
-      include: { room: true, tenant: { include: { user: true } } }
+      include: { room: true, tenant: { include: { user: true } } },
     });
 
     return this.formatMaintenanceResponse(updated);
@@ -1072,15 +1084,17 @@ class MaintenanceService {
    */
   async deleteMaintenanceRequestByBot(requestId, tenantUserId, botInfo) {
     const existing = await prisma.maintenance_requests.findUnique({
-      where: { request_id: requestId }
+      where: { request_id: requestId },
     });
 
     if (!existing) throw new Error("Request not found");
-    if (existing.tenant_user_id !== tenantUserId) throw new Error("Unauthorized access");
-    if (existing.status !== "pending") throw new Error("Can only delete pending requests");
+    if (existing.tenant_user_id !== tenantUserId)
+      throw new Error("Unauthorized access");
+    if (existing.status !== "pending")
+      throw new Error("Can only delete pending requests");
 
     await prisma.maintenance_requests.delete({
-      where: { request_id: requestId }
+      where: { request_id: requestId },
     });
 
     return { success: true, message: "Request deleted successfully" };
@@ -1090,25 +1104,36 @@ class MaintenanceService {
   formatMaintenanceResponse(request) {
     return {
       request_id: request.request_id,
+
       tenant_user_id: request.tenant_user_id,
-      tenant_name: request.tenants?.users?.full_name,
-      tenant_email: request.tenants?.users?.email,
-      tenant_phone: request.tenants?.users?.phone,
-      room_id: request.room_id,
-      room_number: request.rooms?.room_number,
-      building_name: request.rooms?.buildings?.name,
+      tenant_name: request.tenant?.user?.full_name || null,
+      tenant_email: request.tenant?.user?.email || null,
+      tenant_phone: request.tenant?.user?.phone || null,
+
+      room_id: request.room_id || null,
+      room_number: request.room?.room_number || null,
+      building_name: request.room?.building?.name || null,
+
       title: request.title,
       description: request.description,
       category: request.category,
       priority: request.priority,
       status: request.status,
+
       approved_by: request.approved_by,
-      approved_by_name: request.users?.full_name,
-      approved_by_email: request.users?.email,
+      approved_by_name: request.approver?.full_name || null,
+      approved_by_email: request.approver?.email || null,
+      approved_at: request.approved_at,
+
+      assigned_to: request.assigned_to,
+      assignee_name: request.assignee?.full_name || null,
+      assignee_email: request.assignee?.email || null,
+      assigned_at: request.assigned_at,
+
       note: request.note,
+
       created_at: request.created_at,
       updated_at: request.updated_at,
-      approved_at: request.approved_at,
       resolved_at: request.resolved_at,
     };
   }
