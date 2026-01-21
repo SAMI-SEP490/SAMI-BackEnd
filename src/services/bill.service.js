@@ -231,6 +231,10 @@ class BillService {
     // So if Start is Jan 1, +1 Month is Feb 1. End should be Jan 31.
     periodEnd.setDate(periodEnd.getDate() - 1);
 
+    // Calculate Total Bill Amount
+    // If cycle is 3 months, Total = Monthly Rent * 3
+    const totalBillAmount = Number(amount) * cycleMonths;
+
     // Overlap Check
     await this._checkBillOverlap(contract.room_id, periodStart, periodEnd, null, 'monthly_rent');
 
@@ -245,13 +249,13 @@ class BillService {
         billing_period_start: periodStart,
         billing_period_end: periodEnd,
         due_date: dueDate,
-        total_amount: amount,
+        total_amount: totalBillAmount,
         status: 'issued',
         description: `Tiền thuê phòng ${cycleMonths} tháng (Từ ${periodStart.toLocaleDateString('vi-VN')} đến ${periodEnd.toLocaleDateString('vi-VN')})`,
         service_charges: {
           create: [{
             service_type: 'Tiền thuê phòng',
-            quantity: 1,
+            quantity: cycleMonths,
             unit_price: amount,
             amount: amount,
             description: `Chu kỳ ${cycleMonths} tháng`
