@@ -140,6 +140,20 @@ class BuildingService {
     if (!building) {
       throw new Error("Building not found");
     }
+
+    // ✅ Rule: chỉ cho phép sửa ngày chốt sổ nếu tòa nhà CHƯA có hợp đồng active
+    const hasActiveContract = await prisma.contracts.findFirst({
+      where: {
+        status: "active",
+        deleted_at: null,
+        room_history: { building_id: buildingId },
+      },
+      select: { contract_id: true },
+    });
+
+    // attach flag for formatter
+    building.can_edit_bill_closing_day = !hasActiveContract;
+
     // console.log("🔥🔥 RAW BUILDING FROM DB:", building);
 
     return this.formatBuildingDetailResponse(building);
@@ -266,6 +280,7 @@ class BuildingService {
       electric_unit_price,
       water_unit_price,
       service_fee,
+      bill_closing_day,
       max_4_wheel_slot,
       max_2_wheel_slot,
     } = data;
@@ -400,6 +415,45 @@ class BuildingService {
       }
 
       updateData.service_fee = newValue;
+    }
+
+
+    // Bill closing day (1-28) - chỉ cho phép sửa nếu tòa nhà CHƯA có hợp đồng active
+    if (bill_closing_day !== undefined) {
+      const newValue =
+        bill_closing_day === "" || bill_closing_day === null
+          ? null
+          : parseInt(bill_closing_day, 10);
+
+      if (newValue !== null) {
+        if (!Number.isInteger(newValue) || newValue < 1 || newValue > 28) {
+          throw new Error("bill_closing_day must be between 1 and 28");
+        }
+      }
+
+      // Chỉ kiểm tra nếu có thay đổi giá trị
+      if (newValue !== existingBuilding.bill_closing_day) {
+        const hasActiveContract = await prisma.contracts.findFirst({
+          where: {
+            status: "active",
+            deleted_at: null,
+            room_history: { building_id: buildingId },
+          },
+          select: { contract_id: true },
+        });
+
+        if (hasActiveContract) {
+          throw new Error(
+            "Không thể sửa ngày chốt sổ vì tòa nhà đang có hợp đồng active",
+          );
+        }
+
+        billingChanges.push(
+          `📅 Ngày chốt sổ: ${existingBuilding.bill_closing_day ?? "—"} → ${newValue ?? "—"}`,
+        );
+
+        updateData.bill_closing_day = newValue;
+      }
     }
 
     if (max_4_wheel_slot !== undefined) {
@@ -842,6 +896,7 @@ class BuildingService {
       water_unit_price: building.water_unit_price,
       service_fee: building.service_fee,
       bill_closing_day: building.bill_closing_day,
+      can_edit_bill_closing_day: building.can_edit_bill_closing_day ?? true,
       max_4_wheel_slot: building.max_4_wheel_slot,
       max_2_wheel_slot: building.max_2_wheel_slot,
       managers:
