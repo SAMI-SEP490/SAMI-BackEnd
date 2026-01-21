@@ -308,7 +308,7 @@ class RoomService {
       status,
       is_active,
       page = 1,
-      limit = 20,
+      limit = 1000,
     } = filters;
 
     const normalizedRole = (userRole || "").trim().toUpperCase();
