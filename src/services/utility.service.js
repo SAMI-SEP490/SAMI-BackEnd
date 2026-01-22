@@ -220,6 +220,40 @@ class UtilityService {
         });
 
         results.push(record);
+
+        // =====================================================
+        // 🔥 NEW LOGIC: CASCADE UPDATE NEXT MONTH
+        // =====================================================
+        let nextMonth = billing_month + 1;
+        let nextYear = billing_year;
+        if (nextMonth === 13) {
+          nextMonth = 1;
+          nextYear += 1;
+        }
+
+        const nextRecord = await tx.utility_readings.findUnique({
+          where: {
+            room_id_billing_month_billing_year: {
+              room_id: item.room_id,
+              billing_month: nextMonth,
+              billing_year: nextYear,
+            },
+          },
+        });
+
+        if (nextRecord) {
+          await tx.utility_readings.update({
+            where: { reading_id: nextRecord.reading_id },
+            data: {
+              prev_electric: nextRecord.is_electric_reset
+                ? nextRecord.prev_electric
+                : item.new_electric,
+              prev_water: nextRecord.is_water_reset
+                ? nextRecord.prev_water
+                : item.new_water,
+            },
+          });
+        }
       }
     });
 
