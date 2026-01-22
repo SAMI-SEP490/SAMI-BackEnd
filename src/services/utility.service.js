@@ -2,7 +2,7 @@
 // Updated: 2026-01-20
 
 const prisma = require("../config/prisma");
-const { getVietnamDay } = require('../utils/datevn');
+const { getVietnamDay } = require("../utils/datevn");
 
 class UtilityService {
   /**
@@ -46,7 +46,9 @@ class UtilityService {
 
     return rooms.map((room) => {
       const prevRecord = prevReadings.find((r) => r.room_id === room.room_id);
-      const currRecord = currentReadings.find((r) => r.room_id === room.room_id);
+      const currRecord = currentReadings.find(
+        (r) => r.room_id === room.room_id,
+      );
 
       // [FIX] Priority Logic for "Old Index":
       // 1. Current Record exists? Use its stored 'prev' value (This handles resets correctly)
@@ -91,28 +93,31 @@ class UtilityService {
   async recordMonthlyReadings(userId, data) {
     const { building_id, billing_month, billing_year, readings } = data;
 
-    // DATE VALIDATION CHECKS
+    // ===== DATE VALIDATION =====
     const today = getVietnamDay();
-    const currentMonth = today.getMonth() + 1; // 1-12
+    const currentMonth = today.getMonth() + 1;
     const currentYear = today.getFullYear();
 
-    // 1. Prevent Future Recording
-    // Example: trying to record Feb 2026 data in Jan 2026
-    if (billing_year > currentYear || (billing_year === currentYear && billing_month > currentMonth)) {
-      throw new Error(`Cannot record utility readings for a future month (${billing_month}/${billing_year}).`);
+    if (
+      billing_year > currentYear ||
+      (billing_year === currentYear && billing_month > currentMonth)
+    ) {
+      throw new Error(
+        `Cannot record utility readings for a future month (${billing_month}/${billing_year}).`,
+      );
     }
 
-    // 2. Prevent Ancient History (Optional - e.g., > 3 months ago)
-    // This prevents accidental edits to closed accounting periods
     const recordDate = new Date(billing_year, billing_month - 1);
     const threeMonthsAgo = new Date(today);
     threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
     if (recordDate < threeMonthsAgo) {
-      throw new Error(`Cannot record readings older than 3 months (${billing_month}/${billing_year}). Contact Admin if necessary.`);
+      throw new Error(
+        `Cannot record readings older than 3 months (${billing_month}/${billing_year}). Contact Admin if necessary.`,
+      );
     }
 
-    // 1. Lấy thông tin giá của tòa nhà
+    // ===== GET BUILDING PRICE =====
     const building = await prisma.buildings.findUnique({
       where: { building_id },
       select: { electric_unit_price: true, water_unit_price: true },
@@ -125,9 +130,9 @@ class UtilityService {
 
     const results = [];
 
-    // 2. Xử lý từng phòng (Dùng transaction để đảm bảo an toàn)
     await prisma.$transaction(async (tx) => {
       for (const item of readings) {
+        // ===== PREVIOUS MONTH =====
         let prevMonth = billing_month - 1;
         let prevYear = billing_year;
         if (prevMonth === 0) {
@@ -145,43 +150,39 @@ class UtilityService {
           },
         });
 
-        // --- RESET LOGIC ---
-        
         let prevElectric = 0;
         let prevWater = 0;
 
-        // Electric Logic
         if (item.is_electric_reset) {
-            // If reset, user MUST provide the new start index (usually 0) via override
-            // Fallback to 0 if not provided
-            prevElectric = item.old_electric_override !== undefined ? item.old_electric_override : 0;
+          prevElectric =
+            item.old_electric_override !== undefined
+              ? item.old_electric_override
+              : 0;
         } else {
-            // Normal flow: strict chain from previous month
-            prevElectric = prevRecord ? prevRecord.curr_electric : 0;
+          prevElectric = prevRecord ? prevRecord.curr_electric : 0;
         }
 
-        // Water Logic
         if (item.is_water_reset) {
-            prevWater = item.old_water_override !== undefined ? item.old_water_override : 0;
+          prevWater =
+            item.old_water_override !== undefined ? item.old_water_override : 0;
         } else {
-            prevWater = prevRecord ? prevRecord.curr_water : 0;
+          prevWater = prevRecord ? prevRecord.curr_water : 0;
         }
 
-        // --- VALIDATION: Prevent Negative Usage ---
-        // usage = new - prev. Must be >= 0.
+        // ===== VALIDATION =====
         if (item.new_electric < prevElectric) {
           throw new Error(
-            `Room ${item.room_id} Error: New Electric (${item.new_electric}) < Prev (${prevElectric}). Check 'Reset' if meter replaced.`
-          );
-        }
-        if (item.new_water < prevWater) {
-          throw new Error(
-            `Room ${item.room_id} Error: New Water (${item.new_water}) < Prev (${prevWater}). Check 'Reset' if meter replaced.`
+            `Room ${item.room_id} Error: New Electric (${item.new_electric}) < Prev (${prevElectric}).`,
           );
         }
 
-        // 3. Upsert vào DB
-        // Nếu đã nhập rồi thì update, chưa thì create
+        if (item.new_water < prevWater) {
+          throw new Error(
+            `Room ${item.room_id} Error: New Water (${item.new_water}) < Prev (${prevWater}).`,
+          );
+        }
+
+        // ===== UPSERT CURRENT MONTH =====
         const record = await tx.utility_readings.upsert({
           where: {
             room_id_billing_month_billing_year: {
@@ -195,8 +196,8 @@ class UtilityService {
             curr_water: item.new_water,
             prev_electric: prevElectric,
             prev_water: prevWater,
-            is_electric_reset: item.is_electric_reset, // Store flag
-            is_water_reset: item.is_water_reset,       // Store flag
+            is_electric_reset: item.is_electric_reset,
+            is_water_reset: item.is_water_reset,
             electric_price: electricPrice,
             water_price: waterPrice,
             created_by: userId,
@@ -220,6 +221,40 @@ class UtilityService {
         });
 
         results.push(record);
+
+        // =====================================================
+        // 🔥 NEW LOGIC: CASCADE UPDATE NEXT MONTH
+        // =====================================================
+        let nextMonth = billing_month + 1;
+        let nextYear = billing_year;
+        if (nextMonth === 13) {
+          nextMonth = 1;
+          nextYear += 1;
+        }
+
+        const nextRecord = await tx.utility_readings.findUnique({
+          where: {
+            room_id_billing_month_billing_year: {
+              room_id: item.room_id,
+              billing_month: nextMonth,
+              billing_year: nextYear,
+            },
+          },
+        });
+
+        if (nextRecord) {
+          await tx.utility_readings.update({
+            where: { reading_id: nextRecord.reading_id },
+            data: {
+              prev_electric: nextRecord.is_electric_reset
+                ? nextRecord.prev_electric
+                : item.new_electric,
+              prev_water: nextRecord.is_water_reset
+                ? nextRecord.prev_water
+                : item.new_water,
+            },
+          });
+        }
       }
     });
 
