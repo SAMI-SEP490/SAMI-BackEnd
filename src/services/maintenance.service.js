@@ -7,62 +7,50 @@ const NotificationService = require("./notification.service");
 class MaintenanceService {
   // CREATE - Tenant tạo yêu cầu bảo trì cho phòng đang ở
   async createMaintenanceRequest(data, currentUser) {
-    const { room_id, title, description, category, priority, note } = data;
+    let { room_id, title, description, category, priority, note } = data;
 
-    /* ======================
-     * 1. VALIDATION CƠ BẢN
-     * ====================== */
-    if (!title || title.trim() === "") {
-      throw new Error("Missing required field: title");
-    }
+    // 1. Basic Validation
+    if (!title || title.trim() === "") throw new Error("Missing required field: title");
+    if (currentUser.role !== "TENANT") throw new Error("Only tenants can create maintenance requests");
 
-    if (!room_id) {
-      throw new Error("Missing required field: room_id");
-    }
+    let targetRoomId = room_id ? parseInt(room_id) : null;
 
-    const roomId = parseInt(room_id);
-    if (isNaN(roomId)) {
-      throw new Error("room_id must be a valid number");
-    }
-
-    /* ======================
-     * 2. KIỂM TRA ROLE
-     * ====================== */
-    if (currentUser.role !== "TENANT") {
-      throw new Error("Only tenants can create maintenance requests");
-    }
-
-    /* ======================
-     * 3. KIỂM TRA PHÒNG + CONTRACT ACTIVE
-     * ====================== */
-    const room = await prisma.rooms.findFirst({
+    // 2. [GUARD] Strict Room Validation
+    // Strategy: Fetch ALL active residencies for this user
+    const activeResidencies = await prisma.room_tenants.findMany({
       where: {
-        room_id: roomId,
-        is_active: true,
-        current_contract: {
-          tenant_user_id: currentUser.user_id,
-          status: "active",
-          deleted_at: null,
-        },
+        tenant_user_id: currentUser.user_id,
+        is_current: true
       },
-      select: {
-        room_id: true,
-      },
+      select: { room_id: true }
     });
 
-    if (!room) {
-      throw new Error(
-        "You are not allowed to create maintenance request for this room",
-      );
+    const activeRoomIds = activeResidencies.map(r => r.room_id);
+
+    if (activeRoomIds.length === 0) {
+      throw new Error("You do not have any active room contracts.");
     }
 
-    /* ======================
-     * 4. TẠO YÊU CẦU BẢO TRÌ
-     * ====================== */
+    // Case A: Room ID provided -> Check ownership
+    if (targetRoomId) {
+      if (!activeRoomIds.includes(targetRoomId)) {
+        throw new Error("Unauthorized: You do not live in this room.");
+      }
+    }
+    // Case B: No Room ID provided -> Auto-detect
+    else {
+      if (activeRoomIds.length === 1) {
+        targetRoomId = activeRoomIds[0]; // Auto-select the only room
+      } else {
+        throw new Error("You have multiple active rooms. Please specify 'room_id'.");
+      }
+    }
+
+    // 3. Create Request
     const maintenanceRequest = await prisma.maintenance_requests.create({
       data: {
         tenant_user_id: currentUser.user_id,
-        room_id: roomId,
+        room_id: targetRoomId,
         title: title.trim(),
         description: description || null,
         category: category || null,
@@ -76,39 +64,16 @@ class MaintenanceService {
         room: {
           select: {
             room_number: true,
-            building_id: true,
-            building: {
-              select: {
-                name: true,
-              },
-            },
+            building: { select: { name: true } },
           },
         },
         tenant: {
-          // include tenant relation
           select: {
-            user: {
-              // ✅ phải include user từ tenant
-              select: {
-                full_name: true,
-                email: true,
-                phone: true,
-              },
-            },
+            user: { select: { full_name: true, email: true, phone: true } },
           },
         },
-        assignee: {
-          select: {
-            full_name: true,
-            email: true,
-          },
-        },
-        approver: {
-          select: {
-            full_name: true,
-            email: true,
-          },
-        },
+        assignee: { select: { full_name: true, email: true } },
+        approver: { select: { full_name: true, email: true } },
       },
     });
 
@@ -123,92 +88,26 @@ class MaintenanceService {
     const maintenanceRequest = await prisma.maintenance_requests.findUnique({
       where: { request_id: requestId },
       include: {
-        room: {
-          // ✅ sửa từ rooms
-          include: {
-            building: true, // ✅ sửa từ buildings
-          },
-        },
-        tenant: {
-          // ✅ sửa từ tenants
-          select: {
-            user: {
-              // phải include user để lấy thông tin
-              select: {
-                full_name: true,
-                email: true,
-                phone: true,
-              },
-            },
-          },
-        },
-        assignee: {
-          // nếu muốn trả về người được giao
-          select: {
-            full_name: true,
-            email: true,
-          },
-        },
-        approver: {
-          // nếu muốn trả về người duyệt
-          select: {
-            full_name: true,
-            email: true,
-          },
-        },
+        room: { include: { building: true } },
+        tenant: { select: { user: { select: { full_name: true, email: true, phone: true } } } },
+        assignee: { select: { full_name: true, email: true } },
+        approver: { select: { full_name: true, email: true } },
       },
     });
-
-    if (!maintenanceRequest) {
-      throw new Error("Maintenance request not found");
+    if (!maintenanceRequest) throw new Error("Maintenance request not found");
+    if (currentUser.role === "TENANT" && maintenanceRequest.tenant_user_id !== currentUser.user_id) {
+      throw new Error("You do not have permission to view this maintenance request");
     }
-
-    // Check permission: Tenant chỉ xem được yêu cầu của mình
-    if (
-      currentUser.role === "TENANT" &&
-      maintenanceRequest.tenant_user_id !== currentUser.user_id
-    ) {
-      throw new Error(
-        "You do not have permission to view this maintenance request",
-      );
-    }
-
     return this.formatMaintenanceResponse(maintenanceRequest);
   }
 
   // READ - Lấy danh sách yêu cầu bảo trì (phân trang + filter)
-  async getMaintenanceRequests(filters = {}, currentUser) {
-    const {
-      room_id,
-      tenant_user_id,
-      category,
-      priority,
-      status,
-      page = 1,
-      limit = 20,
-      approved_by,
-    } = filters;
-
+  async getMaintenanceRequests(filters = {}, currentUser) { /* ... */
+    const { room_id, tenant_user_id, category, priority, status, page = 1, limit = 20, approved_by } = filters;
     const skip = (page - 1) * limit;
-
     const where = {};
-
-    /* ======================
-     PHÂN QUYỀN
-  ====================== */
-    if (currentUser.role === "TENANT") {
-      // Tenant chỉ xem request của chính mình
-      where.tenant_user_id = currentUser.user_id;
-    } else {
-      // OWNER / MANAGER filter theo tenant
-      if (tenant_user_id) {
-        where.tenant_user_id = Number(tenant_user_id);
-      }
-    }
-
-    /* ======================
-     FILTER
-  ====================== */
+    if (currentUser.role === "TENANT") where.tenant_user_id = currentUser.user_id;
+    else if (tenant_user_id) where.tenant_user_id = Number(tenant_user_id);
     if (room_id) where.room_id = Number(room_id);
     if (category) where.category = category;
     if (priority) where.priority = priority;
@@ -217,71 +116,17 @@ class MaintenanceService {
 
     const [requests, total] = await Promise.all([
       prisma.maintenance_requests.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { created_at: "desc" },
-
+        where, skip, take: limit, orderBy: { created_at: "desc" },
         include: {
-          // ===== PHÒNG =====
-          room: {
-            select: {
-              room_id: true,
-              room_number: true,
-              building: {
-                select: {
-                  name: true,
-                },
-              },
-            },
-          },
-
-          // ===== TENANT =====
-          tenant: {
-            select: {
-              user: {
-                select: {
-                  user_id: true,
-                  full_name: true,
-                  email: true,
-                  phone: true,
-                },
-              },
-            },
-          },
-
-          // ===== NGƯỜI DUYỆT =====
-          approver: {
-            select: {
-              user_id: true,
-              full_name: true,
-              email: true,
-            },
-          },
-
-          // ===== NGƯỜI ĐƯỢC GIAO =====
-          assignee: {
-            select: {
-              user_id: true,
-              full_name: true,
-              email: true,
-            },
-          },
+          room: { select: { room_id: true, room_number: true, building: { select: { name: true } } } },
+          tenant: { select: { user: { select: { user_id: true, full_name: true, email: true, phone: true } } } },
+          approver: { select: { user_id: true, full_name: true, email: true } },
+          assignee: { select: { user_id: true, full_name: true, email: true } },
         },
       }),
-
       prisma.maintenance_requests.count({ where }),
     ]);
-
-    return {
-      data: requests.map((r) => this.formatMaintenanceResponse(r)),
-      pagination: {
-        total,
-        page,
-        limit,
-        pages: Math.ceil(total / limit),
-      },
-    };
+    return { data: requests.map((r) => this.formatMaintenanceResponse(r)), pagination: { total, page, limit, pages: Math.ceil(total / limit) } };
   }
 
   // UPDATE - Cập nhật yêu cầu bảo trì
