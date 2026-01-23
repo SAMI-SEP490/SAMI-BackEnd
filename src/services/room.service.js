@@ -1218,14 +1218,14 @@ class RoomService {
     const [activeContracts, pendingMaintenance] = await Promise.all([
       prisma.contracts.count({
         where: {
-          rooms: { building_id: buildingId }, // Relation filter correct based on schema
+          room_history: { building_id: buildingId }, // Relation filter correct based on schema
           status: "active", // Enum value trong DB là chữ thường
           deleted_at: null,
         },
       }),
       prisma.maintenance_requests.count({
         where: {
-          rooms: { building_id: buildingId },
+          room: { building_id: buildingId },
           status: {
             in: ["pending", "in_progress"], // Enum value trong DB là chữ thường
           },
