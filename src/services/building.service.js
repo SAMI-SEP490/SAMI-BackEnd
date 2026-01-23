@@ -966,24 +966,21 @@ class BuildingService {
   }
 
   async getMyBuildingDetails(tenantUserId) {
-    const contracts = await prisma.contracts.findMany({
+    const uniqueBuildingsMap = new Map();
+
+       const contracts = await prisma.contracts.findMany({
       where: {
         tenant_user_id: tenantUserId,
         status: "active",
         deleted_at: null,
       },
       select: {
-        contract_id: true,
         room_history: {
           select: {
             building: {
               select: {
-                building_id: true,
-                name: true,
-                electric_unit_price: true,
-                water_unit_price: true,
-                service_fee: true,
-                bill_closing_day: true,
+                building_id: true, name: true, electric_unit_price: true,
+                water_unit_price: true, service_fee: true, bill_closing_day: true,
               },
             },
           },
@@ -991,21 +988,47 @@ class BuildingService {
       },
     });
 
-    const uniqueBuildingsMap = new Map();
-
-    for (const contract of contracts) {
-      const building = contract.room_history?.building;
-      if (!building) continue;
-
-      if (!uniqueBuildingsMap.has(building.building_id)) {
-        uniqueBuildingsMap.set(building.building_id, building);
+    contracts.forEach(c => {
+      const b = c.room_history?.building;
+      if (b && !uniqueBuildingsMap.has(b.building_id)) {
+        uniqueBuildingsMap.set(b.building_id, b);
       }
-    }
+    });
+
+    // 2. Tìm qua Room Tenants (Secondary Tenant)
+    const residencies = await prisma.room_tenants.findMany({
+      where: {
+        tenant_user_id: tenantUserId,
+        is_current: true, // Đang ở
+      },
+      select: {
+        room: {
+          select: {
+            building: {
+              select: {
+                building_id: true, name: true, electric_unit_price: true,
+                water_unit_price: true, service_fee: true, bill_closing_day: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    residencies.forEach(r => {
+      const b = r.room?.building;
+      if (b && !uniqueBuildingsMap.has(b.building_id)) {
+        uniqueBuildingsMap.set(b.building_id, b);
+      }
+    });
 
     return Array.from(uniqueBuildingsMap.values());
   }
   async getBuildingContactsForTenant(tenantUserId) {
-    // 1. Tìm các tòa nhà mà tenant đang có hợp đồng Active
+    const uniqueBuildingIds = new Set();
+    const buildingsMap = new Map();
+
+    // 1. Logic cho Primary Tenant (Qua Contract Active)
     const activeContracts = await prisma.contracts.findMany({
       where: {
         tenant_user_id: tenantUserId,
@@ -1014,18 +1037,10 @@ class BuildingService {
       },
       include: {
         room_history: {
-          include: {
-            building: {
-              select: { building_id: true, name: true },
-            },
-          },
+          include: { building: { select: { building_id: true, name: true } } },
         },
       },
     });
-
-    // Lấy danh sách ID tòa nhà duy nhất
-    const uniqueBuildingIds = new Set();
-    const buildingsMap = new Map(); // Để lưu tên tòa nhà
 
     activeContracts.forEach((c) => {
       const b = c.room_history?.building;
@@ -1035,43 +1050,42 @@ class BuildingService {
       }
     });
 
-    // 2. Lấy thông tin Owner (Global - Lấy tất cả user có role OWNER)
-    const owners = await prisma.users.findMany({
+    // 2. [NEW] Logic cho Secondary Tenant (Qua Room Tenants Active)
+    const activeResidencies = await prisma.room_tenants.findMany({
       where: {
-        role: "OWNER",
-        status: "Active",
-        deleted_at: null,
+        tenant_user_id: tenantUserId,
+        is_current: true
       },
-      select: {
-        user_id: true,
-        full_name: true,
-        gender: true,
-        phone: true,
-        avatar_url: true,
-      },
+      include: {
+        room: {
+          include: { building: { select: { building_id: true, name: true } } }
+        }
+      }
     });
 
-    const formattedOwners = owners.map((o) => ({
-      ...o,
-      role: "OWNER", // Gán nhãn để FE hiển thị
-    }));
+    activeResidencies.forEach((r) => {
+      const b = r.room?.building;
+      if (b) {
+        uniqueBuildingIds.add(b.building_id);
+        buildingsMap.set(b.building_id, b.name);
+      }
+    });
 
-    // 3. Loop qua từng tòa nhà để lấy Manager cụ thể
+    // 3. Lấy thông tin Owner (Global)
+    const owners = await prisma.users.findMany({
+      where: { role: "OWNER", status: "Active", deleted_at: null },
+      select: { user_id: true, full_name: true, gender: true, phone: true, avatar_url: true },
+    });
+    const formattedOwners = owners.map((o) => ({ ...o, role: "OWNER" }));
+
+    // 4. Lấy Manager cho từng tòa nhà tìm được
     const results = [];
-
     for (const buildingId of uniqueBuildingIds) {
-      // Tìm Manager được gán cho tòa này
       const managers = await prisma.building_managers.findMany({
         where: { building_id: buildingId },
         include: {
           user: {
-            select: {
-              user_id: true,
-              full_name: true,
-              gender: true,
-              phone: true,
-              avatar_url: true,
-            },
+            select: { user_id: true, full_name: true, gender: true, phone: true, avatar_url: true },
           },
         },
       });
@@ -1088,7 +1102,7 @@ class BuildingService {
       results.push({
         building_id: buildingId,
         building_name: buildingsMap.get(buildingId),
-        contacts: [...formattedOwners, ...formattedManagers], // Gộp Owner + Manager
+        contacts: [...formattedOwners, ...formattedManagers],
       });
     }
 
