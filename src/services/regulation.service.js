@@ -147,6 +147,16 @@ class RegulationService {
       if (effectiveDateOnly < today) {
         throw new Error("Ngày hiệu lực không được nhỏ hơn ngày hiện tại");
       }
+
+      // ❗ Không được vượt quá hiện tại 1 năm
+      const oneYearLater = new Date(today);
+      oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
+
+      if (effectiveDateOnly > oneYearLater) {
+        throw new Error(
+          "Ngày hiệu lực không được vượt quá 1 năm kể từ hiện tại",
+        );
+      }
     }
 
     /* =========================
@@ -177,7 +187,7 @@ class RegulationService {
       data: {
         title: title.trim(),
         content: content.trim(),
-        building_id: null,
+        building_id: parsedBuildingId,
         effective_date: parsedEffectiveDate,
         version: newVersion,
         status: regulationStatus,
@@ -531,24 +541,31 @@ class RegulationService {
 
   // UPDATE - Cập nhật regulation (chỉ OWNER và MANAGER)
   async updateRegulation(regulationId, data, userId, userRole) {
-    // 1. Kiểm tra quyền
+    /* =========================
+     * 1. KIỂM TRA QUYỀN
+     * ========================= */
     if (!["OWNER", "MANAGER"].includes(userRole)) {
       throw new Error("Chỉ OWNER và MANAGER mới được cập nhật quy định");
     }
 
     const { title, content, effective_date, note } = data;
 
-    // 2. Kiểm tra quyền truy cập
+    /* =========================
+     * 2. KIỂM TRA QUYỀN TRUY CẬP
+     * ========================= */
     const hasAccess = await this.checkRegulationAccess(
       regulationId,
       userId,
       userRole,
     );
+
     if (!hasAccess) {
       throw new Error("Bạn không có quyền cập nhật quy định này");
     }
 
-    // 3. Kiểm tra regulation tồn tại
+    /* =========================
+     * 3. KIỂM TRA REGULATION TỒN TẠI
+     * ========================= */
     const existingRegulation = await prisma.regulations.findUnique({
       where: { regulation_id: regulationId },
       select: {
@@ -568,7 +585,9 @@ class RegulationService {
       throw new Error("Không thể cập nhật quy định đã bị xóa");
     }
 
-    // 4. Chuẩn bị dữ liệu update
+    /* =========================
+     * 4. CHUẨN BỊ DỮ LIỆU UPDATE
+     * ========================= */
     const updateData = {
       updated_at: new Date(),
     };
@@ -586,7 +605,9 @@ class RegulationService {
       updateData.content = content?.trim() || null;
     }
 
-    // ---- Ngày hiệu lực (không được trước ngày tạo)
+    /* =========================
+     * ---- NGÀY HIỆU LỰC
+     * ========================= */
     if (effective_date !== undefined) {
       if (effective_date) {
         const effectiveDateObj = new Date(effective_date);
@@ -595,8 +616,26 @@ class RegulationService {
           throw new Error("Ngày hiệu lực không hợp lệ");
         }
 
+        // Không được trước ngày tạo
         if (effectiveDateObj < existingRegulation.created_at) {
           throw new Error("Ngày hiệu lực không được trước ngày tạo quy định");
+        }
+
+        // So sánh theo NGÀY (bỏ giờ)
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const effectiveDateOnly = new Date(effectiveDateObj);
+        effectiveDateOnly.setHours(0, 0, 0, 0);
+
+        // Không vượt quá hiện tại 1 năm
+        const oneYearLater = new Date(today);
+        oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
+
+        if (effectiveDateOnly > oneYearLater) {
+          throw new Error(
+            "Ngày hiệu lực không được vượt quá 1 năm kể từ hiện tại",
+          );
         }
 
         updateData.effective_date = effectiveDateObj;
@@ -610,7 +649,9 @@ class RegulationService {
       updateData.note = note?.trim() || null;
     }
 
-    // 5. Update regulation
+    /* =========================
+     * 5. UPDATE REGULATION
+     * ========================= */
     const regulation = await prisma.regulations.update({
       where: { regulation_id: regulationId },
       data: updateData,
@@ -638,7 +679,9 @@ class RegulationService {
       },
     });
 
-    // 6. Gửi thông báo nếu regulation đã publish
+    /* =========================
+     * 6. GỬI THÔNG BÁO NẾU ĐÃ PUBLISH
+     * ========================= */
     if (regulation.building_id && regulation.status === "published") {
       const notificationTitle = `Cập nhật quy định: ${regulation.title}`;
       const notificationBody = `Quy định "${regulation.title}" đã được cập nhật. Vui lòng xem lại nội dung mới.`;
