@@ -35,6 +35,7 @@ const cron = require('node-cron');
 const BillService = require('./services/bill.service');
 const utilityRoutes = require('./routes/utility.routes');
 const { getCloudWatchLogger } = require('./utils/cloudwatch-logger');
+const { getCloudWatchAuditLogger } = require('./utils/cloudwatch-audit');
 const VehicleService = require('./services/vehicle.service');
 const app = express();
 
@@ -218,6 +219,9 @@ async function startServer() {
         await cloudWatch.initialize();
         console.log('✅ CloudWatch Logger initialized');
 
+        const auditLogger = getCloudWatchAuditLogger();
+        await auditLogger.initialize();
+        console.log('✅ CloudWatch Audit Logger (Force Terminate) initialized');
         // Start Express server
         app.listen(PORT, () => {
             console.log(`Server running in ${config.nodeEnv} mode on port ${PORT}`);

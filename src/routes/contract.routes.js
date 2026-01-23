@@ -35,7 +35,11 @@ router.get('/pending-action',
     requireRole(['tenant']),
     contractController.getPendingActionForTenant
 );
-
+router.get(
+    '/evidence/download',
+    requireRole(['owner', 'manager']), // Chỉ Owner/Manager xem được
+    contractController.downloadEvidence
+);
 router.get('/:id',
     requireRole(['owner', 'manager', 'tenant']),
     validateContractId,
@@ -96,6 +100,16 @@ router.get('/:id/download/direct',
     requireRole(['owner', 'manager', 'tenant']),
     validateContractId,
     contractController.downloadContractDirect
+);
+
+
+
+// [NEW] Route Cưỡng chế hủy (Chỉ OWNER)
+router.post(
+    '/:id/force-terminate',
+    requireRole(['owner']),
+    upload.array('evidence', 5), // Cho phép upload tối đa 5 file, key là 'evidence'
+    contractController.forceTerminate
 );
 
 // --- AI IMPORT ---

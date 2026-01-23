@@ -4,6 +4,7 @@
 
 const contractService = require('../services/contract.service');
 const prisma = require('../config/prisma');
+const s3Service = require('../services/s3.service');
 
 class ContractController {
     // 1. Tạo hợp đồng mới
@@ -282,6 +283,56 @@ class ContractController {
                     : "Không có yêu cầu nào."
             });
         } catch (err) {
+            next(err);
+        }
+    }
+    async forceTerminate(req, res, next) {
+        try {
+            const { id } = req.params;
+            const { reason } = req.body;
+            const files = req.files; // Được xử lý bởi multer middleware
+
+            // Lấy thông tin audit
+            const ipAddress = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+            const result = await contractService.forceTerminateContract(
+                parseInt(id),
+                reason,
+                files,
+                req.user, // User từ middleware auth
+                ipAddress
+            );
+
+            res.json(result);
+        } catch (err) {
+            next(err);
+        }
+    }
+
+
+
+    async downloadEvidence(req, res, next) {
+        try {
+            const { key } = req.query;
+            console.log(`--- [DEBUG] Download Evidence Request ---`);
+            console.log(`Received Key: "${key}"`); // In ra key trong dấu ngoặc kép để check khoảng trắng thừa
+
+            if (!key) return res.status(400).json({ success: false, message: "Missing key" });
+
+            if (req.user.role === 'TENANT') {
+                return res.status(403).json({ success: false, message: "Access denied" });
+            }
+
+            const signedUrl = await s3Service.getDownloadUrl(key, 'evidence.pdf', 60);
+            console.log(`Generated URL: ${signedUrl ? "YES (Hidden)" : "NO"}`);
+
+            return res.json({
+                success: true,
+                url: signedUrl
+            });
+
+        } catch (err) {
+            console.error("[DEBUG] Download Evidence Error:", err);
             next(err);
         }
     }

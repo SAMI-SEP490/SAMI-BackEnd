@@ -11,7 +11,8 @@ const tenantService = require("./tenant.service");
 const documentAIService = require("./document-ai.service");
 const consentService = require("./consent.service");
 const emailService = require("../utils/email");
-
+const { getCloudWatchAuditLogger } = require("../utils/cloudwatch-audit");
+const auditLogger = getCloudWatchAuditLogger();
 // Status Enum từ schema
 const CONTRACT_STATUS = {
   PENDING: "pending",
@@ -114,7 +115,7 @@ class ContractService {
       where: {
         contract_id: contractId,
         status: {
-          in: ["draft", "issued", "partially_paid", "overdue"],
+          in: [ "issued", "partially_paid", "overdue"],
         },
         deleted_at: null,
       },
@@ -889,10 +890,10 @@ class ContractService {
 
     return this.formatContractResponse(result);
   }
-  // ============================================
-  //  AUTO RESOLVE PENDING TRANSACTION
-  // ============================================
 
+  // ============================================
+  //  AUTO RESOLVE PENDING TRANSACTION (Đã Fix)
+  // ============================================
   async checkAndResolvePendingTransaction(contractId) {
     const contract = await prisma.contracts.findUnique({
       where: { contract_id: contractId },
@@ -903,32 +904,43 @@ class ContractService {
 
     // Chỉ xử lý nếu đang chờ thanh toán
     if (contract.status !== CONTRACT_STATUS.PENDING_TRANSACTION) {
+      // Nếu đã xong rồi thì báo success luôn để frontend không báo lỗi
+      if ([CONTRACT_STATUS.TERMINATED, CONTRACT_STATUS.EXPIRED].includes(contract.status)) {
+        return { success: true, message: "Hợp đồng đã kết thúc." };
+      }
+      // Nếu đang active thì không làm gì
       return {
         success: false,
-        message: `Contract status is ${contract.status}, not pending_transaction`,
+        message: `Trạng thái hợp đồng là ${contract.status}, không phải pending_transaction`,
       };
     }
 
-    // Check bills
+    // --- FIX QUAN TRỌNG: Xóa Bill Nháp (Draft) trước khi check nợ ---
+    // Bill nháp thường là dự thu tháng sau, không tính là nợ khi thanh lý
+    await prisma.bills.deleteMany({
+      where: {
+        contract_id: contractId,
+        status: 'draft'
+      }
+    });
+
+    // Check bills (Lúc này chỉ còn Issued / Overdue / Partially Paid)
     const hasUnpaid = await this.hasUnpaidBills(contractId);
+
     if (hasUnpaid) {
+      // Nếu vẫn còn nợ thật -> Báo lỗi cụ thể
       return {
         success: false,
-        message: "Cannot complete: There are still unpaid bills",
+        message: "Không thể đóng hợp đồng: Vẫn còn hóa đơn chưa thanh toán (Issued/Overdue).",
       };
     }
 
     // --- AUTOMATIC STATUS DETERMINATION ---
-    // Nếu ngày hiện tại >= ngày kết thúc hợp đồng -> EXPIRED
-    // Nếu ngày hiện tại < ngày kết thúc (chấm dứt sớm) -> TERMINATED
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const endDate = new Date(contract.end_date);
     endDate.setHours(0, 0, 0, 0);
 
-    // Nếu là yêu cầu chấm dứt (thường sẽ có note), nhưng logic đơn giản nhất là check date
-    // Hoặc kiểm tra xem trước đó nó đến từ luồng nào?
-    // Tuy nhiên, Expired hay Terminated đều có nghĩa là kết thúc, khác nhau ở semantic.
     const finalStatus =
         today >= endDate ? CONTRACT_STATUS.EXPIRED : CONTRACT_STATUS.TERMINATED;
 
@@ -962,7 +974,7 @@ class ContractService {
     console.log(`✓ Contract ${contractId} auto-resolved to ${finalStatus}`);
     return {
       success: true,
-      message: `Transaction completed. Contract auto-updated to ${finalStatus}.`,
+      message: `Đã hoàn tất thanh lý. Hợp đồng chuyển sang trạng thái: ${finalStatus}.`,
       data: this.formatContractResponse(result),
     };
   }
@@ -995,8 +1007,9 @@ class ContractService {
     return result.data;
   }
 
+
   // ============================================
-  // HARD DELETE CONTRACT
+  // HARD DELETE CONTRACT (UPDATED)
   // ============================================
   async hardDeleteContract(contractId, currentUser = null) {
     const contract = await prisma.contracts.findUnique({
@@ -1010,7 +1023,7 @@ class ContractService {
       throw new Error("Only OWNER can permanently delete contracts");
     }
 
-    // Chỉ xóa được EXPIRED hoặc TERMINATED
+    // Chỉ xóa được EXPIRED, TERMINATED hoặc REJECTED
     if (
         ![CONTRACT_STATUS.EXPIRED, CONTRACT_STATUS.TERMINATED, CONTRACT_STATUS.REJECTED].includes(
             contract.status
@@ -1020,7 +1033,7 @@ class ContractService {
     }
 
     await prisma.$transaction(async (tx) => {
-      // Check và clear room nếu cần
+      // 1. Check và clear room nếu cần (Giữ nguyên)
       const room = await tx.rooms.findUnique({
         where: { room_id: contract.room_id },
       });
@@ -1032,7 +1045,7 @@ class ContractService {
         });
       }
 
-      // Xóa room_tenants
+      // 2. Xóa room_tenants (Giữ nguyên)
       await tx.room_tenants.deleteMany({
         where: {
           room_id: contract.room_id,
@@ -1040,13 +1053,37 @@ class ContractService {
         },
       });
 
-      // Delete contract
+      // --- [NEW] 3. XỬ LÝ HÓA ĐƠN & ĐIỆN NƯỚC (FIX LỖI FK) ---
+
+      // Lấy danh sách Bill ID thuộc hợp đồng này
+      const billsToDelete = await tx.bills.findMany({
+        where: { contract_id: contractId },
+        select: { bill_id: true }
+      });
+      const billIds = billsToDelete.map(b => b.bill_id);
+
+      if (billIds.length > 0) {
+        // A. Ngắt liên kết Utility Readings (Điện/Nước) với Bill sắp xóa
+        // Nếu không làm bước này, xóa Bill sẽ lỗi tiếp ở bảng utility_readings
+        await tx.utility_readings.updateMany({
+          where: { bill_id: { in: billIds } },
+          data: { bill_id: null }
+        });
+
+        // B. Xóa tất cả Bills
+        // (Prisma Schema đã có onDelete: Cascade cho bill_details/service_charges nên chúng sẽ tự bay màu)
+        await tx.bills.deleteMany({
+          where: { contract_id: contractId }
+        });
+      }
+
+      // 4. Xóa Contract (Bây giờ đã an toàn)
       await tx.contracts.delete({
         where: { contract_id: contractId },
       });
     });
 
-    // Delete S3 file
+    // 5. Delete S3 file (Giữ nguyên)
     if (contract.s3_key) {
       try {
         await s3Service.deleteFile(contract.s3_key);
@@ -1612,6 +1649,152 @@ class ContractService {
     }
   }
 
+// [File: contract.service.js]
+// src/services/contract.service.js
+
+  async forceTerminateContract(contractId, reason, files, currentUser, ipAddress = "unknown") {
+    console.log(`--- [DEBUG] START Force Terminate Contract #${contractId} ---`);
+
+    // 1. Kiểm tra Quyền
+    if (!currentUser || currentUser.role !== "OWNER") {
+      throw new Error("ACCESS DENIED: Chỉ có OWNER mới được quyền cưỡng chế hủy.");
+    }
+
+    // 2. Lấy thông tin hợp đồng
+    const contract = await prisma.contracts.findUnique({
+      where: { contract_id: contractId },
+      include: {
+        room_history: { include: { building: true } },
+        tenant: { include: { user: true } }
+      }
+    });
+
+    if (!contract) throw new Error("Không tìm thấy hợp đồng.");
+
+    // 3. Logic Check Trạng thái
+    console.log(`[DEBUG] Current Status: ${contract.status}`);
+    if (contract.status !== CONTRACT_STATUS.REQUESTED_TERMINATION) {
+      throw new Error("Chỉ được cưỡng chế khi hợp đồng đang ở trạng thái 'Yêu cầu chấm dứt' (requested_termination).");
+    }
+
+    // --- UPLOAD FILE ---
+    if (!files || files.length === 0) {
+      throw new Error("BẮT BUỘC: Vui lòng upload bằng chứng (ảnh/biên bản) để cưỡng chế.");
+    }
+
+    let bufferToUpload;
+    let originalName = "evidence.pdf";
+    const fileList = Array.isArray(files) ? files : [files];
+    const isAllImages = fileList.every(f => f.mimetype.startsWith('image/'));
+
+    if (isAllImages && fileList.length > 1) {
+      try {
+        bufferToUpload = await this._convertImagesToPdf(fileList);
+        originalName = `evidence-merged-${Date.now()}.pdf`;
+      } catch (err) {
+        throw new Error("Lỗi khi gộp ảnh bằng chứng: " + err.message);
+      }
+    } else {
+      bufferToUpload = fileList[0].buffer;
+      originalName = fileList[0].originalname;
+    }
+
+    const uploadResult = await s3Service.uploadFile(
+        bufferToUpload,
+        originalName,
+        'evidence'
+    );
+
+    console.log(`[DEBUG] Upload Success. S3 Key: ${uploadResult.s3_key}`);
+
+    const evidenceTag = `[EVIDENCE_S3_KEY::${uploadResult.s3_key}]`;
+    const evidenceNote = `
+🛑 [FORCE TERMINATION]
+- Lý do: ${reason}
+- Người thực hiện: ${currentUser.full_name}
+- Thời gian: ${new Date().toLocaleString('vi-VN')}
+- File bằng chứng: ${uploadResult.file_name}
+${evidenceTag}
+`.trim();
+
+    // --- CHECK BILLS ---
+    // Xóa Bill Draft
+    const deletedDrafts = await prisma.bills.deleteMany({
+      where: {
+        contract_id: contractId,
+        status: 'draft'
+      }
+    });
+    console.log(`[DEBUG] Deleted ${deletedDrafts.count} draft bills.`);
+
+    const unpaidBillsList = await prisma.bills.findMany({
+      where: {
+        contract_id: contractId,
+        status: { in: [ "issued", "partially_paid", "overdue"] },
+        deleted_at: null,
+      },
+      select: {
+        bill_id: true,
+        bill_number: true,   // [FIX] Thay title bằng bill_number
+        total_amount: true,  // [FIX] Thay amount bằng total_amount
+        paid_amount: true,
+        status: true,
+        description: true    // Thêm description để dễ nhận diện
+      }
+    });
+
+    const hasUnpaid = unpaidBillsList.length > 0;
+
+    if (hasUnpaid) {
+      console.log("!!! [DEBUG] FOUND UNPAID BILLS (Lý do không về TERMINATED):");
+      console.table(unpaidBillsList); // Sẽ in ra bảng danh sách bill chưa trả trong Terminal
+    } else {
+      console.log("--- [DEBUG] NO UNPAID BILLS FOUND (Sạch nợ) ---");
+    }
+
+    const newStatus = hasUnpaid ? CONTRACT_STATUS.PENDING_TRANSACTION : CONTRACT_STATUS.TERMINATED;
+    console.log(`[DEBUG] Final Status Decision: ${newStatus}`);
+
+    // Log Audit
+    const auditPayload = {
+      event: "FORCE_TERMINATION",
+      actor: { user_id: currentUser.user_id, role: currentUser.role, ip: ipAddress },
+      target: { contract_id: contract.contract_id, contract_number: contract.contract_number },
+      reason: reason,
+      evidence_s3: uploadResult.s3_key,
+      financial_status: hasUnpaid ? "HAS_DEBT" : "CLEAR",
+      result_status: newStatus
+    };
+    auditLogger.logAuditAction(auditPayload).catch(console.error);
+
+    // DB Update
+    const result = await prisma.$transaction(async (tx) => {
+      const updatedContract = await tx.contracts.update({
+        where: { contract_id: contractId },
+        data: {
+          status: newStatus,
+          end_date: newStatus === CONTRACT_STATUS.TERMINATED ? new Date() : contract.end_date,
+          note: `${contract.note || ""}\n\n${evidenceNote}`,
+          updated_at: new Date()
+        },
+        include: { room_history: true }
+      });
+
+      if (newStatus === CONTRACT_STATUS.TERMINATED) {
+        await this._clearRoomAndTenant(tx, contract.room_id, contract.tenant_user_id, contractId);
+      }
+      return updatedContract;
+    });
+
+    console.log(`--- [DEBUG] END Force Terminate Success ---`);
+    return {
+      success: true,
+      message: hasUnpaid
+          ? "Đã chuyển sang trạng thái 'Chờ xử lý công nợ'. Vui lòng kiểm tra các hóa đơn (Issued/Overdue)."
+          : "Đã chấm dứt hợp đồng và giải phóng phòng thành công.",
+      data: this.formatContractResponse(result)
+    };
+  }
   // ============================================
   // PRIVATE HELPERS
   // ============================================
