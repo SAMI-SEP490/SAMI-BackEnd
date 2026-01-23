@@ -387,13 +387,25 @@ class BillService {
       throw new Error("Manual creation is only allowed for 'other' or 'utilities' bills.");
     }
 
+    const todayVN = getVietnamDay();
+
+    // [FIX] Relaxed Date Logic for 'Other' Bills
+    let billingStart, billingEnd;
+
+    if (data.bill_type === 'other' && (!data.billing_period_start || !data.billing_period_end)) {
+      // Default to Today if missing
+      billingStart = todayVN;
+      billingEnd = todayVN;
+    } else {
+      // Strict parsing for other types or if provided
+      billingStart = new Date(data.billing_period_start);
+      billingEnd = new Date(data.billing_period_end);
+    }
+
     // Fetch Contract
     const contract = await prisma.contracts.findUnique({ where: { contract_id: data.contract_id } });
     if (!contract) throw new Error("Contract not found");
 
-    // Parse Dates
-    const billingStart = new Date(data.billing_period_start);
-    const billingEnd = new Date(data.billing_period_end);
     const dueDate = new Date(data.due_date);
     const contractStart = new Date(contract.start_date);
     const contractEnd = new Date(contract.end_date);
@@ -403,24 +415,19 @@ class BillService {
       throw new Error(`Billing period start (${billingStart.toISOString().split('T')[0]}) cannot be before contract start (${contractStart.toISOString().split('T')[0]}).`);
     }
 
-    // [VALIDATION 2] End Date vs Contract End (NEW)
+    // [VALIDATION 2] End Date vs Contract End
     if (billingEnd > contractEnd) {
       throw new Error(`Billing period end (${billingEnd.toISOString().split('T')[0]}) cannot exceed contract end date (${contractEnd.toISOString().split('T')[0]}).`);
     }
 
-    // [VALIDATION 3] Due Date vs Billing End (NEW)
+    // [VALIDATION 3] Due Date vs Billing End
     if (dueDate < billingEnd) {
       throw new Error("Due date must be after or equal to the billing period end date.");
     }
 
-    // [VALIDATION 4] Start vs End (Basic sanity check)
-    if (billingStart > billingEnd) {
-      throw new Error("Billing start date cannot be after end date.");
-    }
-
     const billNumber = generateBillNumber(
-      getVietnamDay().getFullYear(),
-      getVietnamDay().getMonth() + 1,
+      todayVN.getFullYear(),
+      todayVN.getMonth() + 1,
       data.bill_type
     );
 
@@ -430,8 +437,8 @@ class BillService {
         bill_number: billNumber,
         status: 'draft',
         created_by: createdById,
-        billing_period_start: billingStart,
-        billing_period_end: billingEnd,
+        billing_period_start: billingStart, // Use processed dates
+        billing_period_end: billingEnd,     // Use processed dates
         due_date: dueDate,
         service_charges: data.service_charges ? {
           create: data.service_charges.map(charge => ({
