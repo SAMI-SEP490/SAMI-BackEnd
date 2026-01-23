@@ -98,15 +98,17 @@ class UtilityService {
     const currentMonth = today.getMonth() + 1;
     const currentYear = today.getFullYear();
 
-    if (
-      billing_year > currentYear ||
-      (billing_year === currentYear && billing_month > currentMonth)
-    ) {
+    // Cho phép tối đa THÁNG KẾ TIẾP
+    const inputDate = new Date(billing_year, billing_month - 1);
+    const maxAllowedDate = new Date(currentYear, currentMonth); // currentMonth + 1
+
+    if (inputDate > maxAllowedDate) {
       throw new Error(
-        `Cannot record utility readings for a future month (${billing_month}/${billing_year}).`,
+        `Cannot record utility readings too far in the future (${billing_month}/${billing_year}).`,
       );
     }
 
+    // Không cho sửa quá khứ > 3 tháng
     const recordDate = new Date(billing_year, billing_month - 1);
     const threeMonthsAgo = new Date(today);
     threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
@@ -223,7 +225,7 @@ class UtilityService {
         results.push(record);
 
         // =====================================================
-        // 🔥 NEW LOGIC: CASCADE UPDATE NEXT MONTH
+        // 🔥 CASCADE UPDATE NEXT MONTH (IF EXISTS)
         // =====================================================
         let nextMonth = billing_month + 1;
         let nextYear = billing_year;
