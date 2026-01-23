@@ -207,7 +207,7 @@ class AuthService {
           "active",
           "pending",
           "pending_transaction",
-          "requested_termination"
+          "requested_termination",
         ];
 
         // Kiểm tra xem user có ÍT NHẤT MỘT hợp đồng nằm trong nhóm trên không
@@ -230,7 +230,9 @@ class AuthService {
             throw new Error("Bạn chưa có hợp đồng thuê phòng nào.");
           } else {
             // Có hợp đồng nhưng toàn là Rejected/Terminated/Expired
-            throw new Error("Tất cả hợp đồng của bạn đã kết thúc hoặc bị từ chối. Vui lòng liên hệ quản lý.");
+            throw new Error(
+              "Tất cả hợp đồng của bạn đã kết thúc hoặc bị từ chối. Vui lòng liên hệ quản lý.",
+            );
           }
         }
       }
@@ -716,74 +718,128 @@ class AuthService {
   async updateProfile(userId, data, avatarFile = null) {
     const { full_name, gender, birthday, phone } = data;
 
-    // Validate phone nếu có thay đổi
-    if (phone) {
+    // ===== VALIDATE & FORMAT FULL NAME =====
+    let formattedFullName = undefined;
+
+    if (full_name !== undefined) {
+      // Không được chứa số
+      if (/\d/.test(full_name)) {
+        throw new Error("Họ tên không được chứa số");
+      }
+
+      // Chỉ cho phép chữ và ký tự đặc biệt
+      if (!/^[A-Za-z\s\W]+$/.test(full_name)) {
+        throw new Error("Họ tên chỉ được chứa chữ cái và ký tự đặc biệt");
+      }
+
+      // Chuẩn hóa: viết hoa chữ cái đầu và sau space / ký tự đặc biệt
+      formattedFullName = full_name
+        .toLowerCase()
+        .replace(/(^|[\s\W])([a-z])/g, (match, p1, p2) => {
+          return p1 + p2.toUpperCase();
+        })
+        .trim();
+    }
+
+    // ===== VALIDATE BIRTHDAY =====
+    if (birthday !== undefined && birthday !== null) {
+      const birthDate = new Date(birthday);
+      const now = new Date();
+
+      if (isNaN(birthDate.getTime())) {
+        throw new Error("Ngày sinh không hợp lệ");
+      }
+
+      if (birthDate > now) {
+        throw new Error("Ngày sinh không được ở tương lai");
+      }
+
+      let age = now.getFullYear() - birthDate.getFullYear();
+      const m = now.getMonth() - birthDate.getMonth();
+      if (m < 0 || (m === 0 && now.getDate() < birthDate.getDate())) {
+        age--;
+      }
+
+      if (age < 18) {
+        throw new Error("Người dùng phải từ 18 tuổi trở lên");
+      }
+
+      if (age > 150) {
+        throw new Error("Tuổi không được lớn hơn 150");
+      }
+    }
+
+    // ===== VALIDATE PHONE =====
+    if (phone !== undefined) {
+      // Bắt đầu bằng 0, dài 10–11 số, chỉ chứa số
+      if (!/^0\d{9,10}$/.test(phone)) {
+        throw new Error(
+          "Số điện thoại phải bắt đầu bằng số 0 và có từ 10 đến 11 chữ số",
+        );
+      }
+
       const existingUserWithPhone = await prisma.users.findFirst({
         where: {
           phone: phone,
-          user_id: { not: userId }, // Không phải chính user này
+          user_id: { not: userId },
           deleted_at: null,
         },
       });
 
       if (existingUserWithPhone) {
-        throw new Error("Phone number is already in use by another account");
+        throw new Error("Số điện thoại đã được sử dụng bởi tài khoản khác");
       }
     }
 
     let avatar_url = undefined;
 
-    // Nếu có file avatar được upload
+    // ===== UPLOAD AVATAR =====
     if (avatarFile) {
       try {
-        // Upload ảnh lên S3 sử dụng method uploadAvatar mới
         const uploadResult = await s3Service.uploadAvatar(
           avatarFile.buffer,
           avatarFile.originalname,
         );
 
-        console.log("S3 upload result:", uploadResult);
         avatar_url = uploadResult.url;
-        console.log("Avatar URL to save:", avatar_url);
 
-        // Xóa ảnh cũ nếu có (optional - để tránh rác trên S3)
+        // Xóa avatar cũ nếu có
         const currentUser = await prisma.users.findUnique({
           where: { user_id: userId },
           select: { avatar_url: true },
         });
 
-        if (currentUser && currentUser.avatar_url) {
-          // Extract s3_key from old URL
+        if (currentUser?.avatar_url) {
           const oldS3Key = s3Service.extractS3KeyFromUrl(
             currentUser.avatar_url,
           );
+
           if (oldS3Key && oldS3Key.startsWith("avatars/")) {
-            // Chỉ xóa nếu là avatar (safety check)
             await s3Service.deleteFile(oldS3Key).catch((err) => {
-              console.error("Failed to delete old avatar:", err);
-              // Không throw error, tiếp tục update profile
+              console.error("Không thể xóa avatar cũ:", err);
             });
           }
         }
       } catch (error) {
-        console.error("Error uploading avatar:", error);
-        throw new Error("Failed to upload avatar image");
+        console.error("Lỗi upload avatar:", error);
+        throw new Error("Tải ảnh đại diện thất bại");
       }
     }
 
-    // Chuẩn bị data để update (chỉ update những field được gửi lên)
+    // ===== PREPARE UPDATE DATA =====
     const updateData = {
       updated_at: new Date(),
     };
 
-    if (full_name !== undefined) updateData.full_name = full_name;
+    if (formattedFullName !== undefined)
+      updateData.full_name = formattedFullName;
     if (gender !== undefined) updateData.gender = gender;
     if (birthday !== undefined)
       updateData.birthday = birthday ? new Date(birthday) : null;
     if (phone !== undefined) updateData.phone = phone;
     if (avatar_url !== undefined) updateData.avatar_url = avatar_url;
 
-    // Update user profile
+    // ===== UPDATE USER =====
     const user = await prisma.users.update({
       where: { user_id: userId },
       data: updateData,
