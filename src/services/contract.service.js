@@ -1045,17 +1045,18 @@ class ContractService {
         });
       }
 
-      // 2. Xóa room_tenants (Giữ nguyên)
+      // --- [UPDATED STEP 2] Xóa lịch sử thuê (Primary + Secondary) ---
       await tx.room_tenants.deleteMany({
         where: {
-          room_id: contract.room_id,
-          tenant_user_id: contract.tenant_user_id,
+          room_id: contract.room_id, // Tại phòng này
+          OR: [
+            { tenant_user_id: contract.tenant_user_id }, // 1. Xóa người đứng tên (Primary)
+            { tenant_type: 'secondary' }                 // 2. Xóa TOÀN BỘ người ở ghép (Secondary) trong phòng
+          ]
         },
       });
 
       // --- [NEW] 3. XỬ LÝ HÓA ĐƠN & ĐIỆN NƯỚC (FIX LỖI FK) ---
-
-      // Lấy danh sách Bill ID thuộc hợp đồng này
       const billsToDelete = await tx.bills.findMany({
         where: { contract_id: contractId },
         select: { bill_id: true }
@@ -1063,27 +1064,25 @@ class ContractService {
       const billIds = billsToDelete.map(b => b.bill_id);
 
       if (billIds.length > 0) {
-        // A. Ngắt liên kết Utility Readings (Điện/Nước) với Bill sắp xóa
-        // Nếu không làm bước này, xóa Bill sẽ lỗi tiếp ở bảng utility_readings
+        // A. Ngắt liên kết Utility Readings
         await tx.utility_readings.updateMany({
           where: { bill_id: { in: billIds } },
           data: { bill_id: null }
         });
 
         // B. Xóa tất cả Bills
-        // (Prisma Schema đã có onDelete: Cascade cho bill_details/service_charges nên chúng sẽ tự bay màu)
         await tx.bills.deleteMany({
           where: { contract_id: contractId }
         });
       }
 
-      // 4. Xóa Contract (Bây giờ đã an toàn)
+      // 4. Xóa Contract
       await tx.contracts.delete({
         where: { contract_id: contractId },
       });
     });
 
-    // 5. Delete S3 file (Giữ nguyên)
+    // 5. Delete S3 file
     if (contract.s3_key) {
       try {
         await s3Service.deleteFile(contract.s3_key);
@@ -1092,9 +1091,8 @@ class ContractService {
       }
     }
 
-    return { success: true, message: "Contract permanently deleted" };
+    return { success: true, message: "Contract and all related tenants permanently deleted" };
   }
-
   // ============================================
   // AUTO-UPDATE EXPIRED CONTRACTS
   // ============================================
@@ -1120,11 +1118,9 @@ class ContractService {
       // để chờ chốt điện nước
       const hasUnpaid = await this.hasUnpaidBills(contract.contract_id);
 
-      const newStatus =
-          hasUnpaid || currentDay < utilityCollectionDate
-              ? CONTRACT_STATUS.PENDING_TRANSACTION
-              : CONTRACT_STATUS.EXPIRED;
-
+      const newStatus = hasUnpaid
+          ? CONTRACT_STATUS.PENDING_TRANSACTION
+          : CONTRACT_STATUS.EXPIRED;
       await prisma.$transaction(async (tx) => {
         await tx.contracts.update({
           where: { contract_id: contract.contract_id },
@@ -1834,8 +1830,9 @@ ${evidenceTag}
     return errors;
   }
 
-  /**
+   /**
    * Private: Clear room and close tenant history
+   * [UPDATED] Đóng lịch sử của TẤT CẢ mọi người trong phòng (Primary + Secondary)
    */
   async _clearRoomAndTenant(tx, roomId, tenantUserId, contractId) {
     // 1. Cập nhật Room -> Available
@@ -1852,15 +1849,16 @@ ${evidenceTag}
     }
 
     // 2. Đóng lịch sử thuê (Room Tenants)
+    // SỬA: Bỏ điều kiện `tenant_user_id` để áp dụng cho toàn bộ người trong phòng
     await tx.room_tenants.updateMany({
       where: {
-        room_id: roomId,
-        tenant_user_id: tenantUserId,
-        is_current: true,
+        room_id: roomId,     // Tại phòng này
+        is_current: true,    // Những ai đang ở
+        // tenant_user_id: tenantUserId, <--- [ĐÃ XÓA DÒNG NÀY]
       },
       data: {
-        is_current: false,
-        moved_out_at: new Date(),
+        is_current: false,       // Set về false (đã rời đi)
+        moved_out_at: new Date(), // Cập nhật ngày đi
       },
     });
   }

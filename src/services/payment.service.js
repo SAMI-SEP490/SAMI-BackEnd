@@ -7,7 +7,7 @@ const config = require('../config');
 const { PayOS } = require("@payos/node");
 const NotificationService = require('./notification.service');
 const EmailService = require('../utils/email');
-
+const contractService = require('./contract.service');
 // --- SAFE INITIALIZATION (PayOS) ---
 // (Keep your existing initialization code here - it is correct)
 let payos = null;
@@ -61,7 +61,7 @@ async function _completePayment(paymentId, transactionId, onlineType) {
 
         // Trigger Email after transaction commits
         _triggerReceiptEmail(payment.payment_id);
-
+        _triggerContractCheck(paidBillIds);
         // Trigger Push Notification (Fire-and-forget)
         // We wrap in try-catch so it doesn't crash if notification fails
         try {
@@ -108,6 +108,28 @@ async function _triggerReceiptEmail(paymentId) {
     } catch (e) {
         console.error("⚠️ Failed to send receipt email:", e.message);
         // Do not throw error here, payment is already successful
+    }
+}
+
+async function _triggerContractCheck(billIds) {
+    try {
+        // 1. Tìm các Contract ID liên quan đến các bill vừa trả
+        const bills = await prisma.bills.findMany({
+            where: { bill_id: { in: billIds } },
+            select: { contract_id: true },
+            distinct: ['contract_id'] // Chỉ lấy danh sách ID duy nhất
+        });
+
+        // 2. Gọi hàm check cho từng hợp đồng (Không cần await để tránh block user)
+        bills.forEach(b => {
+            if (b.contract_id) {
+                console.log(`[PaymentTrigger] Checking contract #${b.contract_id}...`);
+                contractService.checkAndResolvePendingTransaction(b.contract_id)
+                    .catch(err => console.error(`[PaymentTrigger] Error:`, err.message));
+            }
+        });
+    } catch (e) {
+        console.error("[PaymentTrigger] Failed to trigger check:", e.message);
     }
 }
 
@@ -247,7 +269,7 @@ class PaymentService {
 
         // Trigger Email
         _triggerReceiptEmail(paymentResult.payment_id);
-
+        _triggerContractCheck(billIds);
         return paymentResult;
     }
 
@@ -272,6 +294,7 @@ class PaymentService {
 
         return { totalAmount, validBills: bills };
     }
+
 
     // --- REPORTING (Keep existing logic, update queries if needed) ---
     async getTenantPaymentHistory(userId) {
@@ -491,6 +514,8 @@ class PaymentService {
             }
         });
     }
+
+
 }
 
 module.exports = new PaymentService();
