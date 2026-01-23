@@ -24,7 +24,13 @@ class GuestService {
       return true;
     }
     function normalizeIdNumber(id) {
-      return id?.trim();
+      if (!id) return null;
+
+      return id
+        .toString()
+        .trim()
+        .replace(/\s+/g, "")        // bỏ mọi khoảng trắng
+        .replace(/[^\d]/g, "");     // chỉ giữ số
     }
     const {
       room_id,
@@ -114,11 +120,13 @@ class GuestService {
       }
 
       if (guest.id_type === "national_id") {
-        if (!isValidVietnamCCCD(guest.id_number)) {
-          throw new Error(
-            `CCCD không hợp lệ: ${guest.id_number}`
-          );
+        const normalized = normalizeIdNumber(guest.id_number);
+
+        if (!isValidVietnamCCCD(normalized)) {
+          throw new Error(`CCCD không hợp lệ: ${guest.id_number}`);
         }
+
+        guest.id_number = normalized;
       }
     }
     // Collect CCCD khách
@@ -126,30 +134,33 @@ class GuestService {
       .filter(g => g.id_type === "national_id" && g.id_number)
       .map(g => normalizeIdNumber(g.id_number));
 
-    // ---- A. CCCD tenant đang có contract active ----
-    const activeTenants = await prisma.contracts.findMany({
+    // ---- A. CCCD tenant đang có contract active (TRONG CÙNG BUILDING) ----
+    const buildingId = currentRoom.building_id;
+
+    const activeTenantIdNumbers = await prisma.tenants.findMany({
       where: {
-        status: "active",
-        deleted_at: null
-      },
-      include: {
-        tenant: {
-          select: {
-            id_number: true
+        building_id: buildingId,
+        contracts: {
+          some: {
+            status: "active",
+            deleted_at: null
           }
         }
+      },
+      select: {
+        id_number: true
       }
     });
 
-    const tenantIdNumbers = activeTenants
-      .map(c => normalizeIdNumber(c.tenant?.id_number))
+    const tenantIdNumbers = activeTenantIdNumbers
+      .map(t => normalizeIdNumber(t.id_number))
       .filter(Boolean);
 
-    // Check trùng tenant
+    // Check trùng CCCD
     for (const id of guestIdNumbers) {
       if (tenantIdNumbers.includes(id)) {
         throw new Error(
-          `CCCD ${id} đã tồn tại trong danh sách người thuê đang ở`
+          `CCCD ${id} đã tồn tại trong danh sách người thuê của tòa nhà`
         );
       }
     }
