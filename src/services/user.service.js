@@ -8,32 +8,41 @@ class UserService {
   /**
    * SYNCHRONOUS helper to get the correct note from a user object
    */
+
+  async _getUserRole(userId) {
+    const user = await prisma.users.findUnique({
+      where: { user_id: userId },
+      select: { role: true },
+    });
+
+    return user?.role || null;
+  }
   _determineNoteFromUserObject(user) {
-  if (!user) return null;
+    if (!user) return null;
 
-  // OWNER (nếu có)
-  if (user.building_owner) return user.building_owner.notes ?? null;
+    // OWNER (nếu có)
+    if (user.building_owner) return user.building_owner.notes ?? null;
 
-  // MANAGER: building_managers có thể là array
-  if (Array.isArray(user.building_managers)) {
-    if (user.building_managers.length > 0) {
-      return user.building_managers[0]?.note ?? null;
+    // MANAGER: building_managers có thể là array
+    if (Array.isArray(user.building_managers)) {
+      if (user.building_managers.length > 0) {
+        return user.building_managers[0]?.note ?? null;
+      }
+    } else if (user.building_managers) {
+      return user.building_managers.note ?? null;
     }
-  } else if (user.building_managers) {
-    return user.building_managers.note ?? null;
-  }
 
-  // TENANT: tenants có thể là object hoặc array tùy schema
-  if (Array.isArray(user.tenants)) {
-    if (user.tenants.length > 0) {
-      return user.tenants[0]?.note ?? null;
+    // TENANT: tenants có thể là object hoặc array tùy schema
+    if (Array.isArray(user.tenants)) {
+      if (user.tenants.length > 0) {
+        return user.tenants[0]?.note ?? null;
+      }
+    } else if (user.tenants) {
+      return user.tenants.note ?? null;
     }
-  } else if (user.tenants) {
-    return user.tenants.note ?? null;
-  }
 
-  return null;
-}
+    return null;
+  }
   /**
    * Retrieves a list of all users (excluding OWNER).
    */
@@ -156,99 +165,52 @@ class UserService {
     });
   }
   async getActiveTenants(requestingUserId) {
-  const requestingUser = await prisma.users.findUnique({
-    where: { user_id: requestingUserId },
-    select: { role: true },
-  });
-
-  if (!requestingUser) {
-    throw new Error("Requesting user not found");
-  }
-
-  let buildingCondition = {};
-
-  // 🔒 MANAGER: chỉ xem tenant trong building của mình
-  if (requestingUser.role === "MANAGER") {
-    const assignment = await prisma.building_managers.findFirst({
+    const requestingUser = await prisma.users.findUnique({
       where: { user_id: requestingUserId },
-      select: { building_id: true },
+      select: { role: true },
     });
 
-    if (!assignment) return [];
+    if (!requestingUser) {
+      throw new Error("Requesting user not found");
+    }
 
-    buildingCondition = {
-      tenants: {
-        building_id: assignment.building_id,
-      },
-    };
-  }
+    let buildingCondition = {};
 
-  const users = await prisma.users.findMany({
-    where: {
-      role: "TENANT",
-      status: "Active",
+    // 🔒 MANAGER: chỉ xem tenant trong building của mình
+    if (requestingUser.role === "MANAGER") {
+      const assignment = await prisma.building_managers.findFirst({
+        where: { user_id: requestingUserId },
+        select: { building_id: true },
+      });
 
-      ...buildingCondition,
+      if (!assignment) return [];
 
-      tenants: {
-        is: {
-          room_tenants_history: {
-            some: {
-              is_current: true,
-              tenant_type: {
-                in: ["primary", "secondary"],
-              },
-              room: {
-                current_contract: {
-                  is: {
-                    status: "active",
-                  },
-                },
-              },
-            },
-          },
+      buildingCondition = {
+        tenants: {
+          building_id: assignment.building_id,
         },
-      },
-    },
+      };
+    }
 
-    select: {
-      user_id: true,
-      phone: true,
-      email: true,
-      full_name: true,
-      gender: true,
-      birthday: true,
-      status: true,
-      role: true,
+    const users = await prisma.users.findMany({
+      where: {
+        role: "TENANT",
+        status: "Active",
 
-      tenants: {
-        select: {
-          tenant_since: true,
-          id_number: true,
-          building_id: true,
-          building: {
-            select: { name: true },
-          },
-          room_tenants_history: {
-            where: {
-              is_current: true,
-              tenant_type: {
-                in: ["primary", "secondary"],
-              },
-            },
-            select: {
-              tenant_type: true,
-              room: {
-                select: {
-                  room_id: true,
-                  room_number: true,
+        ...buildingCondition,
+
+        tenants: {
+          is: {
+            room_tenants_history: {
+              some: {
+                is_current: true,
+                tenant_type: {
+                  in: ["primary", "secondary"],
+                },
+                room: {
                   current_contract: {
-                    select: {
-                      contract_id: true,
-                      contract_number: true,
-                      start_date: true,
-                      end_date: true,
-                      status: true,
+                    is: {
+                      status: "active",
                     },
                   },
                 },
@@ -257,45 +219,91 @@ class UserService {
           },
         },
       },
-    },
 
-    orderBy: { user_id: "asc" },
-  });
+      select: {
+        user_id: true,
+        phone: true,
+        email: true,
+        full_name: true,
+        gender: true,
+        birthday: true,
+        status: true,
+        role: true,
 
-  return users.map((u) => {
-    const tenant = u.tenants;
-    const roomInfo = tenant.room_tenants_history[0];
+        tenants: {
+          select: {
+            tenant_since: true,
+            id_number: true,
+            building_id: true,
+            building: {
+              select: { name: true },
+            },
+            room_tenants_history: {
+              where: {
+                is_current: true,
+                tenant_type: {
+                  in: ["primary", "secondary"],
+                },
+              },
+              select: {
+                tenant_type: true,
+                room: {
+                  select: {
+                    room_id: true,
+                    room_number: true,
+                    current_contract: {
+                      select: {
+                        contract_id: true,
+                        contract_number: true,
+                        start_date: true,
+                        end_date: true,
+                        status: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
 
-    return {
-      user_id: u.user_id,
-      phone: u.phone,
-      email: u.email,
-      full_name: u.full_name,
-      gender: u.gender,
-      birthday: u.birthday,
-      status: u.status,
-      role: u.role,
+      orderBy: { user_id: "asc" },
+    });
 
-      // TENANT INFO
-      tenant_since: tenant.tenant_since,
-      id_number: tenant.id_number,
-      tenant_type: roomInfo?.tenant_type ?? null,
+    return users.map((u) => {
+      const tenant = u.tenants;
+      const roomInfo = tenant.room_tenants_history[0];
 
-      // BUILDING
-      building_id: tenant.building_id,
-      building_name: tenant.building?.name ?? null,
+      return {
+        user_id: u.user_id,
+        phone: u.phone,
+        email: u.email,
+        full_name: u.full_name,
+        gender: u.gender,
+        birthday: u.birthday,
+        status: u.status,
+        role: u.role,
 
-      // ROOM + CONTRACT
-      room_id: roomInfo?.room.room_id ?? null,
-      room_number: roomInfo?.room.room_number ?? null,
-      contract_id: roomInfo?.room.current_contract?.contract_id ?? null,
-      contract_number:
-        roomInfo?.room.current_contract?.contract_number ?? null,
-      contract_status:
-        roomInfo?.room.current_contract?.status ?? null,
-    };
-  });
-}
+        // TENANT INFO
+        tenant_since: tenant.tenant_since,
+        id_number: tenant.id_number,
+        tenant_type: roomInfo?.tenant_type ?? null,
+
+        // BUILDING
+        building_id: tenant.building_id,
+        building_name: tenant.building?.name ?? null,
+
+        // ROOM + CONTRACT
+        room_id: roomInfo?.room.room_id ?? null,
+        room_number: roomInfo?.room.room_number ?? null,
+        contract_id: roomInfo?.room.current_contract?.contract_id ?? null,
+        contract_number:
+          roomInfo?.room.current_contract?.contract_number ?? null,
+        contract_status: roomInfo?.room.current_contract?.status ?? null,
+      };
+    });
+  }
   /**
    * Retrieves the details for a single user by their ID (excluding OWNER).
    */
@@ -504,6 +512,7 @@ class UserService {
   /**
    * Soft-deletes a user, with permissions (excluding OWNER).
    */
+
   async softDeleteUser(targetUserId, requestingUserId) {
     const requestingUserRole = await this._getUserRole(requestingUserId);
     const targetUserRole = await this._getUserRole(targetUserId);
