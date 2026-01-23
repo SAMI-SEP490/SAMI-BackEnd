@@ -839,7 +839,9 @@ class RoomService {
       include: {
         room: {
           include: {
-            building: { select: { building_id: true, name: true, address: true } },
+            building: {
+              select: { building_id: true, name: true, address: true },
+            },
             // Lấy hợp đồng hiện tại của phòng đó để hiện thông tin cơ bản
             current_contract: {
               select: {
@@ -857,49 +859,49 @@ class RoomService {
 
     // Format lại dữ liệu phòng để trả về
     const formattedRooms = await Promise.all(
-        currentResidencies.map(async (residency) => {
-          const room = residency.room;
+      currentResidencies.map(async (residency) => {
+        const room = residency.room;
 
-          // Lấy maintenance requests của user tại phòng này
-          const maintenance = await prisma.maintenance_requests.findMany({
-            where: {
-              tenant_user_id: userIdInt,
-              room_id: room.room_id,
-              status: { in: ["pending", "in_progress"] },
-            },
-            orderBy: { created_at: "desc" },
-            select: {
-              request_id: true,
-              title: true,
-              status: true,
-              created_at: true,
-            },
-          });
-
-          // Xác định vai trò: Dựa vào field tenant_type trong bảng room_tenants
-          // Hoặc so sánh userId với current_contract.tenant_user_id
-          const isPrimary = residency.tenant_type === 'primary';
-
-          return {
+        // Lấy maintenance requests của user tại phòng này
+        const maintenance = await prisma.maintenance_requests.findMany({
+          where: {
+            tenant_user_id: userIdInt,
             room_id: room.room_id,
-            room_number: room.room_number,
-            floor: room.floor,
-            size: room.size,
-            building_name: room.building?.name,
-            building_address: room.building?.address,
-            status: room.status,
+            status: { in: ["pending", "in_progress"] },
+          },
+          orderBy: { created_at: "desc" },
+          select: {
+            request_id: true,
+            title: true,
+            status: true,
+            created_at: true,
+          },
+        });
 
-            // Thông tin vai trò tại phòng này
-            role: isPrimary ? "Primary" : "Secondary", // "Chủ hợp đồng" : "Thành viên"
-            moved_in_at: residency.moved_in_at,
+        // Xác định vai trò: Dựa vào field tenant_type trong bảng room_tenants
+        // Hoặc so sánh userId với current_contract.tenant_user_id
+        const isPrimary = residency.tenant_type === "primary";
 
-            // Thông tin hợp đồng (nếu có)
-            current_contract: room.current_contract,
+        return {
+          room_id: room.room_id,
+          room_number: room.room_number,
+          floor: room.floor,
+          size: room.size,
+          building_name: room.building?.name,
+          building_address: room.building?.address,
+          status: room.status,
 
-            // Yêu cầu bảo trì cá nhân tại phòng này
-            my_maintenance_requests: maintenance,
-          };
-        })
+          // Thông tin vai trò tại phòng này
+          role: isPrimary ? "Primary" : "Secondary", // "Chủ hợp đồng" : "Thành viên"
+          moved_in_at: residency.moved_in_at,
+
+          // Thông tin hợp đồng (nếu có)
+          current_contract: room.current_contract,
+
+          // Yêu cầu bảo trì cá nhân tại phòng này
+          my_maintenance_requests: maintenance,
+        };
+      }),
     );
 
     // 🟢 2. LẤY LỊCH SỬ HỢP ĐỒNG (Chỉ dành cho những phòng mình từng ĐỨNG TÊN)
@@ -908,14 +910,14 @@ class RoomService {
       where: {
         tenant_user_id: userIdInt, // Chỉ lấy hợp đồng chính chủ
         deleted_at: null,
-        status: { not: 'active' } // Lấy lịch sử (đã kết thúc)
+        status: { not: "active" }, // Lấy lịch sử (đã kết thúc)
       },
       include: {
         room_history: {
-          include: { building: true }
-        }
+          include: { building: true },
+        },
       },
-      orderBy: { created_at: 'desc' }
+      orderBy: { created_at: "desc" },
     });
 
     const formattedHistory = contractHistory.map((c) => ({
@@ -937,10 +939,12 @@ class RoomService {
         phone: user.phone,
         avatar_url: user.avatar_url,
       },
-      tenant_info: tenant ? {
-        id_number: tenant.id_number,
-        tenant_since: tenant.tenant_since,
-      } : null,
+      tenant_info: tenant
+        ? {
+            id_number: tenant.id_number,
+            tenant_since: tenant.tenant_since,
+          }
+        : null,
 
       rooms: formattedRooms,
 
@@ -1056,16 +1060,39 @@ class RoomService {
       );
     }
 
-    // 4️⃣ Tenant chưa là current tenant ở phòng khác
-    const existingCurrentTenant = await prisma.room_tenants.findFirst({
+    // 4️⃣ Không cho add trùng nếu tenant đã đang "ở" chính phòng này (primary hoặc secondary)
+    const existingInThisRoom = await prisma.room_tenants.findFirst({
       where: {
         tenant_user_id: tenantUserId,
+        room_id: roomId,
         is_current: true,
       },
     });
 
-    if (existingCurrentTenant) {
-      throw new Error("Tenant is already assigned to another room");
+    if (existingInThisRoom) {
+      throw new Error("Tenant is already assigned to this room");
+    }
+
+    // 5️⃣ KHÔNG chặn tenant đang là PRIMARY ở phòng khác
+    // Chỉ cần chặn trường hợp tenant đang là SECONDARY ở phòng khác (rule: secondary chỉ 1 phòng)
+    // (Thực ra bước existingSecondary phía trên đã chặn rồi, đoạn này là “double-safety”)
+    const existingSecondaryOtherRoom = await prisma.room_tenants.findFirst({
+      where: {
+        tenant_user_id: tenantUserId,
+        is_current: true,
+        tenant_type: "secondary",
+        room_id: { not: roomId },
+      },
+      select: { room_id: true, room: { select: { room_number: true } } },
+    });
+
+    if (existingSecondaryOtherRoom) {
+      throw new Error(
+        `Người thuê này đã là người ở phụ của phòng ${
+          existingSecondaryOtherRoom.room?.room_number ||
+          existingSecondaryOtherRoom.room_id
+        }, không thể thêm sang phòng khác`,
+      );
     }
 
     // 5️⃣ Tạo room_tenants (moved_out_at = null, is_current = true)
