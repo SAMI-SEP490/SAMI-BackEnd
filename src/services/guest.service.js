@@ -24,8 +24,8 @@ class GuestService {
       return true;
     }
     function normalizeIdNumber(id) {
-  return id?.trim();
-}
+      return id?.trim();
+    }
     const {
       room_id,
       arrival_date,
@@ -34,58 +34,50 @@ class GuestService {
       guest_details,
     } = data;
 
-    // ===============================
-    // Validate tenant & room hiện tại
-    // ===============================
-    const tenant = await prisma.tenants.findUnique({
-      where: { user_id: tenantUserId },
+    if (!room_id) {
+      throw new Error("Phải chọn phòng");
+    }
+
+    // Lấy tất cả phòng current của tenant
+    const currentResidencies = await prisma.room_tenants.findMany({
+      where: {
+        tenant_user_id: tenantUserId,
+        is_current: true,
+      },
       include: {
-        room_tenants_history: {
-          where: { is_current: true },
+        room: {
           include: {
-            room: true
+            current_contract: true
           }
         }
       }
     });
 
-    if (!tenant) {
-      throw new Error("Không tìm thấy người thuê");
-    }
-
-    const currentRoom = tenant.room_tenants_history[0]?.room;
-
-    if (!currentRoom) {
+    if (currentResidencies.length === 0) {
       throw new Error("Người thuê không có phòng đang ở");
     }
 
-    if (room_id && room_id !== currentRoom.room_id) {
-      throw new Error("Phòng báo cáo không khớp với phòng đang ở");
+    // Check room có thuộc tenant không
+    const selectedResidency = currentResidencies.find(
+      r => r.room_id === room_id
+    );
+
+    if (!selectedResidency) {
+      throw new Error("Bạn không có quyền đăng ký khách cho phòng này");
     }
+
+    // Check contract active
+    const contract = selectedResidency.room.current_contract;
+
+    if (!contract || contract.status !== "active") {
+      throw new Error("Phòng này không có hợp đồng thuê đang hiệu lực");
+    }
+
+    const currentRoom = selectedResidency.room;
 
     // Validate hợp đồng hiệu lực
-    const activeContracts = await prisma.contracts.findMany({
-      where: {
-        tenant_user_id: tenantUserId,
-        status: "active",
-        deleted_at: null
-      },
-      select: {
-        start_date: true,
-        end_date: true
-      }
-    });
-
-    if (activeContracts.length === 0) {
-      throw new Error("Không có hợp đồng thuê đang hiệu lực");
-    }
-
-    const contractStart = new Date(
-      Math.min(...activeContracts.map(c => new Date(c.start_date)))
-    );
-    const contractEnd = new Date(
-      Math.max(...activeContracts.map(c => new Date(c.end_date)))
-    );
+    const contractStart = new Date(contract.start_date);
+    const contractEnd = new Date(contract.end_date);
 
     contractStart.setHours(0, 0, 0, 0);
     contractEnd.setHours(23, 59, 59, 999);
@@ -290,164 +282,164 @@ class GuestService {
 
   // Get all guest registrations with filters
   async getGuestRegistrations(filters, user) {
-  const {
-    status,
-    host_user_id,
-    room_id,
-    building_id,
-    arrival_date_from,
-    arrival_date_to,
-    page = 1,
-    limit = 10,
-  } = filters;
-
-  const where = {};
-
-  // ================= ROLE FILTER =================
-
-  // TENANT: chỉ xem báo cáo của mình
-  if (user.role === "TENANT") {
-    where.host_user_id = user.user_id;
-  }
-
-  // MANAGER: chỉ xem báo cáo trong building được phân công
-  if (user.role === "MANAGER") {
-    const managerBuilding = await prisma.building_managers.findFirst({
-      where: { user_id: user.user_id },
-      select: { building_id: true },
-    });
-
-    if (!managerBuilding) {
-      throw new Error("Quản lý chưa được phân công tòa nhà");
-    }
-
-    where.room = {
-      building_id: managerBuilding.building_id,
-    };
-  }
-
-  // OWNER: xem tất cả, có thể filter theo building
-  if (user.role === "OWNER" && building_id) {
-    where.room = {
+    const {
+      status,
+      host_user_id,
+      room_id,
       building_id,
+      arrival_date_from,
+      arrival_date_to,
+      page = 1,
+      limit = 10,
+    } = filters;
+
+    const where = {};
+
+    // ================= ROLE FILTER =================
+
+    // TENANT: chỉ xem báo cáo của mình
+    if (user.role === "TENANT") {
+      where.host_user_id = user.user_id;
+    }
+
+    // MANAGER: chỉ xem báo cáo trong building được phân công
+    if (user.role === "MANAGER") {
+      const managerBuilding = await prisma.building_managers.findFirst({
+        where: { user_id: user.user_id },
+        select: { building_id: true },
+      });
+
+      if (!managerBuilding) {
+        throw new Error("Quản lý chưa được phân công tòa nhà");
+      }
+
+      where.room = {
+        building_id: managerBuilding.building_id,
+      };
+    }
+
+    // OWNER: xem tất cả, có thể filter theo building
+    if (user.role === "OWNER" && building_id) {
+      where.room = {
+        building_id,
+      };
+    }
+
+    // ================= BUSINESS FILTER =================
+    if (status) {
+      where.status = status;
+    }
+
+    if (host_user_id && user.role === "OWNER") {
+      where.host_user_id = host_user_id;
+    }
+
+    if (room_id) {
+      where.room_id = room_id;
+    }
+
+    if (arrival_date_from || arrival_date_to) {
+      where.arrival_date = {};
+      if (arrival_date_from) {
+        where.arrival_date.gte = new Date(arrival_date_from);
+      }
+      if (arrival_date_to) {
+        where.arrival_date.lte = new Date(arrival_date_to);
+      }
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [registrations, total] = await Promise.all([
+      prisma.guest_registrations.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { created_at: "desc" },
+
+        select: {
+          registration_id: true,
+          arrival_date: true,
+          departure_date: true,
+          status: true,
+          note: true,
+          created_at: true,
+          submitted_at: true,
+
+          // ================= GUEST =================
+          guest_details: {
+            select: {
+              detail_id: true,
+              full_name: true,
+              id_number: true,
+            },
+          },
+
+          _count: {
+            select: {
+              guest_details: true,
+            },
+          },
+
+          // ================= HOST =================
+          host: {
+            select: {
+              user_id: true,
+              user: {
+                select: {
+                  full_name: true,
+                  phone: true,
+                  email: true,
+                },
+              },
+            },
+          },
+
+          // ================= ROOM =================
+          room: {
+            select: {
+              room_id: true,
+              room_number: true,
+              floor: true,
+              building: {
+                select: {
+                  building_id: true,
+                  name: true,
+                },
+              },
+            },
+          },
+
+          // ================= APPROVER =================
+          approver: {
+            select: {
+              user_id: true,
+              full_name: true,
+            },
+          },
+        },
+      }),
+
+      prisma.guest_registrations.count({ where }),
+    ]);
+
+    // ================= MAP guest_count =================
+    const mappedRegistrations = registrations.map((r) => ({
+      ...r,
+      guest_count: r._count.guest_details,
+      _count: undefined,
+    }));
+
+    return {
+      registrations: mappedRegistrations,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
     };
   }
-
-  // ================= BUSINESS FILTER =================
-  if (status) {
-    where.status = status;
-  }
-
-  if (host_user_id && user.role === "OWNER") {
-    where.host_user_id = host_user_id;
-  }
-
-  if (room_id) {
-    where.room_id = room_id;
-  }
-
-  if (arrival_date_from || arrival_date_to) {
-    where.arrival_date = {};
-    if (arrival_date_from) {
-      where.arrival_date.gte = new Date(arrival_date_from);
-    }
-    if (arrival_date_to) {
-      where.arrival_date.lte = new Date(arrival_date_to);
-    }
-  }
-
-  const skip = (page - 1) * limit;
-
-  const [registrations, total] = await Promise.all([
-    prisma.guest_registrations.findMany({
-      where,
-      skip,
-      take: limit,
-      orderBy: { created_at: "desc" },
-
-      select: {
-        registration_id: true,
-        arrival_date: true,
-        departure_date: true,
-        status: true,
-        note: true,
-        created_at: true,
-        submitted_at: true,
-
-        // ================= GUEST =================
-        guest_details: {
-          select: {
-            detail_id: true,
-            full_name: true,
-            id_number: true,
-          },
-        },
-
-        _count: {
-          select: {
-            guest_details: true,
-          },
-        },
-
-        // ================= HOST =================
-        host: {
-          select: {
-            user_id: true,
-            user: {
-              select: {
-                full_name: true,
-                phone: true,
-                email: true,
-              },
-            },
-          },
-        },
-
-        // ================= ROOM =================
-        room: {
-          select: {
-            room_id: true,
-            room_number: true,
-            floor: true,
-            building: {
-              select: {
-                building_id: true,
-                name: true,
-              },
-            },
-          },
-        },
-
-        // ================= APPROVER =================
-        approver: {
-          select: {
-            user_id: true,
-            full_name: true,
-          },
-        },
-      },
-    }),
-
-    prisma.guest_registrations.count({ where }),
-  ]);
-
-  // ================= MAP guest_count =================
-  const mappedRegistrations = registrations.map((r) => ({
-    ...r,
-    guest_count: r._count.guest_details,
-    _count: undefined,
-  }));
-
-  return {
-    registrations: mappedRegistrations,
-    pagination: {
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    },
-  };
-}
 
   // Update guest registration (only by tenant who created it, and only if status is pending)
   async updateGuestRegistration(registrationId, tenantUserId, data) {
