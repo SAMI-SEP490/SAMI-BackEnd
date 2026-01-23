@@ -257,7 +257,7 @@ class VehicleRegistrationService {
         if (regStart < contractStart || regEnd > contractEnd) {
             throw new Error("Đăng ký xe phải trong khoảng thời gian của hợp đồng thuê");
         }
-        // 5️⃣ Create registration
+        // 5️⃣ Create registrati  on
         return prisma.vehicle_registrations.create({
             data: {
                 requested_by: tenantUserId,

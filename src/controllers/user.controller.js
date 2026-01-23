@@ -16,6 +16,18 @@ class UserController {
     next(err);
   }
 }
+async getActiveTenants(req, res, next) {
+  try {
+    const tenants = await UserService.getActiveTenants(req.user.user_id);
+
+    res.status(200).json({
+      success: true,
+      data: tenants,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
 
     async getUserById(req, res, next) {
         try {
