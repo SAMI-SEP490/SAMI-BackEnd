@@ -152,16 +152,13 @@ Cập nhật lần cuối: ${new Date().toLocaleDateString('vi-VN')}
    - Đã đọc, hiểu rõ và đồng ý với toàn bộ điều khoản trong Hợp đồng thuê.
    - Các thông tin cá nhân cung cấp là chính xác, đầy đủ và trung thực.
    - Bạn có đủ năng lực hành vi dân sự để thực hiện giao dịch này.
-
-2. GIÁ TRỊ CỦA CHỮ KÝ ĐIỆN TỬ
-   - Chữ ký điện tử/Xác thực OTP được tạo ra có giá trị pháp lý ràng buộc tương đương với chữ ký viết tay và con dấu (nếu có) theo Luật Giao dịch điện tử.
    - Hợp đồng điện tử sau khi ký kết có giá trị làm chứng cứ trong trường hợp xảy ra tranh chấp.
 
-3. TRÁCH NHIỆM BẢO MẬT
+2. TRÁCH NHIỆM BẢO MẬT
    - Bạn có trách nhiệm bảo mật thiết bị và mã xác thực (OTP) dùng để ký kết.
    - Mọi giao dịch phát sinh từ tài khoản của bạn được coi là do chính bạn thực hiện.
 
-4. LƯU TRỮ VÀ TRA CỨU
+3. LƯU TRỮ VÀ TRA CỨU
    - Hợp đồng đã ký sẽ được gửi về email của bạn và lưu trữ an toàn trên hệ thống.
    - Bạn có thể truy cập và tải về bản sao hợp đồng bất cứ lúc nào.
         `.trim();
