@@ -825,83 +825,108 @@ class RoomService {
 
     const tenant = await prisma.tenants.findUnique({
       where: { user_id: userIdInt },
+    });
+    // Lưu ý: Có thể user là secondary tenant nhưng chưa có record trong bảng tenants (tùy logic add tenant)
+    // Nhưng thường hệ thống sẽ tạo record tenants trước.
+
+    // 🟢 1. LẤY DANH SÁCH CÁC PHÒNG ĐANG Ở (Bao gồm cả Primary & Secondary)
+    // Logic: Tìm trong bảng room_tenants với điều kiện is_current = true
+    const currentResidencies = await prisma.room_tenants.findMany({
+      where: {
+        tenant_user_id: userIdInt,
+        is_current: true,
+      },
       include: {
-        contracts: {
-          where: { deleted_at: null },
+        room: {
           include: {
-            room_history: {
-              include: {
-                building: {
-                  select: { building_id: true, name: true, address: true },
-                },
+            building: { select: { building_id: true, name: true, address: true } },
+            // Lấy hợp đồng hiện tại của phòng đó để hiện thông tin cơ bản
+            current_contract: {
+              select: {
+                contract_id: true,
+                start_date: true,
+                end_date: true,
+                status: true,
+                tenant_user_id: true, // Để check ai là chủ hợp đồng
               },
             },
           },
-          orderBy: { created_at: "desc" },
         },
       },
     });
-    if (!tenant) throw new Error("User is not a tenant");
 
-    // 🟢 PHÒNG HIỆN TẠI
-    const currentRoom = await prisma.rooms.findFirst({
+    // Format lại dữ liệu phòng để trả về
+    const formattedRooms = await Promise.all(
+        currentResidencies.map(async (residency) => {
+          const room = residency.room;
+
+          // Lấy maintenance requests của user tại phòng này
+          const maintenance = await prisma.maintenance_requests.findMany({
+            where: {
+              tenant_user_id: userIdInt,
+              room_id: room.room_id,
+              status: { in: ["pending", "in_progress"] },
+            },
+            orderBy: { created_at: "desc" },
+            select: {
+              request_id: true,
+              title: true,
+              status: true,
+              created_at: true,
+            },
+          });
+
+          // Xác định vai trò: Dựa vào field tenant_type trong bảng room_tenants
+          // Hoặc so sánh userId với current_contract.tenant_user_id
+          const isPrimary = residency.tenant_type === 'primary';
+
+          return {
+            room_id: room.room_id,
+            room_number: room.room_number,
+            floor: room.floor,
+            size: room.size,
+            building_name: room.building?.name,
+            building_address: room.building?.address,
+            status: room.status,
+
+            // Thông tin vai trò tại phòng này
+            role: isPrimary ? "Primary" : "Secondary", // "Chủ hợp đồng" : "Thành viên"
+            moved_in_at: residency.moved_in_at,
+
+            // Thông tin hợp đồng (nếu có)
+            current_contract: room.current_contract,
+
+            // Yêu cầu bảo trì cá nhân tại phòng này
+            my_maintenance_requests: maintenance,
+          };
+        })
+    );
+
+    // 🟢 2. LẤY LỊCH SỬ HỢP ĐỒNG (Chỉ dành cho những phòng mình từng ĐỨNG TÊN)
+    // Secondary tenant thường không quan tâm lịch sử hợp đồng của chủ nhà cũ
+    const contractHistory = await prisma.contracts.findMany({
       where: {
-        current_contract: {
-          is: {
-            tenant_user_id: userIdInt,
-            status: "active",
-            deleted_at: null,
-          },
-        },
-        is_active: true,
+        tenant_user_id: userIdInt, // Chỉ lấy hợp đồng chính chủ
+        deleted_at: null,
+        status: { not: 'active' } // Lấy lịch sử (đã kết thúc)
       },
       include: {
-        building: { select: { building_id: true, name: true, address: true } },
-        current_contract: {
-          select: {
-            contract_id: true,
-            start_date: true,
-            end_date: true,
-            rent_amount: true,
-            deposit_amount: true,
-            status: true,
-          },
-        },
-        maintenance_requests: {
-          where: {
-            tenant_user_id: userIdInt,
-            status: { in: ["pending", "in_progress"] },
-          },
-          orderBy: { created_at: "desc" },
-          select: {
-            request_id: true,
-            title: true,
-            category: true,
-            priority: true,
-            status: true,
-            created_at: true,
-          },
-        },
+        room_history: {
+          include: { building: true }
+        }
       },
+      orderBy: { created_at: 'desc' }
     });
 
-    // 🟢 LỊCH SỬ HỢP ĐỒNG
-    const contractHistory = tenant.contracts.map((c) => ({
+    const formattedHistory = contractHistory.map((c) => ({
       contract_id: c.contract_id,
       room: {
-        room_id: c.room_history.room_id,
-        room_number: c.room_history.room_number,
-        floor: c.room_history.floor,
-        size: c.room_history.size,
-        building_name: c.room_history.building?.name,
-        building_address: c.room_history.building?.address,
+        room_number: c.room_history?.room_number || "Unknown",
+        building_name: c.room_history?.building?.name || "Unknown",
       },
       start_date: c.start_date,
       end_date: c.end_date,
-      rent_amount: c.rent_amount,
-      deposit_amount: c.deposit_amount,
       status: c.status,
-      created_at: c.created_at,
     }));
 
     return {
@@ -912,25 +937,14 @@ class RoomService {
         phone: user.phone,
         avatar_url: user.avatar_url,
       },
-      tenant_info: {
+      tenant_info: tenant ? {
         id_number: tenant.id_number,
         tenant_since: tenant.tenant_since,
-        note: tenant.note,
-      },
-      current_room: currentRoom
-        ? {
-            room_id: currentRoom.room_id,
-            room_number: currentRoom.room_number,
-            floor: currentRoom.floor,
-            size: currentRoom.size,
-            building_name: currentRoom.building?.name,
-            building_address: currentRoom.building?.address,
-            current_contract: currentRoom.current_contract,
-            maintenance_requests: currentRoom.maintenance_requests,
-            status: currentRoom.status,
-          }
-        : null,
-      contract_history: contractHistory,
+      } : null,
+
+      rooms: formattedRooms,
+
+      contract_history: formattedHistory,
     };
   }
 
