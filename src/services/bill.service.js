@@ -823,6 +823,8 @@ class BillService {
         status: true,
         description: true,
         bill_type: true,
+        created_at: true,
+        updated_at: true,
         // Include contract -> room info to show Room Number
         contract: {
           select: {
@@ -893,7 +895,9 @@ class BillService {
         penalty_amount: true,
         status: true,
         description: true,
-        bill_type: true
+        bill_type: true,
+        created_at: true,
+        updated_at: true
       },
     });
   }

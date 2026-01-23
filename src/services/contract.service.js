@@ -1181,7 +1181,28 @@ class ContractService {
 
     // Role filter
     if (currentUser.role === "TENANT") {
-      where.tenant_user_id = currentUser.user_id;
+      const residentRecords = await prisma.room_tenants.findMany({
+        where: {
+          tenant_user_id: currentUser.user_id,
+          is_current: true, // Chỉ lấy phòng đang ở hiện tại
+        },
+        select: { room_id: true },
+      });
+
+      const residentRoomIds = residentRecords.map((r) => r.room_id);
+
+      // 2. Xây dựng điều kiện OR để xử lý trường hợp "vừa là Primary phòng A, vừa là Secondary phòng B"
+      where.OR = [
+
+        { tenant_user_id: currentUser.user_id },
+
+
+        {
+          room_id: { in: residentRoomIds },      // Phòng đang ở
+          status: CONTRACT_STATUS.ACTIVE,        // Chỉ xem Active
+          tenant_user_id: { not: currentUser.user_id } // (Optional) Loại trừ cái đã match ở Case A để tránh duplicate logic
+        }
+      ];
     } else if (currentUser.role === "MANAGER") {
       const today = new Date();
       const managedBuildings = await prisma.building_managers.findMany({
@@ -1545,28 +1566,49 @@ class ContractService {
    * Kiểm tra quyền truy cập hợp đồng
    */
   async checkContractPermission(contract, currentUser) {
-    if (currentUser.role === "TENANT") {
-      if (contract.tenant_user_id !== currentUser.user_id) {
-        throw new Error("You do not have permission to access this contract");
-      }
-    } else if (currentUser.role === "MANAGER") {
-      // Relation in Schema: contract -> room_history -> building
+    // 1. Nếu là Manager/Owner -> Check building
+    if (currentUser.role === "MANAGER") {
       const buildingId =
           contract.room_history?.building_id ||
           contract.room_history?.building?.building_id;
 
-      if (!buildingId) {
-        throw new Error("Contract building information not found");
-      }
+      if (!buildingId) throw new Error("Contract building information not found");
 
       const hasAccess = await this.checkManagerBuildingAccess(
           currentUser.user_id,
           buildingId
       );
+      if (!hasAccess) throw new Error("You do not have permission to access this contract");
+      return; // OK
+    }
 
-      if (!hasAccess) {
-        throw new Error("You do not have permission to access this contract");
+    // 2. Nếu là Tenant
+    if (currentUser.role === "TENANT") {
+      // Case A: Là người đứng tên (Primary) -> OK
+      if (contract.tenant_user_id === currentUser.user_id) {
+        return;
       }
+
+      // Case B: Là Secondary Tenant (người ở cùng)
+      // Logic: Phải đang ở trong phòng đó (is_current=true) VÀ Hợp đồng phải là ACTIVE
+      const isResident = await prisma.room_tenants.findFirst({
+        where: {
+          room_id: contract.room_id,
+          tenant_user_id: currentUser.user_id,
+          is_current: true
+        }
+      });
+
+      if (isResident) {
+        if (contract.status === CONTRACT_STATUS.ACTIVE) {
+          return; // OK
+        } else {
+          throw new Error("Residents can only view the currently active contract.");
+        }
+      }
+
+      // Không thỏa mãn cả 2 case
+      throw new Error("You do not have permission to access this contract");
     }
   }
 
