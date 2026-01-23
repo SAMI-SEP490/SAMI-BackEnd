@@ -190,11 +190,18 @@ class FloorPlanService {
           (n?.type === "block" && n?.data?.icon === "room"),
       )
       .map((node) => {
-        const roomNumber = String(
-          node?.data?.room_number ?? node?.data?.label ?? "",
-        ).trim();
+        // ✅ CHỈ lấy room_number (không fallback sang label)
+        let roomNumber = String(node?.data?.room_number ?? "").trim();
+
+        // (Tuỳ chọn) hỗ trợ legacy type="room" cũ nếu trước đây bạn có lưu label là số phòng
+        if (!roomNumber && node?.type === "room") {
+          roomNumber = String(node?.data?.label ?? "").trim();
+        }
 
         if (!roomNumber) return null;
+
+        // ✅ chặn các label chữ như "Cửa", "Hành lang", "Lối thoát"...
+        if (!/^[A-Z]+[-_ ]?\d+$/.test(roomNumber)) return null;
 
         // size (m²) – FE đang truyền size = 4*3
         // size (m²)

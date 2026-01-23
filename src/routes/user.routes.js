@@ -21,7 +21,11 @@ router.get(
   requireRole(["owner", "manager"]),
   userController.getAllUsers,
 );
-
+router.get(
+  "/active-tenants",
+  requireRole(["owner", "manager"]),
+  userController.getActiveTenants
+);
 // Get a single user by ID (Owner and Manager)
 router.get(
   "/get-user/:id",
