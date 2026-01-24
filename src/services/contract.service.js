@@ -789,7 +789,7 @@ class ContractService {
   // ============================================
   // APPROVE/REJECT TERMINATION (Only Tenant)
   // ============================================
-  async handleTerminationRequest(contractId, action, currentUser = null, ipAddress = null, userAgent = null) {
+  async handleTerminationRequest(contractId, action,reason = null, currentUser = null, ipAddress = null, userAgent = null) {
     // action: 'approve' | 'reject'
 
     const contract = await prisma.contracts.findUnique({
@@ -837,13 +837,14 @@ class ContractService {
       console.error("Failed to log termination consent:", error.message);
       throw new Error(`Cannot process termination: ${error.message}`);
     }
+    const reasonNote = reason ? `: ${reason}` : "";
     if (action === "reject") {
       // Tenant từ chối hủy -> Về ACTIVE
       const updated = await prisma.contracts.update({
         where: { contract_id: contractId },
         data: {
           status: CONTRACT_STATUS.ACTIVE,
-          note: `${contract.note || ""}\n[REQ-TERM] Rejected by Tenant`.trim(),
+          note: `${contract.note || ""}\n[REQ-TERM] Rejected by Tenant${reasonNote}`.trim(),
           updated_at: new Date(),
         },
         include: {
