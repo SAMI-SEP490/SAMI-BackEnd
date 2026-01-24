@@ -494,6 +494,7 @@ class ContractService {
     const newStatus =
         action === "accept" ? CONTRACT_STATUS.ACTIVE : CONTRACT_STATUS.REJECTED;
 
+
     // Validate transition
     this.validateStatusTransition(contract.status, newStatus, reason);
 
@@ -575,6 +576,41 @@ class ContractService {
       return updatedContract;
     });
 
+    if (action === "accept") { // Chỉ cần audit kỹ khi Chấp nhận (Ký)
+      try {
+        const auditPayload = {
+          event: "CONTRACT_SIGNED_DIGITALLY",
+          actor: {
+            user_id: currentUser.user_id,
+            role: currentUser.role,
+            ip: ipAddress || "unknown",
+            user_agent: userAgent || "unknown"
+          },
+          target: {
+            contract_id: contract.contract_id,
+            contract_number: contract.contract_number
+          },
+          proof: {
+            file_name: contract.file_name,
+            s3_key: contract.s3_key,
+            file_hash_checksum: contract.checksum,
+            signed_at: new Date().toISOString()
+          },
+          meta: {
+            uploader_action: "accepted_by_tenant",
+            original_uploader: "manager_system" // Hoặc lấy ID người tạo nếu muốn
+          }
+        };
+
+        // Gửi bất đồng bộ để không chặn flow chính
+        auditLogger.logAuditAction(auditPayload).catch(err =>
+            console.error("❌ Failed to push audit log:", err)
+        );
+
+      } catch (auditError) {
+        console.error("Audit Log Error:", auditError);
+      }
+    }
     return this.formatContractResponse(result);
   }
 
