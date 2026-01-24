@@ -59,11 +59,19 @@ async function _completePayment(paymentId, transactionId, onlineType) {
             });
         }
 
-        // Trigger Email after transaction commits
+        // --- POST-TRANSACTION TASKS ---
+
+        // 1. Email (Fire-and-forget)
         _triggerReceiptEmail(payment.payment_id);
+
+        // 2. Contract Check
+        // Extract the IDs from the payment object we just updated
+        const paidBillIds = payment.payment_details.map(detail => detail.bill_id);
+        
+        // Now call the helper with the defined variable
         _triggerContractCheck(paidBillIds);
-        // Trigger Push Notification (Fire-and-forget)
-        // We wrap in try-catch so it doesn't crash if notification fails
+
+        // 3. Notification (Fire-and-forget)
         try {
             await NotificationService.sendPaymentSuccessNotification(payment);
         } catch (e) {
