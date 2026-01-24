@@ -150,8 +150,9 @@ class ContractController {
     async respondToTerminationRequest(req, res, next) {
         try {
             const { id } = req.params;
-            const { action } = req.body;
+               const { action, reason, note } = req.body;
 
+            const reasonData = reason || note;
             if (!['approve', 'reject'].includes(action)) {
                 return res.status(400).json({
                     success: false,
@@ -166,6 +167,7 @@ class ContractController {
             const contract = await contractService.handleTerminationRequest(
                 parseInt(id),
                 action,
+                reasonData,
                 req.user,
                 ipAddress, // New param
                 userAgent  // New param
