@@ -579,7 +579,7 @@ class ContractService {
     if (action === "accept") { // Chỉ cần audit kỹ khi Chấp nhận (Ký)
       try {
         const auditPayload = {
-          event: "CONTRACT_SIGNED_DIGITALLY",
+          event: "CONTRACT_SIGNED",
           actor: {
             user_id: currentUser.user_id,
             role: currentUser.role,
@@ -924,7 +924,33 @@ class ContractService {
 
       return updated;
     });
+    if (action === "approve") {
+      try {
+        const auditPayload = {
+          event: "CONTRACT_TERMINATION_APPROVED", // Sự kiện: Đã chốt hủy
+          actor: {
+            user_id: currentUser.user_id,
+            role: currentUser.role,
+            ip: ipAddress || "unknown",
+            user_agent: userAgent || "unknown"
+          },
+          target: {
+            contract_id: contract.contract_id,
+            contract_number: contract.contract_number
+          },
+          meta: {
+            termination_type: "mutual_agreement", // Thỏa thuận 2 bên
+            final_status: result.status, // TERMINATED hoặc PENDING_TRANSACTION
+            reason: contract.note // Lý do đã được append vào note
+          },
+          timestamp: new Date().toISOString()
+        };
 
+        // Fire & forget
+        auditLogger.logAuditAction(auditPayload).catch(console.error);
+      } catch (err) {
+        console.error("Audit Log Error:", err);
+      }}
     return this.formatContractResponse(result);
   }
 
@@ -1798,7 +1824,7 @@ ${evidenceTag}
       financial_status: hasUnpaid ? "HAS_DEBT" : "CLEAR",
       result_status: newStatus
     };
-    auditLogger.logAuditAction(auditPayload).catch(console.error);
+
 
     // DB Update
     const result = await prisma.$transaction(async (tx) => {
@@ -1818,8 +1844,8 @@ ${evidenceTag}
       }
       return updatedContract;
     });
+    auditLogger.logAuditAction(auditPayload).catch(console.error);
 
-    console.log(`--- [DEBUG] END Force Terminate Success ---`);
     return {
       success: true,
       message: hasUnpaid

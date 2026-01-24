@@ -22,7 +22,7 @@ class CloudWatchAuditLogger {
         this.logGroupName = process.env.CLOUDWATCH_AUDIT_LOG_GROUP || '/rental-management/contract-audit-logs';
 
         // Prefix riêng cho các hành động nhạy cảm (Force Termination)
-        this.logStreamPrefix = 'force-termination';
+        this.logStreamPrefix = 'contract-activity';
         this.logStreamName = `${this.logStreamPrefix}-${new Date().toISOString().split('T')[0]}`;
         this.sequenceToken = null;
 
