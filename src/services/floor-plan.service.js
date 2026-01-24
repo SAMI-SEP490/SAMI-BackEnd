@@ -201,7 +201,7 @@ class FloorPlanService {
         if (!roomNumber) return null;
 
         // ✅ chặn các label chữ như "Cửa", "Hành lang", "Lối thoát"...
-        if (!/^[A-Z]+[-_ ]?\d+$/.test(roomNumber)) return null;
+        if (!/^(\d+|[A-Z]+[-_ ]?\d+)$/.test(roomNumber)) return null;
 
         // size (m²) – FE đang truyền size = 4*3
         // size (m²)
@@ -494,7 +494,7 @@ class FloorPlanService {
       let finalLayout = layout;
 
       // Chỉ sync khi layout có nodes
-      if (layout && Array.isArray(layout.nodes) && roomsToCreate.length > 0) {
+      if (layoutObj && Array.isArray(layoutObj.nodes) && roomsToCreate.length > 0) {
         // Lấy lại rooms vừa tạo trong tầng này
         const createdRooms = await tx.rooms.findMany({
           where: {
@@ -986,23 +986,29 @@ class FloorPlanService {
           return null;
         };
 
-        // 1) Extract rooms from layout
-        let layoutRooms = nodes
-          .map((n) => {
-            const computedSize = normalizeSizeFromNode(n);
+        // 1) Extract rooms from layout (CHỈ LẤY NODE ROOM)
+const isRoomNodeForSync = (n) =>
+  n?.type === "room" || (n?.type === "block" && n?.data?.icon === "room");
 
-            return {
-              __nodeRef: n,
-              room_id: n?.data?.room_id ? parseInt(n.data.room_id) : null,
-              room_number: String(
-                n?.data?.room_number ?? n?.data?.label ?? "",
-              ).trim(),
-              size: computedSize,
-              floor: existingPlan.floor_number,
-              building_id: existingPlan.building_id,
-            };
-          })
-          .filter((x) => x.room_number);
+let layoutRooms = nodes
+  .filter(isRoomNodeForSync)
+  .map((n) => {
+    const computedSize = normalizeSizeFromNode(n);
+
+    // Ưu tiên room_number; fallback label để không phá layout cũ
+    const roomNumber = String(n?.data?.room_number ?? n?.data?.label ?? "").trim();
+    if (!roomNumber) return null;
+
+    return {
+      __nodeRef: n,
+      room_id: n?.data?.room_id ? parseInt(n.data.room_id) : null,
+      room_number: roomNumber,
+      size: computedSize,
+      floor: existingPlan.floor_number,
+      building_id: existingPlan.building_id,
+    };
+  })
+  .filter(Boolean);
 
         // 2) Rooms in DB
         const dbRooms = await tx.rooms.findMany({
